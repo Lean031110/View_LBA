@@ -54,9 +54,9 @@ export async function GET() {
       streamEnabled: settings?.streamEnabled ?? true,
       serverOk: Boolean(svc), // ¿el mini-servicio de streaming está corriendo?
       live: svc?.live ?? false,
-      since: svc?.since ?? null,
-      viewers: svc?.viewers ?? 0,
       ts: Date.now(),
+      // FASE 13: el endpoint PÚBLICO es mínimo (misión: públicamente
+      // { live: true }). Viewers/since/detalle → solo admin autenticado.
     },
     { headers: { "Cache-Control": "no-store" } }
   )

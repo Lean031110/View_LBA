@@ -149,7 +149,7 @@ export default function StreamSection({ user, screensStatus, streamServer }: Pro
       await refreshInfo(true)
       toast({
         title: "Clave regenerada",
-        description: "Las nuevas conexiones de OBS deben usar la nueva clave. Vuelve a copiarla.",
+        description: "Las nuevas conexiones de OBS deben usar la nueva clave. Vuelve a copiarla. La sesión que ya esté transmitiendo continúa hasta que OBS se detenga.",
       })
     } catch (e) {
       toast({ title: "Error", description: (e as Error).message, variant: "destructive" })

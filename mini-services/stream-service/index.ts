@@ -14,6 +14,7 @@
  * desde el panel, el servidor la aplica sin reiniciarse (para nuevas conexiones).
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "http"
+import { connect as tcpConnect } from "net"
 import { Database } from "bun:sqlite"
 import { readFileSync } from "fs"
 import { resolve } from "path"
@@ -282,8 +283,22 @@ const controlServer = createServer(async (req: IncomingMessage, res: ServerRespo
   }
 
   if (req.method === "GET" && url.pathname === "/health") {
-    res.writeHead(200, { "Content-Type": "text/plain" })
-    return res.end("ok")
+    // FASE 13: health REAL — comprueba que los listeners de NMS están vivos
+    // (un proceso zombi con /health plano daría falso positivo al supervisor)
+    const [rtmpAlive, flvAlive] = await Promise.all([tcpListenerAlive(RTMP_PORT), tcpListenerAlive(HTTP_FLV_PORT)])
+    const ok = rtmpAlive
+    res.writeHead(ok ? 200 : 503, { "Content-Type": "application/json", "Cache-Control": "no-store" })
+    return res.end(
+      JSON.stringify({
+        ok,
+        service: "stream-service",
+        rtmpListening: rtmpAlive,
+        httpFlvListening: flvAlive,
+        live: state.live,
+        uptimeSec: Math.floor((Date.now() - state.startedAt) / 1000),
+        ts: Date.now(),
+      })
+    )
   }
 
   res.writeHead(404)
@@ -296,13 +311,30 @@ controlServer.listen(CONTROL_PORT, "127.0.0.1", () => {
 
 // ---------- node-media-server: RTMP + HTTP-FLV ----------
 const nms = new NodeMediaServer({
-  bind: "0.0.0.0",
+  bind: "0.0.0.0", // RTMP debe aceptar OBS desde la LAN
   notify: { url: `http://127.0.0.1:${CONTROL_PORT}/nms-notify` },
   store: { path: "./data" },
   auth: { play: false, publish: false }, // la clave la valida /nms-notify contra SQLite
   rtmp: { port: RTMP_PORT },
   http: { port: HTTP_FLV_PORT },
 })
+
+/** ¿Un puerto TCP local está escuchando? (para /health real) */
+function tcpListenerAlive(port: number): Promise<boolean> {
+  return new Promise((res) => {
+    const sock = tcpConnect(port, "127.0.0.1")
+    sock.setTimeout(800)
+    sock.on("connect", () => {
+      sock.destroy()
+      res(true)
+    })
+    sock.on("error", () => res(false))
+    sock.on("timeout", () => {
+      sock.destroy()
+      res(false)
+    })
+  })
+}
 
 // Doble capa de validación (defense in depth): si el hook notify fallara,
 // este listener también corta publicaciones con clave incorrecta.
@@ -329,9 +361,22 @@ try {
 // ---------- Arranque ----------
 async function main() {
   await nms.run()
+  // FASE 13: HTTP-FLV re-vinculado a 127.0.0.1 (NMS v4 usa bind global, que
+  // debe ser 0.0.0.0 para el RTMP de OBS). Las TVs reproducen vía el proxy
+  // /api/stream/live.flv — NADIE necesita :8000 desde la red. Configurable
+  // con HTTP_FLV_BIND=0.0.0.0 para despliegues con clientes FLV directos.
+  const flvBind = ENV.HTTP_FLV_BIND || "127.0.0.1"
+  if (flvBind !== "0.0.0.0") {
+    const rawHttp = (nms as unknown as { httpServer?: { httpServer?: { close: () => void; listen: (p: number, h: string, cb: () => void) => void } } }).httpServer?.httpServer
+    if (rawHttp) {
+      await new Promise<void>((res) => rawHttp.close(() => res()))
+      await new Promise<void>((res) => rawHttp.listen(HTTP_FLV_PORT, flvBind, () => res()))
+      log(`🔒 HTTP-FLV re-vinculado a ${flvBind}:${HTTP_FLV_PORT} (solo proxy Next.js)`)
+    }
+  }
   log(`🚀 Servidor de transmisión LISTO (LAN)`)
   log(`   RTMP ingest : rtmp://<IP-DE-ESTE-EQUIPO>:${RTMP_PORT}/${currentApp}`)
-  log(`   HTTP-FLV    : http://<IP-DE-ESTE-EQUIPO>:${HTTP_FLV_PORT}/${currentApp}/<clave>.flv`)
+  log(`   HTTP-FLV    : http://${flvBind}:${HTTP_FLV_PORT}/${currentApp}/<clave>.flv`)
   log(`   Clave       : ${currentKey ? currentKey.slice(0, 4) + "****" : "(no configurada — generar desde el panel)"}`)
   broadcastStream()
   // Refresco periódico para admins (uptime / viewers)

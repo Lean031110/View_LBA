@@ -27,6 +27,7 @@ export async function GET(req: NextRequest) {
   const rtmpUrl = `rtmp://${host}:${s.rtmpPort}/${s.rtmpApp}`
 
   // Estado del mini-servicio de streaming (localhost)
+  // FASE 13: el detalle del servidor (publisherIp, lastSession) es SOLO ADMIN
   let server: {
     ok: boolean
     live: boolean
@@ -43,6 +44,10 @@ export async function GET(req: NextRequest) {
     })
     if (res.ok) server = await res.json()
   } catch {}
+  if (server && user.role !== "ADMIN") {
+    // VIEWER/OPERATOR: estado sin información del publicador
+    server = { ...server, publisherIp: null, since: null }
+  }
 
   const key = s.streamKey?.trim() ?? null
   return NextResponse.json(
