@@ -59,7 +59,27 @@ export async function PATCH(req: NextRequest) {
   if (!["reload", "fullscreen", "audio"].includes(command)) {
     return NextResponse.json({ error: "Comando no válido" }, { status: 400 })
   }
-  await broadcast("screen:command", { type: command, payload: body.payload ?? {} }, "screens", screenCode)
+
+  // FASE 4: el payload NO viaja tal cual a las pantallas — se valida y
+  // reconstruye con esquema estricto por comando (canal cerrado, sin datos
+  // arbitrarios desde el admin hacia los navegadores TV).
+  let payload: Record<string, unknown> = {}
+  if (command === "audio") {
+    const p = (body.payload ?? {}) as Record<string, unknown>
+    const volume = Number(p.volume)
+    if (!Number.isFinite(volume) || volume < 0 || volume > 100) {
+      return NextResponse.json({ error: "Payload audio inválido: volume 0-100" }, { status: 400 })
+    }
+    const deviceId = typeof p.deviceId === "string" ? p.deviceId.slice(0, 128) : null
+    payload = { volume: Math.round(volume), muted: Boolean(p.muted), deviceId }
+  } else if (command === "fullscreen") {
+    const p = (body.payload ?? {}) as Record<string, unknown>
+    payload = { value: Boolean(p.value) }
+  } else {
+    payload = {}
+  }
+
+  await broadcast("screen:command", { type: command, payload }, "screens", screenCode)
   await logAction(auth, "COMMAND", "screens", `${command}${screenCode ? ` → ${screenCode}` : " → todas"}`)
   return NextResponse.json({ ok: true })
 }

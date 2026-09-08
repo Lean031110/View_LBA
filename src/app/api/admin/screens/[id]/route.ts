@@ -4,7 +4,9 @@ import { db } from "@/lib/db"
 import { pickFields, readBody, logAction } from "@/lib/crud"
 
 const SPEC = {
-  code: "s",
+  // FASE 4: `code` eliminado — el código de pantalla es INMUTABLE tras la
+  // creación (es la identidad referida por pantallas registradas, realtime
+  // y snapshots). Cambiarlo por API rompería la vinculación existente.
   name: "s",
   location: "s?",
   notes: "s?",
@@ -16,6 +18,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (isNextResponse(auth)) return auth
   const { id } = await params
   const data = pickFields(await readBody(req), SPEC)
+  if (Object.keys(data).length === 0) {
+    return NextResponse.json({ error: "Sin cambios válidos" }, { status: 400 })
+  }
   const item = await db.screen.update({ where: { id }, data: data as never }).catch(() => null)
   if (!item) return NextResponse.json({ error: "Pantalla no encontrada" }, { status: 404 })
   await logAction(auth, "UPDATE", "screens", item.code)

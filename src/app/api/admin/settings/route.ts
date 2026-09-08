@@ -22,8 +22,6 @@ const SPEC: Record<string, string> = {
   streamEnabled: "b",
   streamUrl: "s?",
   streamProtocol: "s",
-  streamServer: "s?",
-  streamKey: "s?",
   autoplay: "b",
   reconnectBehavior: "s",
   fallbackType: "s",
@@ -50,6 +48,9 @@ const SPEC: Record<string, string> = {
   showSocials: "b",
   showSchedule: "b",
   showTicker: "b",
+  // FASE 4: streamKey y streamServer ELIMINADOS — la clave solo se gestiona
+  // vía /api/admin/stream/rtmp (POST regeneración = ADMIN). Así un OPERATOR
+  // no puede fijar una clave conocida a través de PUT /settings.
 }
 
 function maskKey(key: string | null | undefined): string | null {
@@ -72,6 +73,13 @@ export async function PUT(req: NextRequest) {
   const auth = await requireAuth("OPERATOR")
   if (isNextResponse(auth)) return auth
   const body = await readBody(req)
+  // FASE 4: defensa explícita — streamKey por esta vía está PROHIBIDO
+  if ("streamKey" in body || "streamServer" in body) {
+    return NextResponse.json(
+      { error: "La clave de transmisión solo se gestiona desde /api/admin/stream/rtmp" },
+      { status: 400 }
+    )
+  }
   const data = pickFields(body, SPEC)
   if (Object.keys(data).length === 0) {
     return NextResponse.json({ error: "Sin cambios" }, { status: 400 })

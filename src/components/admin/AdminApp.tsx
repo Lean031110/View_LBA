@@ -56,7 +56,8 @@ const SECTIONS = [
   { id: "screens", label: "Pantallas", icon: MonitorPlay, roles: ["ADMIN", "OPERATOR", "VIEWER"] },
   { id: "appearance", label: "Apariencia", icon: Palette, roles: ["ADMIN", "OPERATOR"] },
   { id: "users", label: "Usuarios", icon: Users, roles: ["ADMIN"] },
-  { id: "logs", label: "Registros", icon: ScrollText, roles: ["ADMIN", "OPERATOR", "VIEWER"] },
+  // FASE 4: auditoría sin VIEWER (el backend también exige OPERATOR+)
+  { id: "logs", label: "Registros", icon: ScrollText, roles: ["ADMIN", "OPERATOR"] },
 ] as const
 
 export default function AdminApp() {

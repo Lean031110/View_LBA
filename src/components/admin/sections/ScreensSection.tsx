@@ -22,6 +22,7 @@ interface FormState { code: string; name: string; location: string; notes: strin
 const emptyForm: FormState = { code: "", name: "", location: "", notes: "", active: true }
 
 export default function ScreensSection({
+  user,
   screensStatus,
   realtimeConnected,
   sendCommand,
@@ -39,6 +40,8 @@ export default function ScreensSection({
   const [form, setForm] = useState<FormState>(emptyForm)
   const [busy, setBusy] = useState(false)
   const { toast } = useToast()
+  // FASE 4: VIEWER solo lectura (el backend también lo exige: PUT/POST/PATCH = OPERATOR+)
+  const canEdit = user.role === "ADMIN" || user.role === "OPERATOR"
 
   const load = () => getJSON<{ items: ScreenRow[] }>("/api/admin/screens").then((d) => setItems(d.items)).catch(() => setItems([]))
   useEffect(() => {
@@ -81,12 +84,16 @@ export default function ScreensSection({
           </p>
         </div>
         <div className="flex gap-2">
-          <Button onClick={() => reloadScreen()} variant="outline" className="border-white/15 bg-white/[0.03] hover:bg-white/10 gap-2">
-            <RotateCw size={15} /> Reiniciar todas
-          </Button>
-          <Button onClick={() => { setForm(emptyForm); setEditing(null); setOpen(true) }} className="bg-amber-500 hover:bg-amber-400 text-black font-bold gap-2">
-            <Plus size={16} /> Nueva pantalla
-          </Button>
+          {canEdit && (
+            <>
+              <Button onClick={() => reloadScreen()} variant="outline" className="border-white/15 bg-white/[0.03] hover:bg-white/10 gap-2">
+                <RotateCw size={15} /> Reiniciar todas
+              </Button>
+              <Button onClick={() => { setForm(emptyForm); setEditing(null); setOpen(true) }} className="bg-amber-500 hover:bg-amber-400 text-black font-bold gap-2">
+                <Plus size={16} /> Nueva pantalla
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -111,7 +118,13 @@ export default function ScreensSection({
                       <div className="font-bold text-white mt-1">{sc.name}</div>
                       {sc.location && <div className="text-xs text-white/40 flex items-center gap-1 mt-0.5"><MapPin size={11} /> {sc.location}</div>}
                     </div>
-                    <Switch checked={sc.active} onCheckedChange={async (v) => { await putJSON(`/api/admin/screens/${sc.id}`, { active: v }).catch(() => {}); load() }} />
+                    {canEdit ? (
+                      <Switch checked={sc.active} onCheckedChange={async (v) => { await putJSON(`/api/admin/screens/${sc.id}`, { active: v }).catch(() => {}); load() }} />
+                    ) : (
+                      <Badge variant="outline" className={`text-[10px] font-bold ${sc.active ? "text-emerald-400/70 border-emerald-500/20" : "text-zinc-500 border-zinc-500/30"}`}>
+                        {sc.active ? "ACTIVA" : "INACTIVA"}
+                      </Badge>
+                    )}
                   </div>
 
                   {live && (
@@ -124,11 +137,15 @@ export default function ScreensSection({
                   )}
 
                   <div className="flex items-center gap-2 pt-1">
-                    <Button size="sm" variant="outline" onClick={() => reloadScreen(sc.code)} className="border-white/12 bg-white/[0.03] hover:bg-white/10 h-7 text-xs gap-1.5">
-                      <RotateCw size={11} /> Reiniciar
-                    </Button>
-                    <Button size="icon" variant="ghost" onClick={() => { setForm({ code: sc.code, name: sc.name, location: sc.location ?? "", notes: sc.notes ?? "", active: sc.active }); setEditing(sc.id); setOpen(true) }} className="h-7 w-7 text-white/60 hover:text-white"><Pencil size={13} /></Button>
-                    <Button size="icon" variant="ghost" onClick={async () => { if (confirm(`¿Eliminar ${sc.code}?`)) { await deleteJSON(`/api/admin/screens/${sc.id}`).catch(() => {}); load() } }} className="h-7 w-7 text-white/60 hover:text-red-400"><Trash2 size={13} /></Button>
+                    {canEdit && (
+                      <>
+                        <Button size="sm" variant="outline" onClick={() => reloadScreen(sc.code)} className="border-white/12 bg-white/[0.03] hover:bg-white/10 h-7 text-xs gap-1.5">
+                          <RotateCw size={11} /> Reiniciar
+                        </Button>
+                        <Button size="icon" variant="ghost" onClick={() => { setForm({ code: sc.code, name: sc.name, location: sc.location ?? "", notes: sc.notes ?? "", active: sc.active }); setEditing(sc.id); setOpen(true) }} className="h-7 w-7 text-white/60 hover:text-white"><Pencil size={13} /></Button>
+                        <Button size="icon" variant="ghost" onClick={async () => { if (confirm(`¿Eliminar ${sc.code}?`)) { await deleteJSON(`/api/admin/screens/${sc.id}`).catch(() => {}); load() } }} className="h-7 w-7 text-white/60 hover:text-red-400"><Trash2 size={13} /></Button>
+                      </>
+                    )}
                   </div>
                 </CardContent>
               </Card>
