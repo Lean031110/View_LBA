@@ -18,6 +18,8 @@ import { getJSON, postJSON } from "../api"
 import type { ScreenStatus } from "@/lib/types"
 import type { StreamServerStatus } from "../AdminApp"
 
+/** Stream de demostración EXTERNO (requiere Internet — no forma parte del
+ *  modo 100% LAN; se configura manualmente como fuente externa opcional). */
 const DEMO_HLS = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
 
 interface RtmpInfo {

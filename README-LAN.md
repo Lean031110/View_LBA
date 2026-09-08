@@ -67,7 +67,8 @@ nohup scripts/stream-supervisor.sh &
 ## Conectar OBS (una sola vez)
 
 1. Abre la administración: `http://IP-DEL-SERVIDOR:3000/?view=admin`
-   (demo: `admin@restaurante.com` / `admin123` — **cámbiala**).
+   (en desarrollo: `bun prisma/seed.ts --with-demo-users` crea el demo; en
+   producción: `bun scripts/init-production.ts` pide tu contraseña propia).
 2. Entra en **Transmisión** → copia la **URL RTMP** y la **Clave de transmisión**
    (botones *Copiar*; la clave solo la ve un administrador).
 3. En OBS: **Configuración → Emisión → Servicio: Personalizado…**

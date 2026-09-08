@@ -125,7 +125,11 @@ Credenciales demo (cámbialas en **Usuarios** tras entrar):
 | Usuario | Correo | Contraseña | Rol |
 |---|---|---|---|
 | Administrador | `admin@restaurante.com` | `admin123` | ADMIN |
-| Operador | `operador@restaurante.com` | `operador123` | OPERATOR |
+
+> ⚠ **Solo desarrollo**: los usuarios demo se crean con
+> `bun prisma/seed.ts --with-demo-users` (nunca en producción). Para
+> producción usa `bun scripts/init-production.ts` y define tu propia
+> contraseña (mínimo 10 caracteres, mayúscula/minúscula/número).
 
 ### Servicios (producción en LAN)
 

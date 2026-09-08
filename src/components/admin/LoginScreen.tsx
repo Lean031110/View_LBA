@@ -82,13 +82,16 @@ export default function LoginScreen({ onLogin }: { onLogin: (user: { id: string;
             {busy ? "Verificando…" : "Entrar"}
           </Button>
 
-          <div className="text-center pt-1">
-            <p className="text-[11px] text-white/30 leading-relaxed">
-              Demo: admin@restaurante.com / admin123
-              <br />
-              Operador: operador@restaurante.com / operador123
-            </p>
-          </div>
+          {/* FASE 18: credenciales demo visibles SOLO en desarrollo */}
+          {process.env.NODE_ENV !== "production" && (
+            <div className="text-center pt-1">
+              <p className="text-[11px] text-white/30 leading-relaxed">
+                Demo: admin@restaurante.com / admin123
+                <br />
+                Operador: operador@restaurante.com / operador123
+              </p>
+            </div>
+          )}
         </form>
       </div>
     </div>

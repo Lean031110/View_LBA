@@ -129,6 +129,7 @@ export default function UsersSection(props: Record<string, unknown>) {
             </div>
             <div className="space-y-2">
               <Label className="text-white/80">{editing ? "Nueva contraseña (opcional)" : "Contraseña *"}</Label>
+              <p className="text-[10px] text-white/35 -mt-0.5">Mínimo 10 caracteres con mayúscula, minúscula y número</p>
               <Input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} autoComplete="new-password" className="bg-white/[0.04] border-white/10" />
             </div>
             <div className="flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.02] px-4 py-2.5">

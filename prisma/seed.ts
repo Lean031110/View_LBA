@@ -1,10 +1,21 @@
-/* Seed inicial — ViewLBA (señalización digital para restaurantes)
-   Ejecutar: bun prisma/seed.ts
+/* Seed — ViewLBA (señalización digital para restaurantes)
+
+FASE 18 (misión): separación DEV / PRODUCCIÓN.
+  · Contenido demo (pantallas, promos, platos, horarios, redes, ticker,
+    settings): seguro, idempotente, imágenes LOCALES (/demo/*) → LAN 100%.
+  · Usuarios demo (credenciales conocidas): SOLO con --with-demo-users
+    (desarrollo). En producción el primer admin se crea con
+    `bun scripts/init-production.ts` (nunca contraseñas públicas conocidas).
+
+Uso:
+  bun prisma/seed.ts                      → contenido demo + settings
+  bun prisma/seed.ts --with-demo-users    → además usuarios demo (SOLO dev)
 */
 import { PrismaClient } from "@prisma/client"
 import { randomBytes, scryptSync } from "crypto"
 
 const db = new PrismaClient()
+const WITH_DEMO_USERS = process.argv.includes("--with-demo-users")
 
 function hashPassword(password: string): string {
   const salt = randomBytes(16).toString("hex")
@@ -13,29 +24,39 @@ function hashPassword(password: string): string {
 }
 
 async function main() {
-  console.log("Seeding database...")
+  console.log(`Seeding database${WITH_DEMO_USERS ? " (con usuarios DEMO — solo desarrollo)" : ""}...`)
 
-  // ---- Users ----
-  await db.user.upsert({
-    where: { email: "admin@restaurante.com" },
-    update: {},
-    create: {
-      email: "admin@restaurante.com",
-      name: "Administrador",
-      passwordHash: hashPassword("admin123"),
-      role: "ADMIN",
-    },
-  })
-  await db.user.upsert({
-    where: { email: "operador@restaurante.com" },
-    update: {},
-    create: {
-      email: "operador@restaurante.com",
-      name: "Operador",
-      passwordHash: hashPassword("operador123"),
-      role: "OPERATOR",
-    },
-  })
+  // ---- Users (FASE 18: solo demo explícito; producción usa init-production) ----
+  if (WITH_DEMO_USERS) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(" Usuarios demo NO se permiten en producción (credenciales públicas conocidas). Usa scripts/init-production.ts")
+    }
+    await db.user.upsert({
+      where: { email: "admin@restaurante.com" },
+      update: {},
+      create: {
+        email: "admin@restaurante.com",
+        name: "Administrador",
+        passwordHash: hashPassword("admin123"),
+        role: "ADMIN",
+      },
+    })
+    await db.user.upsert({
+      where: { email: "operador@restaurante.com" },
+      update: {},
+      create: {
+        email: "operador@restaurante.com",
+        name: "Operador",
+        // demo debil a propósito en DEV; production exige política (validators)
+        passwordHash: hashPassword("operador123"),
+        role: "OPERATOR",
+      },
+    })
+    console.log("  Usuarios demo: admin@restaurante.com/admin123 · operador@restaurante.com/operador123")
+  } else {
+    const users = await db.user.count()
+    console.log(`  Usuarios existentes: ${users} (no se crean usuarios por defecto — FASE 18)`)
+  }
 
   // ---- Screens ----
   const screens = [
@@ -58,7 +79,7 @@ async function main() {
     })
   }
 
-  // ---- Promotions ----
+  // ---- Promotions (FASE 19: imágenes LOCALES /demo/* — sin Internet) ----
   if ((await db.promotion.count()) === 0) {
     await db.promotion.createMany({
       data: [
@@ -69,7 +90,7 @@ async function main() {
           oldPrice: "$399",
           discount: "20% OFF",
           badge: "PROMO DE HOY",
-          imageUrl: "https://z-cdn.chatglm.cn/image-search-mcp/images-ppt/a413db1adb6c.jpg",
+          imageUrl: "/demo/baconburger.jpg",
           duration: 10,
           priority: 10,
           order: 1,
@@ -81,7 +102,7 @@ async function main() {
           oldPrice: "$1160",
           discount: "2X1",
           badge: "ESPECIAL",
-          imageUrl: "https://z-cdn.chatglm.cn/image-search-mcp/images-ppt/e93fcaf83a3e.jpg",
+          imageUrl: "/demo/pizza.jpg",
           duration: 10,
           priority: 8,
           order: 2,
@@ -109,7 +130,7 @@ async function main() {
           name: "CLUB SANDWICH",
           description: "Pan artesanal, pollo, bacon, queso y vegetales frescos",
           price: "$450",
-          imageUrl: "https://z-cdn.chatglm.cn/image-search-mcp/images-ppt/837bda23b10a.jpg",
+          imageUrl: "/demo/club.jpg",
           ingredients: "Pollo · Bacon · Queso · Lechuga · Tomate · Mayonesa de la casa",
           tag: "RECOMENDADO",
           order: 1,
@@ -118,7 +139,7 @@ async function main() {
           name: "SALMÓN A LA PARRILLA",
           description: "Salmón noruego con mantequilla de limón y hierbas",
           price: "$680",
-          imageUrl: "https://z-cdn.chatglm.cn/image-search-mcp/images-ppt/f7d21527356a.jpg",
+          imageUrl: "/demo/salmon.jpg",
           ingredients: "Salmón · Limón · Eneldo · Mantequilla",
           tag: "CHEF",
           order: 2,
@@ -127,7 +148,7 @@ async function main() {
           name: "TACOS DE CAMARÓN",
           description: "Tortilla de maíz, camarones empanizados y salsa de mango",
           price: "$520",
-          imageUrl: "https://z-cdn.chatglm.cn/image-search-mcp/images-ppt/d45b0a87332d.jpg",
+          imageUrl: "/demo/tacos.jpg",
           ingredients: "Camarón · Mango · Aguacate · Cilantro",
           tag: "NUEVO",
           order: 3,
@@ -177,7 +198,10 @@ async function main() {
     },
   })
 
-  console.log("✅ Seed completado. Usuarios: admin@restaurante.com / admin123 · operador@restaurante.com / operador123")
+  console.log("✅ Seed completado (contenido demo con imágenes locales /demo/* — 100% LAN).")
+  if (!WITH_DEMO_USERS && (await db.user.count()) === 0) {
+    console.log("ℹ Sin usuarios aún → crea el primer administrador:  bun scripts/init-production.ts")
+  }
 }
 
 main()
