@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server"
 import { requireAuth, isNextResponse } from "@/lib/auth"
 import { logAction } from "@/lib/crud"
+import { checkSsrfUrl } from "@/lib/ssrf-guard"
 
 /** POST /api/admin/stream-test — verifica desde el servidor que una URL de
- *  stream (m3u8 / mp4 / webm) responde, antes de configurarla en la pantalla. */
+ *  stream (m3u8 / mp4 / webm) responde, antes de configurarla en la pantalla.
+ *  FASE 12: guard SSRF — el servidor NUNCA fetchea destinos internos salvo
+ *  lista explícita (STREAM_TEST_ALLOWED_HOSTS). */
 export async function POST(req: NextRequest) {
   const auth = await requireAuth("OPERATOR")
   if (isNextResponse(auth)) return auth
@@ -11,6 +14,12 @@ export async function POST(req: NextRequest) {
   const url = String(body.url ?? "").trim()
   if (!/^https?:\/\//i.test(url)) {
     return NextResponse.json({ error: "URL no válida (debe iniciar con http:// o https://)" }, { status: 400 })
+  }
+  // FASE 12: SSRF guard ANTES del fetch
+  const guard = checkSsrfUrl(url)
+  if (!guard.allowed) {
+    await logAction(auth, "STREAM_TEST_BLOCKED", "stream", `${url.slice(0, 120)} → ${guard.reason}`)
+    return NextResponse.json({ error: `Bloqueado por política SSRF: ${guard.reason}` }, { status: 400 })
   }
   const t0 = Date.now()
   try {
