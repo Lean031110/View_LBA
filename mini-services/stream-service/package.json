@@ -1,0 +1,1 @@
+{"name":"stream-service","private":true,"scripts":{"dev":"bun --hot index.ts"},"dependencies":{"node-media-server":"^4.3.2"}}

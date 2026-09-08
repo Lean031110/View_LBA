@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1640 400" role="img" aria-labelledby="vlba-title">
+  <title id="vlba-title">ViewLBA — Señalización Digital</title>
+  <defs>
+    <linearGradient id="vlba-grad-mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FBBF24"/>
+      <stop offset="0.55" stop-color="#F59E0B"/>
+      <stop offset="1" stop-color="#EA580C"/>
+    </linearGradient>
+    <linearGradient id="vlba-grad-wave" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FBBF24"/>
+      <stop offset="1" stop-color="#F97316"/>
+    </linearGradient>
+    <linearGradient id="vlba-grad-text" gradientUnits="userSpaceOnUse" x1="460" y1="0" x2="1540" y2="0">
+      <stop offset="0" stop-color="#FBBF24"/>
+      <stop offset="1" stop-color="#F97316"/>
+    </linearGradient>
+  </defs>
+  <!-- Isotipo -->
+  <g transform="scale(0.78)">
+    <rect x="28" y="28" width="456" height="456" rx="104" fill="#10121A"/>
+    <rect x="28" y="28" width="456" height="456" rx="104" fill="none" stroke="url(#vlba-grad-mark)" stroke-width="12" opacity="0.6"/>
+    <path d="M118 150 L192 150 L228 295 L264 150 L338 150 L276 372 L180 372 Z" fill="url(#vlba-grad-mark)"/>
+    <path d="M356 216 a86 86 0 0 1 0 116" fill="none" stroke="url(#vlba-grad-wave)" stroke-width="22" stroke-linecap="round"/>
+    <path d="M392 184 a132 132 0 0 1 0 180" fill="none" stroke="url(#vlba-grad-wave)" stroke-width="22" stroke-linecap="round" opacity="0.55"/>
+  </g>
+  <!-- Wordmark -->
+  <text x="452" y="266" font-family="Inter, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-weight="800" font-size="248" letter-spacing="2">
+    <tspan fill="#FFFFFF">View</tspan><tspan fill="url(#vlba-grad-text)">LBA</tspan>
+  </text>
+  <!-- Tagline -->
+  <text x="462" y="340" font-family="Inter, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-weight="600" font-size="40" letter-spacing="15" fill="#8B8D98">SEÑALIZACIÓN DIGITAL</text>
+</svg>

@@ -1,0 +1,47 @@
+# Dependencias
+node_modules/
+
+# Next.js
+.next/
+out/
+build/
+
+# Base de datos (runtime, se regenera con `bun run setup`)
+db/*.db
+db/*.db-journal
+
+# Entorno y secretos — NUNCA commitear
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Datos en caliente de los mini-servicios
+mini-services/stream-service/data/
+
+# Artefactos locales de desarrollo (capturas, búsquedas, notas)
+scripts/shot_*.png
+scripts/*_search.json
+scripts/tsc-check.log
+scripts/vlm-*.json
+
+# Entorno de desarrollo sandbox (no forman parte del proyecto)
+/skills/
+/.zscripts/
+/download/
+/examples/
+/Caddyfile
+/upload/
+/worklog.md
+tests/python-*.sh
+tests/database-*.sh

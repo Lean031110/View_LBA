@@ -1,0 +1,193 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============ USERS & SECURITY ============
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  passwordHash String
+  role         String    @default("OPERATOR") // ADMIN | OPERATOR | VIEWER
+  active       Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+// ============ SCREENS (multipantalla) ============
+model Screen {
+  id        String   @id @default(cuid())
+  code      String   @unique // TV-001
+  name      String
+  location  String?
+  notes     String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============ PROMOTIONS ============
+model Promotion {
+  id          String    @id @default(cuid())
+  title       String
+  description String?
+  price       String?
+  oldPrice    String?
+  discount    String?
+  badge       String? // "PROMO DE HOY", "2X1", ...
+  imageUrl    String?
+  startDate   DateTime?
+  endDate     DateTime?
+  startTime   String? // "08:00"
+  endTime     String? // "20:00"
+  duration    Int       @default(10) // seconds on carousel
+  priority    Int       @default(0)
+  order       Int       @default(0)
+  active      Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+// ============ DISH OF THE DAY ============
+model Dish {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  price       String?
+  imageUrl    String?
+  ingredients String?
+  tag         String? // "RECOMENDADO"
+  nutrition   String?
+  dayOfWeek   Int? // 0=Sunday .. 6=Saturday, null = any day
+  date        DateTime? // specific date, null = any
+  active      Boolean   @default(true)
+  order       Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+// ============ DAILY SCHEDULE (horarios del día) ============
+model Schedule {
+  id        String   @id @default(cuid())
+  name      String // DESAYUNO / ALMUERZO / CENA
+  startTime String // "07:00"
+  endTime   String // "11:00"
+  dayOfWeek Int? // null = every day
+  icon      String? // coffee | sun | moon | utensils ...
+  color     String? // hex accent
+  active    Boolean  @default(true)
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============ SOCIAL LINKS ============
+model SocialLink {
+  id       String   @id @default(cuid())
+  network  String // FACEBOOK | INSTAGRAM | TIKTOK | WHATSAPP | YOUTUBE | TELEGRAM | X
+  username String?
+  url      String?
+  color    String?
+  active   Boolean  @default(true)
+  order    Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============ TICKER ============
+model TickerMessage {
+  id        String   @id @default(cuid())
+  text      String
+  active    Boolean  @default(true)
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============ GLOBAL SETTINGS (single row) ============
+model Settings {
+  id String @id @default("main")
+
+  // Branding
+  restaurantName String  @default("La Terraza Grill & Bar")
+  logoUrl        String?
+  logoSize       String  @default("md") // sm | md | lg
+  logoPosition   String  @default("right") // left | center | right
+
+  // Clock
+  clockFormat String  @default("12") // 12 | 24
+  showDate    Boolean @default(true)
+  showSeconds Boolean @default(false)
+  showDay     Boolean @default(true)
+  timezone    String  @default("America/Havana")
+  language    String  @default("es")
+
+  // Stream (streamKey NUNCA se envía al cliente)
+  // streamSource:
+  //   "local"   → servidor RTMP integrado (LAN, sin Internet) — el reproductor TV
+  //               usa el proxy /api/stream/live.flv y la clave se valida en el
+  //               mini-servicio stream-service (RTMP :1935 / HTTP-FLV :8000)
+  //   "external"→ URL HLS/MP4 externa (streamUrl/streamProtocol)
+  streamSource       String  @default("local") // local | external
+  rtmpPort           Int     @default(1935)
+  rtmpApp            String  @default("live")
+  rtmpHost           String? // IP manual del servidor (si está vacío se autodetecta la IP LAN)
+  streamEnabled      Boolean @default(true)
+  streamUrl          String?
+  streamProtocol     String  @default("hls") // hls | mp4
+  streamServer       String?
+  streamKey          String?
+  autoplay           Boolean @default(true)
+  reconnectBehavior  String  @default("auto") // auto | manual
+  fallbackType       String  @default("message") // message | image | video
+  fallbackMessage    String  @default("LA TRANSMISIÓN SE REANUDARÁ EN BREVE")
+  fallbackImageUrl   String?
+  fallbackVideoUrl   String?
+
+  // Audio
+  audioVolume     Int     @default(80)
+  audioMuted      Boolean @default(true)
+  audioDeviceId   String?
+  audioAutoUnmute Boolean @default(false)
+
+  // Ticker
+  tickerEnabled Boolean @default(true)
+  tickerSpeed   Int     @default(55) // px per second
+  tickerPaused  Boolean @default(false)
+
+  // Visual theme
+  primaryColor      String  @default("#f5a623")
+  accentColor       String  @default("#e8452c")
+  bgColor           String  @default("#0b0b0f")
+  surfaceColor      String  @default("#15151b")
+  fontScale         Float   @default(1)
+  streamRatio       Float   @default(0.62)
+  animationsEnabled Boolean @default(true)
+  animationSpeed    Float   @default(1)
+
+  // Module visibility
+  showPromotions Boolean @default(true)
+  showDish       Boolean @default(true)
+  showSocials    Boolean @default(true)
+  showSchedule   Boolean @default(true)
+  showTicker     Boolean @default(true)
+
+  updatedAt DateTime @updatedAt
+}
+
+// ============ AUDIT LOG ============
+model Log {
+  id        String   @id @default(cuid())
+  userId    String?
+  userName  String?
+  action    String // LOGIN | LOGOUT | CREATE | UPDATE | DELETE | STREAM | SCREEN
+  section   String?
+  details   String?
+  createdAt DateTime @default(now())
+}

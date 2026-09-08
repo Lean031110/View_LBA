@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="vlba-title">
+  <title id="vlba-title">ViewLBA</title>
+  <defs>
+    <linearGradient id="vlba-grad-mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FBBF24"/>
+      <stop offset="0.55" stop-color="#F59E0B"/>
+      <stop offset="1" stop-color="#EA580C"/>
+    </linearGradient>
+    <linearGradient id="vlba-grad-wave" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FBBF24"/>
+      <stop offset="1" stop-color="#F97316"/>
+    </linearGradient>
+  </defs>
+  <!-- Pantalla -->
+  <rect x="28" y="28" width="456" height="456" rx="104" fill="#10121A"/>
+  <rect x="28" y="28" width="456" height="456" rx="104" fill="none" stroke="url(#vlba-grad-mark)" stroke-width="12" opacity="0.6"/>
+  <!-- V -->
+  <path d="M118 150 L192 150 L228 295 L264 150 L338 150 L276 372 L180 372 Z" fill="url(#vlba-grad-mark)"/>
+  <!-- Ondas de transmisión -->
+  <path d="M356 216 a86 86 0 0 1 0 116" fill="none" stroke="url(#vlba-grad-wave)" stroke-width="22" stroke-linecap="round"/>
+  <path d="M392 184 a132 132 0 0 1 0 180" fill="none" stroke="url(#vlba-grad-wave)" stroke-width="22" stroke-linecap="round" opacity="0.55"/>
+</svg>

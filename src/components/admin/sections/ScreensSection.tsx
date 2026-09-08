@@ -1,0 +1,187 @@
+"use client"
+
+import { useEffect, useState } from "react"
+import { MonitorPlay, Plus, Trash2, Loader2, RotateCw, Pencil, MapPin, Terminal } from "lucide-react"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Switch } from "@/components/ui/switch"
+import { Badge } from "@/components/ui/badge"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+import { useToast } from "@/hooks/use-toast"
+import { getJSON, postJSON, putJSON, deleteJSON, patchJSON } from "../api"
+import type { ScreenStatus } from "@/lib/types"
+
+interface ScreenRow {
+  id: string; code: string; name: string; location: string | null; notes: string | null; active: boolean
+  online?: boolean; live?: ScreenStatus | null
+}
+
+interface FormState { code: string; name: string; location: string; notes: string; active: boolean }
+const emptyForm: FormState = { code: "", name: "", location: "", notes: "", active: true }
+
+export default function ScreensSection({
+  screensStatus,
+  realtimeConnected,
+  sendCommand,
+}: {
+  user: { name: string; role: string }
+  screensStatus: ScreenStatus[]
+  realtimeConnected: boolean
+  sendCommand: (t: string, p?: Record<string, unknown>, s?: string) => void
+  section: string
+  setSection: (s: string) => void
+}) {
+  const [items, setItems] = useState<ScreenRow[] | null>(null)
+  const [open, setOpen] = useState(false)
+  const [editing, setEditing] = useState<string | null>(null)
+  const [form, setForm] = useState<FormState>(emptyForm)
+  const [busy, setBusy] = useState(false)
+  const { toast } = useToast()
+
+  const load = () => getJSON<{ items: ScreenRow[] }>("/api/admin/screens").then((d) => setItems(d.items)).catch(() => setItems([]))
+  useEffect(() => {
+    load()
+     
+  }, [])
+
+  const liveByCode = new Map(screensStatus.map((s) => [s.screenCode, s]))
+
+  const submit = async () => {
+    if (!form.code.trim() || !form.name.trim()) return toast({ title: "Código y nombre requeridos", variant: "destructive" })
+    setBusy(true)
+    try {
+      if (editing) await putJSON(`/api/admin/screens/${editing}`, form)
+      else await postJSON("/api/admin/screens", form)
+      setOpen(false)
+      load()
+      toast({ title: "Pantalla guardada" })
+    } catch (e) {
+      toast({ title: "Error", description: (e as Error).message, variant: "destructive" })
+    } finally { setBusy(false) }
+  }
+
+  const reloadScreen = async (code?: string) => {
+    try {
+      await patchJSON("/api/admin/screens", { command: "reload", screenCode: code ?? undefined })
+      toast({ title: "Comando enviado", description: code ? `${code} se recargará en segundos.` : "Todas las pantallas se recargarán." })
+    } catch (e) {
+      toast({ title: "Error", description: (e as Error).message, variant: "destructive" })
+    }
+  }
+
+  return (
+    <div className="p-6 space-y-6 max-w-5xl">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-white flex items-center gap-2.5"><MonitorPlay size={22} className="text-amber-400" /> Pantallas</h1>
+          <p className="text-white/45 text-sm mt-0.5">
+            Multipantalla: TV-001, TV-002… · <span className={realtimeConnected ? "text-emerald-400" : "text-white/40"}>{realtimeConnected ? "realtime conectado" : "realtime sin conexión"}</span>
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button onClick={() => reloadScreen()} variant="outline" className="border-white/15 bg-white/[0.03] hover:bg-white/10 gap-2">
+            <RotateCw size={15} /> Reiniciar todas
+          </Button>
+          <Button onClick={() => { setForm(emptyForm); setEditing(null); setOpen(true) }} className="bg-amber-500 hover:bg-amber-400 text-black font-bold gap-2">
+            <Plus size={16} /> Nueva pantalla
+          </Button>
+        </div>
+      </div>
+
+      {items === null ? (
+        <div className="flex justify-center py-16"><Loader2 size={30} className="animate-spin text-amber-400" /></div>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {items.map((sc) => {
+            const live = liveByCode.get(sc.code)
+            const online = live?.online ?? false
+            return (
+              <Card key={sc.id} className={`bg-white/[0.03] border-white/10 ${!sc.active ? "opacity-50" : ""}`}>
+                <CardContent className="pt-5 pb-4 space-y-3">
+                  <div className="flex items-start justify-between">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs text-amber-300">{sc.code}</span>
+                        <Badge variant="outline" className={`text-[10px] font-bold ${online ? "text-emerald-400 border-emerald-500/30 bg-emerald-500/10" : "text-zinc-500 border-zinc-500/30 bg-zinc-500/10"}`}>
+                          {online ? "● ONLINE" : "OFFLINE"}
+                        </Badge>
+                      </div>
+                      <div className="font-bold text-white mt-1">{sc.name}</div>
+                      {sc.location && <div className="text-xs text-white/40 flex items-center gap-1 mt-0.5"><MapPin size={11} /> {sc.location}</div>}
+                    </div>
+                    <Switch checked={sc.active} onCheckedChange={async (v) => { await putJSON(`/api/admin/screens/${sc.id}`, { active: v }).catch(() => {}); load() }} />
+                  </div>
+
+                  {live && (
+                    <div className="text-[11px] text-white/45 space-y-0.5 rounded-lg bg-white/[0.02] border border-white/8 px-3 py-2">
+                      <div className="flex justify-between"><span>Resolución</span><span className="font-mono text-white/60">{live.resolution || "—"}</span></div>
+                      <div className="flex justify-between"><span>Stream</span><span className="font-mono text-white/60">{live.streamState}</span></div>
+                      {live.streamInfo?.uptime ? <div className="flex justify-between"><span>Uptime</span><span className="font-mono text-white/60">{Math.floor(live.streamInfo.uptime / 60)} min</span></div> : null}
+                      {live.streamInfo?.resolution ? <div className="flex justify-between"><span>Video</span><span className="font-mono text-white/60">{live.streamInfo.resolution}</span></div> : null}
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2 pt-1">
+                    <Button size="sm" variant="outline" onClick={() => reloadScreen(sc.code)} className="border-white/12 bg-white/[0.03] hover:bg-white/10 h-7 text-xs gap-1.5">
+                      <RotateCw size={11} /> Reiniciar
+                    </Button>
+                    <Button size="icon" variant="ghost" onClick={() => { setForm({ code: sc.code, name: sc.name, location: sc.location ?? "", notes: sc.notes ?? "", active: sc.active }); setEditing(sc.id); setOpen(true) }} className="h-7 w-7 text-white/60 hover:text-white"><Pencil size={13} /></Button>
+                    <Button size="icon" variant="ghost" onClick={async () => { if (confirm(`¿Eliminar ${sc.code}?`)) { await deleteJSON(`/api/admin/screens/${sc.id}`).catch(() => {}); load() } }} className="h-7 w-7 text-white/60 hover:text-red-400"><Trash2 size={13} /></Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Instrucciones de vinculación */}
+      <Card className="bg-white/[0.03] border-white/10">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm text-white/70 flex items-center gap-2"><Terminal size={14} className="text-white/40" /> Vincular un televisor</CardTitle>
+        </CardHeader>
+        <CardContent className="text-xs text-white/45 leading-relaxed space-y-1.5">
+          <p>1. Abre el navegador del TV (o mini PC / Android TV) en la URL de la plataforma con <code className="text-amber-300/80 bg-white/5 px-1 rounded">?view=tv</code></p>
+          <p>2. La primera vez, selecciona qué pantalla es (TV-001, TV-002…). Queda guardada en el navegador del dispositivo.</p>
+          <p>3. Para cambiar la identidad después: pulsa la tecla <kbd className="bg-white/8 px-1 rounded text-white/70">S</kbd> en la pantalla TV.</p>
+        </CardContent>
+      </Card>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="bg-[#14141b] border-white/12 max-w-lg">
+          <DialogHeader><DialogTitle className="text-white">{editing ? "Editar pantalla" : "Nueva pantalla"}</DialogTitle></DialogHeader>
+          <div className="grid grid-cols-2 gap-4 py-2">
+            <div className="space-y-2">
+              <Label className="text-white/80">Código *</Label>
+              <Input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })} placeholder="TV-004" disabled={Boolean(editing)} className="bg-white/[0.04] border-white/10 font-mono" />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-white/80">Nombre *</Label>
+              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="TV Terraza" className="bg-white/[0.04] border-white/10" />
+            </div>
+            <div className="space-y-2 col-span-2">
+              <Label className="text-white/80">Ubicación</Label>
+              <Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="Terraza norte" className="bg-white/[0.04] border-white/10" />
+            </div>
+            <div className="space-y-2 col-span-2">
+              <Label className="text-white/80">Notas</Label>
+              <Input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Pantalla 75&quot; HDMI 2" className="bg-white/[0.04] border-white/10" />
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.02] px-4 py-2.5 col-span-2">
+              <Label className="text-white/85">Activa</Label>
+              <Switch checked={form.active} onCheckedChange={(v) => setForm({ ...form, active: v })} />
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setOpen(false)} className="border-white/15 bg-transparent hover:bg-white/5">Cancelar</Button>
+            <Button onClick={submit} disabled={busy} className="bg-amber-500 hover:bg-amber-400 text-black font-bold gap-2">
+              {busy && <Loader2 size={15} className="animate-spin" />} Guardar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
