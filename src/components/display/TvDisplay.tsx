@@ -18,6 +18,7 @@ import ScreenPicker from "./ScreenPicker"
 
 const SCREEN_KEY = "signage.screenCode"
 const SCREEN_CHOSEN_KEY = "signage.screenChosen"
+const SCREEN_TOKEN_KEY = "signage.screenToken" // token de pairing (FASE 5/32)
 
 /** ¿La promoción está dentro de su ventana de fecha/hora? */
 function promoVisible(now: Date, p: ContentBundle["promotions"][number]): boolean {
@@ -98,7 +99,16 @@ export default function TvDisplay() {
         screenCode: localStorage.getItem(SCREEN_KEY) ?? "ANON",
         resolution: `${window.screen.width}×${window.screen.height}`,
         userAgent: navigator.userAgent.slice(0, 120),
+        // FASE 5: token de pairing si la pantalla fue emparejada
+        token: localStorage.getItem(SCREEN_TOKEN_KEY) ?? undefined,
       })
+    })
+
+    // FASE 5: la pantalla no fue aceptada por el servicio (código desconocido,
+    // inactiva o token inválido) → mostrar el selector para re-vincular
+    socket.on("screen:rejected", (d: { reason?: string; message?: string }) => {
+      console.warn("[TV] Registro rechazado:", d?.reason)
+      setShowPicker(true)
     })
 
     socket.on("content:update", () => fetchContent())

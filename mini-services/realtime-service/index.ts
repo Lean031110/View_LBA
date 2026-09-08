@@ -7,11 +7,33 @@
  *
  * El Next.js API llama a POST /broadcast (con token interno) para notificar
  * cambios de contenido a las pantallas en tiempo real.
+ *
+ * FASE 5 (misión) — seguridad del servicio:
+ *   · CORS sin "*": solo orígenes propios/LAN/configurados (anti-CSWSH).
+ *   · admin:register / admin:command EXIGEN cookie de sesión válida
+ *     (HMAC + expiración + usuario activo + authVersion contra SQLite).
+ *   · screen:register valida contra la tabla Screen: código conocido +
+ *     pantalla activa + token de pairing si está configurado (sha256).
+ *   · Los eventos hacia pantallas se sanean (sin publisherIp).
+ *   · GET /health (3004) para el backend y el supervisor.
  */
 import { createServer, IncomingMessage, ServerResponse } from "http"
 import { readFileSync } from "fs"
 import { resolve } from "path"
 import { Server, Socket } from "socket.io"
+import { Database } from "bun:sqlite"
+import {
+  parseCookie,
+  verifySessionToken,
+  checkAdminSession,
+  checkScreenAuth,
+  originAllowed,
+  sanitizeForScreens,
+  sha256Hex,
+  type AdminIdentity,
+  type DbUserRow,
+  type ScreenAuthRow,
+} from "./auth"
 
 // ---------- Entorno: .env del raíz del proyecto (independiente del CWD) ----------
 function parseEnvFile(path: string): Record<string, string> {
@@ -48,14 +70,86 @@ function requireRealtimeToken(): string {
   return t
 }
 
-const PORT = 3003 // Socket.io (navegadores, vía Caddy)
-const INTERNAL_PORT = 3004 // API interna (solo localhost, llamado desde Next.js)
-const INTERNAL_TOKEN = requireRealtimeToken()
-const OFFLINE_AFTER_MS = 45_000 // sin heartbeat → pantalla offline
+function requireAuthSecret(): string {
+  const t = (ENV.AUTH_SECRET || "").trim()
+  const forbidden = new Set([
+    "signage-dev-secret-change-me",
+    "cambiar-por-un-secreto-largo-y-aleatorio",
+    "changeme",
+    "change-me",
+  ])
+  if (!t || t.length < 24 || forbidden.has(t.toLowerCase())) {
+    console.error(
+      "✗ AUTH_SECRET inválido o ausente (necesario para validar sesiones admin en el handshake). Genera uno real (openssl rand -hex 24)."
+    )
+    process.exit(1)
+  }
+  return t
+}
 
+const INTERNAL_TOKEN = requireRealtimeToken()
+const AUTH_SECRET = requireAuthSecret()
+const SESSION_COOKIE = "signage_session"
+const ALLOWED_ORIGINS = (ENV.ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean)
+
+const PORT = Number(ENV.REALTIME_PORT || 3003) // Socket.io (navegadores, vía Caddy o LAN)
+const INTERNAL_PORT = Number(ENV.REALTIME_INTERNAL_PORT || 3004) // API interna (solo localhost)
+const OFFLINE_AFTER_MS = 45_000 // sin heartbeat → pantalla offline
+const DB_PATH = (() => {
+  const raw = (ENV.DATABASE_URL || `file:${resolve(ROOT_DIR, "db", "custom.db")}`).replace(/^file:/, "")
+  return raw.startsWith("/") ? raw : resolve(ROOT_DIR, "prisma", raw)
+})()
+
+// ---------- DB SQLite (readonly: solo validaciones de auth) ----------
+let dbHandle: Database | null = null
+function queryRow<T>(sql: string, ...params: (string | number)[]): T | null {
+  try {
+    dbHandle ??= new Database(DB_PATH, { readonly: true })
+    return (dbHandle.query(sql).get(...params) as T) ?? null
+  } catch {
+    // DB bloqueada/ausente → reabrir en el siguiente intento
+    try {
+      dbHandle?.close()
+    } catch {}
+    dbHandle = null
+    return null
+  }
+}
+function findUser(uid: string): DbUserRow | null {
+  return queryRow<DbUserRow>("SELECT id, role, active, authVersion FROM User WHERE id = ?", uid)
+}
+function findScreen(code: string): ScreenAuthRow | null {
+  return queryRow<ScreenAuthRow>("SELECT code, active, tokenHash FROM Screen WHERE code = ?", code)
+}
+
+// (lastSeenAt persistido con conexión efímera de escritura, throttled)
+const LASTSEEN_WRITE_INTERVAL = 120_000 // por pantalla
+const lastSeenWritten = new Map<string, number>()
+function persistLastSeen(code: string): void {
+  const now = Date.now()
+  const last = lastSeenWritten.get(code) ?? 0
+  if (now - last < LASTSEEN_WRITE_INTERVAL) return
+  lastSeenWritten.set(code, now)
+  try {
+    const w = new Database(DB_PATH, { timeout: 4000 })
+    try {
+      w.query("UPDATE Screen SET lastSeenAt = ? WHERE code = ?").run(new Date().toISOString(), code)
+    } finally {
+      w.close()
+    }
+  } catch {
+    // no crítico: el snapshot en memoria siempre manda
+  }
+}
+
+// ---------- Estado en memoria ----------
 interface ScreenEntry {
   socketId: string
   screenCode: string
+  verified: boolean // ¿presentó token de pairing válido?
   resolution: string
   userAgent: string
   connectedAt: number
@@ -71,19 +165,37 @@ interface ScreenEntry {
 }
 
 const screens = new Map<string, ScreenEntry>() // key: socketId
-const admins = new Set<string>() // socketIds
+const admins = new Map<string, AdminIdentity>() // key: socketId
 
 // Puerto 3003: socket.io puro (los endpoints HTTP los maneja el servidor interno en 3004)
 const io = new Server(createServer(), {
   path: "/",
-  cors: { origin: "*", methods: ["GET", "POST"] },
+  cors: {
+    origin: (origin, cb) => {
+      // El host del handshake no está disponible en este callback; se valida
+      // por host del origin: privados/LAN + explícitos. La coincidencia exacta
+      // con el Host de la petición se cubre en connectionAllowed().
+      cb(null, originAllowed(origin, undefined, ALLOWED_ORIGINS))
+    },
+    methods: ["GET", "POST"],
+    credentials: true,
+  },
   pingTimeout: 60000,
   pingInterval: 25000,
 })
 
+/** Segunda capa CORS: origen cuyo host NO coincide con el Host del handshake
+ *  ni es privado ni está configurado → se desconecta de inmediato. */
+function connectionAllowed(socket: Socket): boolean {
+  const origin = socket.handshake.headers.origin
+  const host = socket.handshake.headers.host
+  return originAllowed(origin, host, ALLOWED_ORIGINS)
+}
+
 function snapshot() {
   return Array.from(screens.values()).map((s) => ({
     screenCode: s.screenCode,
+    verified: s.verified,
     resolution: s.resolution,
     userAgent: s.userAgent,
     connectedAt: s.connectedAt,
@@ -97,46 +209,80 @@ function snapshot() {
 function emitToTarget(event: string, payload: unknown, target?: string, screenCode?: string) {
   if (target === "admins") return io.to("admins").emit(event, payload)
   if (target === "screens") {
+    const safe = sanitizeForScreens(payload)
     if (screenCode) {
-      // Solo a la pantalla indicada
       for (const s of screens.values()) {
-        if (s.screenCode === screenCode) io.to(s.socketId).emit(event, payload)
+        if (s.screenCode === screenCode) io.to(s.socketId).emit(event, safe)
       }
     } else {
-      io.to("screens").emit(event, payload)
+      io.to("screens").emit(event, safe)
     }
     return
   }
-  io.emit(event, payload)
+  // target "all" (o vacío): admins reciben todo; pantallas reciben el payload saneado
+  io.to("admins").emit(event, payload)
+  io.to("screens").emit(event, sanitizeForScreens(payload))
 }
 
 function pushSnapshotToAdmins() {
   io.to("admins").emit("screens:snapshot", { screens: snapshot(), ts: Date.now() })
 }
 
+// ---------- Handshake: identidad admin desde la cookie de sesión ----------
+function adminFromHandshake(socket: Socket): AdminIdentity | null {
+  const cookie = parseCookie(socket.handshake.headers.cookie as string | undefined, SESSION_COOKIE)
+  if (!cookie) return null
+  const payload = verifySessionToken(cookie, AUTH_SECRET)
+  if (!payload) return null
+  const user = findUser(payload.uid)
+  return checkAdminSession(payload, user)
+}
+
 io.on("connection", (socket: Socket) => {
+  // Capa 2 CORS (host del handshake) + identidad admin del handshake
+  if (!connectionAllowed(socket)) {
+    socket.disconnect(true)
+    return
+  }
+  const admin = adminFromHandshake(socket)
+
   // ---------- Pantallas TV ----------
-  socket.on("screen:register", (data: { screenCode: string; resolution: string; userAgent: string }) => {
-    socket.join("screens")
-    screens.set(socket.id, {
-      socketId: socket.id,
-      screenCode: data.screenCode || "UNKNOWN",
-      resolution: data.resolution,
-      userAgent: data.userAgent,
-      connectedAt: Date.now(),
-      lastSeen: Date.now(),
-      streamState: "connecting",
-      streamInfo: {},
-    })
-    pushSnapshotToAdmins()
-    socket.emit("screen:registered", { ok: true, screenCode: data.screenCode })
-  })
+  socket.on(
+    "screen:register",
+    (data: { screenCode: string; resolution: string; userAgent: string; token?: string }) => {
+      const code = String(data?.screenCode || "").trim()
+      const auth = checkScreenAuth(code, data?.token ? String(data.token) : undefined, findScreen(code))
+      if (!auth.ok) {
+        // Código inventado, pantalla inactiva o token incorrecto → RECHAZO
+        const reason = auth.reason === "unknown" ? "pantalla no reconocida" : auth.reason === "inactive" ? "pantalla inactiva" : "token de pantalla inválido"
+        console.log(`⛔ [realtime] Registro de pantalla RECHAZADO (${code || "?"}): ${reason}`)
+        socket.emit("screen:rejected", { reason: auth.reason, message: reason })
+        return
+      }
+      socket.join("screens")
+      screens.set(socket.id, {
+        socketId: socket.id,
+        screenCode: code,
+        verified: auth.verified,
+        resolution: data.resolution,
+        userAgent: data.userAgent,
+        connectedAt: Date.now(),
+        lastSeen: Date.now(),
+        streamState: "connecting",
+        streamInfo: {},
+      })
+      persistLastSeen(code)
+      pushSnapshotToAdmins()
+      socket.emit("screen:registered", { ok: true, screenCode: code, verified: auth.verified })
+    }
+  )
 
   socket.on("screen:heartbeat", (data: { resolution?: string }) => {
     const s = screens.get(socket.id)
     if (s) {
       s.lastSeen = Date.now()
       if (data.resolution) s.resolution = data.resolution
+      persistLastSeen(s.screenCode)
     }
   })
 
@@ -166,15 +312,35 @@ io.on("connection", (socket: Socket) => {
     }
   })
 
-  // ---------- Admin ----------
+  // ---------- Admin (EXIGE sesión válida en el handshake) ----------
   socket.on("admin:register", () => {
+    if (!admin) {
+      console.log("⛔ [realtime] admin:register SIN sesión válida — rechazado")
+      socket.emit("admin:rejected", { message: "Sesión de administración no válida" })
+      return
+    }
+    if (admin.role !== "ADMIN" && admin.role !== "OPERATOR" && admin.role !== "VIEWER") {
+      socket.emit("admin:rejected", { message: "Rol sin acceso" })
+      return
+    }
     socket.join("admins")
-    admins.add(socket.id)
+    admins.set(socket.id, admin)
     socket.emit("screens:snapshot", { screens: snapshot(), ts: Date.now() })
   })
 
   socket.on("admin:command", (data: { type: string; screenCode?: string; payload?: unknown }) => {
-    // Comandos: reload | fullscreen | audio | ticker-pause ...
+    const identity = admins.get(socket.id)
+    if (!identity) {
+      console.log(`⛔ [realtime] admin:command sin autenticar desde ${socket.handshake.address ?? "?"} — ignorado`)
+      socket.emit("admin:rejected", { message: "No autenticado" })
+      return
+    }
+    // Solo roles operativos pueden enviar comandos (VIEWER observa)
+    if (identity.role !== "ADMIN" && identity.role !== "OPERATOR") {
+      socket.emit("admin:rejected", { message: "Rol sin permiso para comandos" })
+      return
+    }
+    // Comandos: reload | fullscreen | audio ... (payload ya validado por el backend Next.js)
     emitToTarget("screen:command", data, "screens", data.screenCode)
   })
 
@@ -203,17 +369,34 @@ setInterval(() => {
   if (now % 30_000 < 1_000) pushSnapshotToAdmins()
 }, 15_000)
 
-// Servidor socket.io (3003) — usado por navegadores vía Caddy
+// Servidor socket.io (3003) — usado por navegadores vía Caddy o LAN directa
 io.listen(PORT)
 
 // ---------- Servidor HTTP interno (3004, localhost) ----------
 const internalServer = createServer((req: IncomingMessage, res: ServerResponse) => {
-  res.setHeader("Access-Control-Allow-Origin", "*")
-  res.setHeader("Access-Control-Allow-Headers", "*")
+  // La API interna es localhost-only (bind 127.0.0.1); el navegador nunca la toca.
+  res.setHeader("Access-Control-Allow-Origin", "http://127.0.0.1")
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-internal-token")
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
   if (req.method === "OPTIONS") {
     res.writeHead(204)
     return res.end()
+  }
+
+  // FASE 6: health real para el backend y el supervisor
+  if (req.method === "GET" && req.url?.startsWith("/health")) {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
+    return res.end(
+      JSON.stringify({
+        ok: true,
+        service: "realtime-service",
+        uptimeSec: Math.floor(process.uptime()),
+        socketPort: PORT,
+        screensOnline: screens.size,
+        adminsOnline: admins.size,
+        ts: Date.now(),
+      })
+    )
   }
 
   if (req.method === "GET" && req.url?.startsWith("/status")) {
@@ -256,6 +439,7 @@ const internalServer = createServer((req: IncomingMessage, res: ServerResponse) 
 
 internalServer.listen(INTERNAL_PORT, "127.0.0.1", () => {
   console.log(`✅ Realtime service: socket.io en ${PORT} · API interna en ${INTERNAL_PORT}`)
+  console.log(`   Auth admin: cookie de sesión (HMAC+authVersion) · Pantallas: token pairing (sha256)`)
 })
 
 process.on("SIGTERM", () => {
@@ -266,3 +450,5 @@ process.on("SIGINT", () => {
   io.close()
   internalServer.close(() => process.exit(0))
 })
+
+export { sha256Hex } // re-export para tests

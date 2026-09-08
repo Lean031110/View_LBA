@@ -24,17 +24,36 @@ async function liveStatus(): Promise<ScreenStatus[]> {
   }
 }
 
+/**
+ * FASE 6 (misión): estado REAL del servicio realtime — se comprueba el
+ * endpoint /health con timeout corto. NUNCA se infiere "online" porque
+ * existan pantallas (bug anterior: `screens.length >= 0` siempre true).
+ */
+async function realtimeOnline(): Promise<boolean> {
+  try {
+    const res = await fetch("http://127.0.0.1:3004/health", {
+      cache: "no-store",
+      signal: AbortSignal.timeout(1500),
+    })
+    if (!res.ok) return false
+    const data = (await res.json()) as { ok?: boolean }
+    return data.ok === true
+  } catch {
+    return false // caído o timeout → false
+  }
+}
+
 export async function GET() {
   const auth = await requireAuth("VIEWER")
   if (isNextResponse(auth)) return auth
-  const [screens, live] = await Promise.all([db.screen.findMany({ orderBy: { code: "asc" } }), liveStatus()])
+  const [screens, live, rtOnline] = await Promise.all([db.screen.findMany({ orderBy: { code: "asc" } }), liveStatus(), realtimeOnline()])
   const liveByCode = new Map(live.map((l) => [l.screenCode, l]))
   const items = screens.map((s) => ({
     ...s,
-    online: liveByCode.get(s.code)?.online ?? false,
+    online: rtOnline ? (liveByCode.get(s.code)?.online ?? false) : false,
     live: liveByCode.get(s.code) ?? null,
   }))
-  return NextResponse.json({ items, realtimeOnline: live.length > 0 || screens.length >= 0 })
+  return NextResponse.json({ items, realtimeOnline: rtOnline })
 }
 
 export async function POST(req: NextRequest) {

@@ -26,11 +26,17 @@ model User {
 // ============ SCREENS (multipantalla) ============
 model Screen {
   id        String   @id @default(cuid())
-  code      String   @unique // TV-001
+  code      String   @unique // TV-001 (inmutable tras creación)
   name      String
   location  String?
   notes     String?
   active    Boolean  @default(true)
+  // FASE 5/32: identidad real de la pantalla (pairing)
+  // tokenHash = sha256(screenToken); el token en claro SOLO se muestra una
+  // vez al generarlo/regenerarlo desde el panel (nunca se guarda en claro).
+  tokenHash    String?
+  lastSeenAt   DateTime?
+  metadata     String? // JSON: { resolution, userAgent, audioDevices? ... }
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
