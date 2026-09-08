@@ -32,17 +32,18 @@ function promoVisible(now: Date, p: ContentBundle["promotions"][number]): boolea
   return true
 }
 
-/** Elige el plato del día (por fecha/día de la semana, con fallback) */
-function pickDish(now: Date, dishes: ContentBundle["dishes"]) {
+/** Sugerencias del día visibles hoy: fecha específica → día de semana → genéricas.
+ *  Devuelve LISTA (varias sugerencias rotan en el banner con auto-slide). */
+function pickDishes(now: Date, dishes: ContentBundle["dishes"]) {
   const today = now.getDay()
   const iso = now.toISOString().slice(0, 10)
-  return (
-    dishes.find((d) => d.date && d.date.slice(0, 10) === iso) ??
-    dishes.find((d) => d.dayOfWeek === today && !d.date) ??
-    dishes.find((d) => d.dayOfWeek == null && !d.date) ??
-    dishes[0] ??
-    null
-  )
+  const byDate = dishes.filter((d) => d.date && d.date.slice(0, 10) === iso)
+  const byDay = dishes.filter((d) => d.dayOfWeek === today && !d.date)
+  const generic = dishes.filter((d) => d.dayOfWeek == null && !d.date)
+  if (byDate.length > 0) return byDate
+  if (byDay.length > 0) return byDay
+  if (generic.length > 0) return generic
+  return dishes.slice(0, 1)
 }
 
 /**
@@ -257,7 +258,7 @@ export default function TvDisplay() {
   const s: PublicSettings | null = content?.settings ?? null
   const now = useMemo(() => new Date(), [content])
   const activePromos = useMemo(() => (content ? content.promotions.filter((p) => promoVisible(now, p)) : []), [content, now])
-  const dish = useMemo(() => (content ? pickDish(now, content.dishes) : null), [content, now])
+  const dishes = useMemo(() => (content ? pickDishes(now, content.dishes) : []), [content, now])
   const tickerTexts = useMemo(() => content?.ticker.map((t) => t.text) ?? [], [content])
 
   const handleSelectScreen = (code: string | null) => {
@@ -309,7 +310,7 @@ export default function TvDisplay() {
     )
   }
 
-  const leftWidth = Math.round((1 - (s?.streamRatio ?? 0.62)) * 100)
+  const leftWidth = Math.round((1 - (s?.streamRatio ?? 0.5)) * 100)
   const rightWidth = 100 - leftWidth
 
   return (
@@ -346,7 +347,7 @@ export default function TvDisplay() {
           paddingBottom: "1.2vh",
         }}
       >
-        {/* Columna izquierda */}
+        {/* Columna izquierda: promociones dominantes + banner compacto de sugerencias */}
         <div className="tv-left-col flex flex-col gap-[1vh] min-h-0">
           {s!.showPromotions && activePromos.length > 0 && (
             <PromotionsCarousel
@@ -355,7 +356,9 @@ export default function TvDisplay() {
               animationSpeed={s!.animationSpeed}
             />
           )}
-          {s!.showDish && <DishOfTheDay dish={dish} animationsEnabled={s!.animationsEnabled} animationSpeed={s!.animationSpeed} />}
+          {s!.showDish && (
+            <DishOfTheDay dishes={dishes} animationsEnabled={s!.animationsEnabled} animationSpeed={s!.animationSpeed} />
+          )}
         </div>
 
         {/* TRANSMISIÓN — elemento dominante */}

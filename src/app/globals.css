@@ -166,24 +166,51 @@
   animation-play-state: paused;
 }
 
-/* ---- Micro-animaciones sociales (elegantes, en bucle) ---- */
+/* ---- Redes sociales: compactas, con destellos y movimiento sutil ---- */
 @keyframes tv-float {
   0%,
   100% {
     transform: translateY(0);
   }
   50% {
-    transform: translateY(-0.35vh);
+    transform: translateY(-0.3vh);
   }
 }
 
-@keyframes tv-glow {
+/* Barrido de luz (destello) que cruza la tarjeta */
+@keyframes tv-shine {
+  0% {
+    transform: translateX(-160%) skewX(-18deg);
+  }
+  60%,
+  100% {
+    transform: translateX(420%) skewX(-18deg);
+  }
+}
+
+/* Estrella de 4 puntas que titila */
+@keyframes tv-sparkle {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
+    opacity: 0;
+    transform: scale(0.25) rotate(0deg);
   }
   50% {
-    box-shadow: 0 0 1.2vh 0.1vh var(--tv-glow, rgba(245, 166, 35, 0.35));
+    opacity: 1;
+    transform: scale(1) rotate(30deg);
+    filter: drop-shadow(0 0 0.4vh currentColor);
+  }
+}
+
+/* Respiración de la insignia de marca */
+@keyframes tv-badge-glow {
+  0%,
+  100% {
+    box-shadow: inset 0 -0.35vh 0.7vh rgba(0, 0, 0, 0.28), inset 0 0.25vh 0.5vh rgba(255, 255, 255, 0.22);
+  }
+  50% {
+    box-shadow: inset 0 -0.35vh 0.7vh rgba(0, 0, 0, 0.28), inset 0 0.25vh 0.5vh rgba(255, 255, 255, 0.22),
+      0 0 1vh 0.1vh var(--tv-glow, rgba(245, 166, 35, 0.4));
   }
 }
 
@@ -192,19 +219,47 @@
 }
 
 .tv-social-anim .tv-social-card {
-  animation: tv-float calc(7s / var(--anim-speed, 1)) ease-in-out infinite;
+  position: relative;
+  overflow: hidden;
+  animation: tv-float calc(8s / var(--anim-speed, 1)) ease-in-out infinite;
+}
+
+/* Barrido de luz sobre cada tarjeta (escalonado) */
+.tv-social-anim .tv-social-card::before {
+  content: "";
+  position: absolute;
+  top: -25%;
+  bottom: -25%;
+  left: 0;
+  width: 30%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.13), transparent);
+  transform: translateX(-160%) skewX(-18deg);
+  animation: tv-shine calc(5.6s / var(--anim-speed, 1)) ease-in-out infinite;
+  pointer-events: none;
 }
 
 .tv-social-anim .tv-social-card:nth-child(2n) {
-  animation-delay: -2.3s;
-}
-.tv-social-anim .tv-social-card:nth-child(3n) {
-  animation-delay: -4.1s;
+  animation-delay: -2.7s;
 }
 
-.tv-social-anim .tv-social-card {
-  animation: tv-float calc(7s / var(--anim-speed, 1)) ease-in-out infinite,
-    tv-glow calc(9s / var(--anim-speed, 1)) ease-in-out infinite;
+.tv-social-anim .tv-social-card:nth-child(2n)::before {
+  animation-delay: -1.9s;
+}
+
+.tv-social-anim .tv-social-card:nth-child(3n)::before {
+  animation-delay: -3.5s;
+}
+
+.tv-social-anim .tv-social-badge {
+  animation: tv-badge-glow calc(7s / var(--anim-speed, 1)) ease-in-out infinite;
+}
+
+.tv-sparkle {
+  will-change: transform, opacity;
+}
+
+.tv-social-anim .tv-sparkle {
+  animation: tv-sparkle calc(3.4s / var(--anim-speed, 1)) ease-in-out infinite;
 }
 
 /* ---- Indicador EN VIVO ---- */

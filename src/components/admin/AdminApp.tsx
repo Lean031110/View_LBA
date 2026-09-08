@@ -47,7 +47,7 @@ const SECTIONS = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["ADMIN", "OPERATOR", "VIEWER"] },
   { id: "stream", label: "Transmisión", icon: Radio, roles: ["ADMIN", "OPERATOR"] },
   { id: "promotions", label: "Promociones", icon: Tag, roles: ["ADMIN", "OPERATOR"] },
-  { id: "dish", label: "Plato del Día", icon: ChefHat, roles: ["ADMIN", "OPERATOR"] },
+  { id: "dish", label: "Sugerencias del Día", icon: ChefHat, roles: ["ADMIN", "OPERATOR"] },
   { id: "schedules", label: "Horarios", icon: Clock, roles: ["ADMIN", "OPERATOR"] },
   { id: "socials", label: "Redes Sociales", icon: Share2, roles: ["ADMIN", "OPERATOR"] },
   { id: "ticker", label: "Ticker", icon: Newspaper, roles: ["ADMIN", "OPERATOR"] },

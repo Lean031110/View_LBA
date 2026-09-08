@@ -57,8 +57,8 @@ export default function DishSection(props: Record<string, unknown>) {
     <div className="p-6 space-y-6 max-w-5xl">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-white flex items-center gap-2.5"><ChefHat size={22} className="text-amber-400" /> Plato del Día</h1>
-          <p className="text-white/45 text-sm mt-0.5">Sugerencia destacada — programable por día o fecha</p>
+          <h1 className="text-2xl font-bold text-white flex items-center gap-2.5"><ChefHat size={22} className="text-amber-400" /> Sugerencias del Día</h1>
+          <p className="text-white/45 text-sm mt-0.5">Programables por día o fecha — con varias, rotan solas en la pantalla</p>
         </div>
         <Button onClick={() => { setForm({ ...emptyForm, order: (items?.length ?? 0) + 1 }); setEditing(null); setOpen(true) }} className="bg-amber-500 hover:bg-amber-400 text-black font-bold gap-2">
           <Plus size={16} /> Nuevo plato

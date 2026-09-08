@@ -167,7 +167,7 @@ model Settings {
   bgColor           String  @default("#0b0b0f")
   surfaceColor      String  @default("#15151b")
   fontScale         Float   @default(1)
-  streamRatio       Float   @default(0.62)
+  streamRatio       Float   @default(0.5)
   animationsEnabled Boolean @default(true)
   animationSpeed    Float   @default(1)
 

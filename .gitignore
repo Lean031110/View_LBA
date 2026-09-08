@@ -45,3 +45,4 @@ scripts/vlm-*.json
 /worklog.md
 tests/python-*.sh
 tests/database-*.sh
+tool-results/

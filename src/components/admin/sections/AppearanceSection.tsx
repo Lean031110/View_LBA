@@ -106,14 +106,14 @@ export default function AppearanceSection(props: Record<string, unknown>) {
           <div className="space-y-2.5">
             <div className="flex justify-between">
               <Label className="text-white/85">Proporción de la transmisión</Label>
-              <span className="text-xs text-amber-300 font-mono">{Math.round(Number(s.streamRatio ?? 0.62) * 100)}%</span>
+              <span className="text-xs text-amber-300 font-mono">{Math.round(Number(s.streamRatio ?? 0.5) * 100)}%</span>
             </div>
-            <Slider value={[Number(s.streamRatio ?? 0.62)]} min={0.5} max={0.8} step={0.02} onValueChange={([v]) => set("streamRatio", v)} />
+            <Slider value={[Number(s.streamRatio ?? 0.5)]} min={0.45} max={0.8} step={0.02} onValueChange={([v]) => set("streamRatio", v)} />
             <div className="h-4 rounded-lg border border-white/10 overflow-hidden flex">
-              <div style={{ width: `${(1 - Number(s.streamRatio ?? 0.62)) * 100}%`, background: "rgba(255,255,255,0.12)" }} />
-              <div style={{ width: `${Number(s.streamRatio ?? 0.62) * 100}%`, background: "var(--primary, #f5a623)" }} />
+              <div style={{ width: `${(1 - Number(s.streamRatio ?? 0.5)) * 100}%`, background: "rgba(255,255,255,0.12)" }} />
+              <div style={{ width: `${Number(s.streamRatio ?? 0.5) * 100}%`, background: "var(--primary, #f5a623)" }} />
             </div>
-            <p className="text-[11px] text-white/35">Cuánto ancho ocupa el video frente a promociones/plato.</p>
+            <p className="text-[11px] text-white/35">Cuánto ancho ocupa el video frente a promociones/sugerencias.</p>
           </div>
         </CardContent>
       </Card>

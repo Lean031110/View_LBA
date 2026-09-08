@@ -47,9 +47,11 @@ el sistema funciona **sin depender de Internet para nada**.
 - 🧯 **Estabilidad 24/7** — watchdog de backend y del reproductor, fallback
   elegante («LA TRANSMISIÓN SE REANUDARÁ EN BREVE»), wake lock, modo kiosco,
   ocultación de cursor y supervisores de servicios con reinicio automático.
-- 🖼️ **Contenido completo** — promociones con ventanas de fecha/hora, plato
-  del día, horarios con turno activo destacado, redes sociales, ticker
-  izquierda→derecha, logotipo, colores y tipografía configurables.
+- 🖼️ **Contenido completo** — promociones a media pantalla con imagen grande,
+  banner rotativo de sugerencias del día (auto-slide en bucle), horarios con
+  turno activo destacado, redes sociales compactas con destellos (Facebook ·
+  Instagram · WhatsApp), ticker izquierda→derecha, logotipo, colores y
+  tipografía configurables.
 - 📺 **Multiseñalización** — registra cada TV (TV-001 Salón, TV-002 Espera,
   TV-003 Cocina…) y controla su estado, resolución y audio de forma remota.
 - 👥 **Roles y auditoría** — ADMIN / OPERADOR / VISOR, registro de acciones
@@ -57,9 +59,9 @@ el sistema funciona **sin depender de Internet para nada**.
 
 ## 📸 Capturas
 
-| Pantalla TV (EN VIVO) | Panel · Transmisión | Panel · Dashboard |
+| Pantalla TV v1.1 (EN VIVO) | Pantalla TV (EN VIVO) | Panel · Transmisión |
 |:---:|:---:|:---:|
-| ![Pantalla TV](docs/screenshots/tv-display.png) | ![Sección Transmisión](docs/screenshots/admin-stream.png) | ![Dashboard](docs/screenshots/admin-dashboard.png) |
+| ![Pantalla TV v1.1](docs/screenshots/tv-v1.1-landscape.png) | ![Pantalla TV](docs/screenshots/tv-display.png) | ![Sección Transmisión](docs/screenshots/admin-stream.png) |
 
 | TV vertical | Acceso | Inicio de sesión |
 |:---:|:---:|:---:|

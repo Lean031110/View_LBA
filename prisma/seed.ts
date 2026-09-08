@@ -101,30 +101,48 @@ async function main() {
     })
   }
 
-  // ---- Dish of the day ----
+  // ---- Sugerencias del día (varias → rotan en la pantalla) ----
   if ((await db.dish.count()) === 0) {
-    await db.dish.create({
-      data: {
-        name: "CLUB SANDWICH",
-        description: "Pan artesanal, pollo, bacon, queso y vegetales frescos",
-        price: "$450",
-        imageUrl: "https://z-cdn.chatglm.cn/image-search-mcp/images-ppt/837bda23b10a.jpg",
-        ingredients: "Pollo · Bacon · Queso · Lechuga · Tomate · Mayonesa de la casa",
-        tag: "RECOMENDADO",
-        order: 1,
-      },
+    await db.dish.createMany({
+      data: [
+        {
+          name: "CLUB SANDWICH",
+          description: "Pan artesanal, pollo, bacon, queso y vegetales frescos",
+          price: "$450",
+          imageUrl: "https://z-cdn.chatglm.cn/image-search-mcp/images-ppt/837bda23b10a.jpg",
+          ingredients: "Pollo · Bacon · Queso · Lechuga · Tomate · Mayonesa de la casa",
+          tag: "RECOMENDADO",
+          order: 1,
+        },
+        {
+          name: "SALMÓN A LA PARRILLA",
+          description: "Salmón noruego con mantequilla de limón y hierbas",
+          price: "$680",
+          imageUrl: "https://z-cdn.chatglm.cn/image-search-mcp/images-ppt/f7d21527356a.jpg",
+          ingredients: "Salmón · Limón · Eneldo · Mantequilla",
+          tag: "CHEF",
+          order: 2,
+        },
+        {
+          name: "TACOS DE CAMARÓN",
+          description: "Tortilla de maíz, camarones empanizados y salsa de mango",
+          price: "$520",
+          imageUrl: "https://z-cdn.chatglm.cn/image-search-mcp/images-ppt/d45b0a87332d.jpg",
+          ingredients: "Camarón · Mango · Aguacate · Cilantro",
+          tag: "NUEVO",
+          order: 3,
+        },
+      ],
     })
   }
 
-  // ---- Social links ----
+  // ---- Social links (Facebook · Instagram · WhatsApp) ----
   if ((await db.socialLink.count()) === 0) {
     await db.socialLink.createMany({
       data: [
         { network: "FACEBOOK", username: "@laterraza", order: 1, color: "#1877f2" },
         { network: "INSTAGRAM", username: "@laterraza.grill", order: 2, color: "#e1306c" },
-        { network: "TIKTOK", username: "@laterraza", order: 3, color: "#25f4ee" },
-        { network: "WHATSAPP", username: "+53 5 555 1234", order: 4, color: "#25d366" },
-        { network: "YOUTUBE", username: "@laterrazaTV", order: 5, color: "#ff0000" },
+        { network: "WHATSAPP", username: "+53 5 555 1234", order: 3, color: "#25d366" },
       ],
     })
   }
@@ -155,6 +173,7 @@ async function main() {
       fallbackType: "message",
       fallbackMessage: "LA TRANSMISIÓN SE REANUDARÁ EN BREVE",
       tickerSpeed: 55,
+      streamRatio: 0.5,
     },
   })
 

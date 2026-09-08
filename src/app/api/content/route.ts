@@ -47,7 +47,7 @@ export async function GET() {
       bgColor: settings?.bgColor ?? "#0b0b0f",
       surfaceColor: settings?.surfaceColor ?? "#15151b",
       fontScale: settings?.fontScale ?? 1,
-      streamRatio: settings?.streamRatio ?? 0.62,
+      streamRatio: settings?.streamRatio ?? 0.5,
       animationsEnabled: settings?.animationsEnabled ?? true,
       animationSpeed: settings?.animationSpeed ?? 1,
       showPromotions: settings?.showPromotions ?? true,

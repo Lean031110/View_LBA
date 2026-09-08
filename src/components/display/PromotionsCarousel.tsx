@@ -37,7 +37,7 @@ export default function PromotionsCarousel({
 
   return (
     <section
-      className="flex flex-col min-h-0 rounded-[1.2vh] border border-white/10 overflow-hidden"
+      className="flex flex-1 flex-col min-h-0 rounded-[1.2vh] border border-white/10 overflow-hidden"
       style={{ background: "color-mix(in srgb, var(--tv-surface) 92%, transparent)" }}
       aria-label="Ofertas y promociones"
     >
@@ -63,9 +63,9 @@ export default function PromotionsCarousel({
             transition={{ duration: 0.65 / Math.max(animationSpeed, 0.25), ease: [0.22, 1, 0.36, 1] }}
             className="absolute inset-0 flex"
           >
-            {/* Imagen */}
+            {/* Imagen — ancha para lucir el producto */}
             {current.imageUrl && (
-              <div className="relative w-[42%] shrink-0 overflow-hidden">
+              <div className="relative w-[46%] shrink-0 overflow-hidden">
                 <img
                   src={current.imageUrl}
                   alt={current.title}
@@ -101,8 +101,8 @@ export default function PromotionsCarousel({
               </h3>
               {current.description && (
                 <p
-                  className="font-medium text-white/65 leading-snug line-clamp-3"
-                  style={{ fontSize: "calc(1.75vh * var(--fscale, 1))" }}
+                  className="font-medium text-white/65 leading-snug line-clamp-2"
+                  style={{ fontSize: "calc(1.8vh * var(--fscale, 1))" }}
                 >
                   {current.description}
                 </p>

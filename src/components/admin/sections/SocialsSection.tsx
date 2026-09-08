@@ -49,7 +49,7 @@ export default function SocialsSection(props: Record<string, unknown>) {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-white flex items-center gap-2.5"><Share2 size={22} className="text-amber-400" /> Redes Sociales</h1>
-          <p className="text-white/45 text-sm mt-0.5">Franja inferior de la pantalla con micro-animaciones</p>
+          <p className="text-white/45 text-sm mt-0.5">Franja inferior compacta — Facebook · Instagram · WhatsApp con destellos</p>
         </div>
         <Button onClick={() => { setForm({ ...emptyForm, order: (items?.length ?? 0) + 1 }); setEditing(null); setOpen(true) }} className="bg-amber-500 hover:bg-amber-400 text-black font-bold gap-2">
           <Plus size={16} /> Nueva red

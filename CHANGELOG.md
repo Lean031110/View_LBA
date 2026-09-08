@@ -5,6 +5,39 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato está basado en [Keep a Changelog](https://keepachangelog.com/es/1.1.0/),
 y este proyecto adhiere a [SemVer](https://semver.org/lang/es/).
 
+## [1.1.0] — 2026-09-09
+
+### Añadido
+
+- **Banner rotativo de Sugerencias del Día**: con varias sugerencias activas,
+  el banner compacto rota automáticamente en bucle (7 s, ajustable con la
+  velocidad de animación) con indicadores clicables y transición de
+  deslizamiento suave.
+- **Destellos en redes sociales**: barrido de luz sobre cada tarjeta, estrella
+  titilante sobre la insignia de marca y respiración de glow — todo sutil,
+  GPU-friendly (transform/opacity) y sincronizado con la velocidad global.
+- Migración `scripts/update-ui-v1.1.ts`: limpia redes retiradas, ajusta
+  `streamRatio` y añade sugerencias demo.
+
+### Cambiado
+
+- **Ofertas y Promociones ahora ocupa media pantalla** (`streamRatio`
+  0.62 → 0.5): la columna de contenido pasa del 38 % al 50 % del ancho, con
+  imagen de promoción más grande (42 % → 46 % de la tarjeta) y descripción en
+  dos líneas.
+- **Sugerencias del Día más estrecha**: de tarjeta flexible (~70 % de la
+  columna) a banner horizontal fijo (~10.5 vh) con imagen cuadrada compacta,
+  nombre y precio en una línea.
+- **Arreglo importante**: el área de contenido del carrusel de promociones
+  quedaba a altura 0 (la sección no crecía dentro de la columna) — ahora la
+  sección es `flex-1` y las imágenes se ven a tamaño real.
+- **Redes sociales**: solo Facebook · Instagram · WhatsApp (YouTube y TikTok
+  fuera por ahora), franja más estrecha y compacta, insignias circulares con
+  degradados oficiales de marca e iconos blancos.
+- Panel: sección renombrada "Plato del Día" → "Sugerencias del Día"
+  (sidebar y encabezado); slider de proporción de transmisión ampliado
+  (45 %–80 %).
+
 ## [1.0.0] — 2026-09-09
 
 ### Añadido
