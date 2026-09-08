@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server"
 import { readFile, stat } from "fs/promises"
 import path from "path"
+import { resolveMediaDir } from "@/lib/media"
 
-// Directorio de subidas relativo a la raíz del proyecto (portable: dev y standalone)
-const UPLOAD_DIR = path.join(process.cwd(), "upload")
+// FASE 10/11: serve desde MEDIA_DIR (configurable, fuera del árbol de la app
+// en producción); guardas anti path-traversal; SVG neutralizado (nosniff +
+// disposition) para que no pueda ejecutarse same-origin.
 
 const MIME: Record<string, string> = {
   png: "image/png",
@@ -22,9 +24,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ pat
   try {
     const { path: parts } = await params
     const name = parts.join("/")
-    // Guarda anti path-traversal
-    const resolved = path.resolve(UPLOAD_DIR, name)
-    if (!resolved.startsWith(path.resolve(UPLOAD_DIR))) {
+    const MEDIA_DIR = resolveMediaDir()
+    // Guarda anti path-traversal (resolve + prefijo)
+    const resolved = path.resolve(MEDIA_DIR, name)
+    if (!resolved.startsWith(path.resolve(MEDIA_DIR))) {
       return NextResponse.json({ error: "Ruta inválida" }, { status: 400 })
     }
     const info = await stat(resolved).catch(() => null)
@@ -33,13 +36,20 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ pat
     }
     const ext = name.split(".").pop()?.toLowerCase() ?? ""
     const data = await readFile(resolved)
-    return new NextResponse(new Uint8Array(data), {
-      headers: {
-        "Content-Type": MIME[ext] ?? "application/octet-stream",
-        "Content-Length": String(info.size),
-        "Cache-Control": "public, max-age=86400, immutable",
-      },
-    })
+
+    const headers: Record<string, string> = {
+      "Content-Type": MIME[ext] ?? "application/octet-stream",
+      "Content-Length": String(info.size),
+      "Cache-Control": "public, max-age=86400, immutable",
+      // Nunca dejar que el navegador adivine/transforme el tipo
+      "X-Content-Type-Options": "nosniff",
+    }
+    if (ext === "svg") {
+      // SVG residual (subido antes de FASE 10 o con ALLOW_SVG): descargar, no
+      // renderizar inline → elimina la vía XSS same-origin
+      headers["Content-Disposition"] = "attachment"
+    }
+    return new NextResponse(new Uint8Array(data), { headers })
   } catch {
     return NextResponse.json({ error: "Error sirviendo archivo" }, { status: 500 })
   }
