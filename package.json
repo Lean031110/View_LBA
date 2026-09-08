@@ -17,11 +17,16 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "db:generate": "prisma generate",
-    "db:push": "prisma db push --accept-data-loss",
+    "db:push": "prisma db push",
     "db:seed": "bun prisma/seed.ts && bun scripts/seed-stream-local.ts",
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset",
-    "setup": "bun run db:generate && bun run db:push && bun run db:seed"
+    "setup": "bun run db:generate && bun run db:deploy && bun run db:seed",
+    "db:deploy": "prisma migrate deploy",
+    "db:push:force": "prisma db push --accept-data-loss",
+    "db:backup": "bun scripts/backup.ts",
+    "db:restore": "bun scripts/restore.ts",
+    "media:gc": "bun scripts/media-gc.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

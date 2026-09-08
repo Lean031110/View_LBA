@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { MonitorPlay, Radio, Tag, ChefHat, Activity, ExternalLink, Eye, RefreshCw, AlertTriangle } from "lucide-react"
+import { MonitorPlay, Radio, Tag, ChefHat, Activity, ExternalLink, Eye, RefreshCw, AlertTriangle, DatabaseBackup, Loader2 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import type { ScreenStatus, ContentBundle } from "@/lib/types"
-import { getJSON } from "../api"
+import { getJSON, postJSON } from "../api"
+import { useToast } from "@/hooks/use-toast"
 import type { StreamServerStatus } from "../AdminApp"
 
 const stateLabels: Record<string, { label: string; cls: string }> = {
@@ -22,6 +23,7 @@ export default function Dashboard({
   screensStatus,
   realtimeConnected,
   streamServer,
+  user,
 }: {
   user: { name: string; role: string }
   screensStatus: ScreenStatus[]
@@ -32,12 +34,30 @@ export default function Dashboard({
   streamServer?: StreamServerStatus | null
 }) {
   const [content, setContent] = useState<ContentBundle | null>(null)
+  const [backingUp, setBackingUp] = useState(false)
+  const { toast } = useToast()
 
   useEffect(() => {
     getJSON<ContentBundle>("/api/content")
       .then(setContent)
       .catch(() => {})
   }, [])
+
+  // FASE 16: backup manual verificado (solo ADMIN)
+  const runBackup = async () => {
+    setBackingUp(true)
+    try {
+      const r = await postJSON<{ ok: boolean; file: string; sizeBytes: number; integrity: string; tables: Record<string, number> }>("/api/admin/backup", {})
+      toast({
+        title: "Copia de seguridad creada",
+        description: `${(r.sizeBytes / 1024).toFixed(0)} KB · integridad ${r.integrity} · ${Object.keys(r.tables).length} tablas. Guardada en el servidor (BACKUP_DIR).`,
+      })
+    } catch (e) {
+      toast({ title: "Error en el backup", description: (e as Error).message, variant: "destructive" })
+    } finally {
+      setBackingUp(false)
+    }
+  }
 
   const streamUrl = content?.settings.streamUrl
   const isLocal = (content?.settings.streamSource ?? "local") === "local"
@@ -190,7 +210,7 @@ export default function Dashboard({
       </Card>
 
       {/* Actividad reciente */}
-      <RecentActivity />
+      <RecentActivity backup={{ running: backingUp }} onBackup={user?.role === "ADMIN" ? runBackup : null} />
     </div>
   )
 }
@@ -203,7 +223,7 @@ function upTimeFmt(ms: number): string {
   return `${h}h ${mins % 60}m conectada`
 }
 
-function RecentActivity() {
+function RecentActivity({ backup, onBackup }: { backup: { running: boolean } | null; onBackup: (() => void) | null }) {
   const [logs, setLogs] = useState<{ id: string; userName: string | null; action: string; section: string | null; createdAt: string }[]>([])
   useEffect(() => {
     getJSON<{ items: typeof logs }>("/api/admin/logs?limit=8")
@@ -215,6 +235,17 @@ function RecentActivity() {
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base text-white">
           <Activity size={16} className="text-amber-400" /> Actividad reciente
+          {onBackup && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onBackup}
+              disabled={Boolean(backup?.running)}
+              className="ml-auto h-7 text-xs gap-1.5 border-white/15 bg-white/[0.03] hover:bg-white/10"
+            >
+              {backup?.running ? <Loader2 size={12} className="animate-spin" /> : <DatabaseBackup size={12} />} Copia de seguridad
+            </Button>
+          )}
         </CardTitle>
       </CardHeader>
       <CardContent>
