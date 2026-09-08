@@ -2,7 +2,10 @@ import type { NextConfig } from "next"
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  reactStrictMode: false, // deliberado: evita dobles efectos en clientes 24/7 (sockets/streams) — FASE 21 lo activará
+  // FASE 21 (misión): StrictMode ACTIVADO — todos los efectos del display
+  // son idempotentes con cleanup completo (sockets, players, timers,
+  // listeners, wake lock), verificado en dev con doble montaje.
+  reactStrictMode: true,
   // Next 16.3+ bloquea por seguridad los recursos de desarrollo desde orígenes
   // cruzados (p.ej. abrir http://127.0.0.1:3000 cuando el server anuncia
   // localhost:3000). En despliegues LAN de desarrollo las TVs acceden por la
