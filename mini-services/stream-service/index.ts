@@ -43,8 +43,25 @@ function resolveDbPath(url: string): string {
   return raw.startsWith("/") ? raw : resolve(ROOT_DIR, "prisma", raw)
 }
 
-const ENV = parseEnvFile(resolve(ROOT_DIR, ".env"))
-const REALTIME_TOKEN = ENV.REALTIME_TOKEN || "signage-rt-internal-token"
+const ENV = { ...parseEnvFile(resolve(ROOT_DIR, ".env")), ...process.env }
+
+/** FASE 1 (misión): sin fallback de token — el servicio NO arranca sin credencial válida */
+function requireRealtimeToken(): string {
+  const t = (ENV.REALTIME_TOKEN || "").trim()
+  const forbidden = new Set([
+    "signage-rt-internal-token",
+    "cambiar-por-otro-secreto-aleatorio",
+    "changeme",
+    "change-me",
+  ])
+  if (!t || t.length < 16 || forbidden.has(t.toLowerCase())) {
+    log("✗ REALTIME_TOKEN inválido o ausente. Genera uno real (openssl rand -hex 16) y ponlo en .env del raíz del proyecto.")
+    process.exit(1)
+  }
+  return t
+}
+
+const REALTIME_TOKEN = requireRealtimeToken()
 const REALTIME_URL = "http://127.0.0.1:3004/broadcast"
 const DB_PATH = resolveDbPath(ENV.DATABASE_URL || `file:${resolve(ROOT_DIR, "db", "custom.db")}`)
 

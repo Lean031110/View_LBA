@@ -1,6 +1,11 @@
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "crypto"
+import { getEnv } from "@/lib/env"
 
-const SECRET = process.env.AUTH_SECRET || "signage-dev-secret-change-me"
+// El secreto se obtiene del entorno validado (Zod) — SIN fallback hardcodeado.
+// En producción, si falta AUTH_SECRET el servidor no arranca (src/instrumentation.ts).
+function authSecret(): string {
+  return getEnv().AUTH_SECRET
+}
 
 export type Role = "ADMIN" | "OPERATOR" | "VIEWER"
 
@@ -35,7 +40,7 @@ function b64url(input: Buffer | string): string {
 export function signSession(payload: Omit<SessionPayload, "exp">, ttlHours = 24 * 7): string {
   const data: SessionPayload = { ...payload, exp: Math.floor(Date.now() / 1000) + ttlHours * 3600 }
   const body = b64url(JSON.stringify(data))
-  const sig = createHmac("sha256", SECRET).update(body).digest("base64url")
+  const sig = createHmac("sha256", authSecret()).update(body).digest("base64url")
   return `${body}.${sig}`
 }
 
@@ -43,7 +48,7 @@ export function verifySessionToken(token: string | undefined | null): SessionPay
   if (!token) return null
   const [body, sig] = token.split(".")
   if (!body || !sig) return null
-  const expected = createHmac("sha256", SECRET).update(body).digest("base64url")
+  const expected = createHmac("sha256", authSecret()).update(body).digest("base64url")
   const a = Buffer.from(sig)
   const b = Buffer.from(expected)
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null

@@ -26,7 +26,7 @@ todo funciona en la red local del restaurante, **sin depender de Internet**.
 
 | Componente | Requisito |
 |---|---|
-| Servidor | PC/mini-PC en la LAN con Node.js 18+ o Bun 1.1+ |
+| Servidor | PC/mini-PC en la LAN con Node.js 20.9+ (LTS) o Bun 1.1+ |
 | OBS Studio | Cualquier versión 28+ en el PC que transmitirá |
 | Televisores | Navegador Chrome/Edge/Firefox (PC conectado al TV, Chromecast con navegador, o Smart TV con navegador moderno) |
 

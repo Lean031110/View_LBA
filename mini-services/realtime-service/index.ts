@@ -9,11 +9,48 @@
  * cambios de contenido a las pantallas en tiempo real.
  */
 import { createServer, IncomingMessage, ServerResponse } from "http"
+import { readFileSync } from "fs"
+import { resolve } from "path"
 import { Server, Socket } from "socket.io"
+
+// ---------- Entorno: .env del raíz del proyecto (independiente del CWD) ----------
+function parseEnvFile(path: string): Record<string, string> {
+  try {
+    const txt = readFileSync(path, "utf8")
+    const out: Record<string, string> = {}
+    for (const line of txt.split("\n")) {
+      const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$/)
+      if (m) out[m[1]] = m[2].replace(/^["']|["']$/g, "")
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+const ROOT_DIR = resolve(import.meta.dir, "..", "..")
+const ENV = { ...parseEnvFile(resolve(ROOT_DIR, ".env")), ...process.env }
+
+/** FASE 1 (misión): sin fallback de token — el servicio NO arranca sin credencial válida */
+function requireRealtimeToken(): string {
+  const t = (ENV.REALTIME_TOKEN || "").trim()
+  const forbidden = new Set([
+    "signage-rt-internal-token",
+    "cambiar-por-otro-secreto-aleatorio",
+    "changeme",
+    "change-me",
+  ])
+  if (!t || t.length < 16 || forbidden.has(t.toLowerCase())) {
+    console.error(
+      "✗ REALTIME_TOKEN inválido o ausente. Genera uno real (openssl rand -hex 16) y ponlo en .env del raíz del proyecto."
+    )
+    process.exit(1)
+  }
+  return t
+}
 
 const PORT = 3003 // Socket.io (navegadores, vía Caddy)
 const INTERNAL_PORT = 3004 // API interna (solo localhost, llamado desde Next.js)
-const INTERNAL_TOKEN = process.env.REALTIME_TOKEN || "signage-rt-internal-token"
+const INTERNAL_TOKEN = requireRealtimeToken()
 const OFFLINE_AFTER_MS = 45_000 // sin heartbeat → pantalla offline
 
 interface ScreenEntry {

@@ -2,8 +2,13 @@
  * Helper server-side para notificar cambios al servicio realtime (puerto 3004).
  * Los cambios de contenido se propagan a las pantallas TV en tiempo real.
  */
-const TOKEN = process.env.REALTIME_TOKEN || "signage-rt-internal-token"
+import { getEnv } from "@/lib/env"
+
 const INTERNAL_URL = "http://127.0.0.1:3004/broadcast"
+
+function internalToken(): string {
+  return getEnv().REALTIME_TOKEN
+}
 
 export async function broadcast(
   event: string,
@@ -14,7 +19,7 @@ export async function broadcast(
   try {
     await fetch(INTERNAL_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-internal-token": TOKEN },
+      headers: { "Content-Type": "application/json", "x-internal-token": internalToken() },
       body: JSON.stringify({ event, payload, target, screenCode }),
       signal: AbortSignal.timeout(3000),
     })

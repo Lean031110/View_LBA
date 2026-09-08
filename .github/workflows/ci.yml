@@ -37,12 +37,30 @@ jobs:
 
       - name: Lint (ESLint)
         run: bun run lint
+        env:
+          # Secretos dummy SOLO para que el build/validación no fallen en CI
+          # (nunca son secretos reales; el runtime de producción usa los suyos)
+          AUTH_SECRET: ci-dummy-secret-0123456789abcdef0123456789
+          REALTIME_TOKEN: ci-dummy-rt-token-0123456789abcdef
+          DATABASE_URL: file:./ci-build.db
 
       - name: Tipos (TypeScript)
         run: bun run typecheck
+        env:
+          AUTH_SECRET: ci-dummy-secret-0123456789abcdef0123456789
+          REALTIME_TOKEN: ci-dummy-rt-token-0123456789abcdef
+          DATABASE_URL: file:./ci-build.db
 
       - name: Tests (bun test)
         run: bun test
+        env:
+          AUTH_SECRET: ci-dummy-secret-0123456789abcdef0123456789
+          REALTIME_TOKEN: ci-dummy-rt-token-0123456789abcdef
+          DATABASE_URL: file:./ci-build.db
 
       - name: Build de producción (Next.js standalone)
         run: bun run build
+        env:
+          AUTH_SECRET: ci-dummy-secret-0123456789abcdef0123456789
+          REALTIME_TOKEN: ci-dummy-rt-token-0123456789abcdef
+          DATABASE_URL: file:./ci-build.db

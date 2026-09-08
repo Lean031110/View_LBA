@@ -103,7 +103,7 @@ flowchart TB
 
 ### Requisitos
 
-- [Bun](https://bun.sh) 1.1+ (recomendado) o Node.js 18+
+- [Bun](https://bun.sh) 1.1+ (recomendado) o Node.js 20.9+ (LTS)
 - Un PC en la LAN del restaurante (el «servidor»)
 - OBS Studio en el PC que transmitirá
 - TVs con navegador moderno (PC/mini-PC conectado, o Smart TV con Chrome/Edge/Firefox)
