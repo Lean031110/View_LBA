@@ -12,7 +12,7 @@ export async function GET() {
       db.schedule.findMany({ where: { active: true }, orderBy: [{ order: "asc" }] }),
       db.socialLink.findMany({ where: { active: true }, orderBy: [{ order: "asc" }] }),
       db.tickerMessage.findMany({ where: { active: true }, orderBy: [{ order: "asc" }] }),
-      db.screen.findMany({ where: { active: true }, select: { code: true, name: true, location: true }, orderBy: { code: "asc" } }),
+      db.screen.findMany({ where: { active: true }, select: { code: true, name: true, location: true, audioDeviceId: true }, orderBy: { code: "asc" } }),
     ])
 
     // Sanitizar: NUNCA exponer streamKey / streamServer al cliente público

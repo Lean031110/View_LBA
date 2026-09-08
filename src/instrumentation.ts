@@ -21,7 +21,11 @@ export async function register() {
   if (err) {
     // Nota: Next puede tragarse un `throw` dentro de register() en modo
     // standalone; process.exit garantiza el fallo de arranque real.
+    // Se accede vía globalThis para no romper la compilación del bundle
+    // Edge (que rechaza referencias estáticas a process.exit).
     console.error(err)
-    process.exit(1)
+    const proc = (globalThis as { process?: { exit: (code: number) => void } }).process
+    if (proc) proc.exit(1)
+    else throw new Error("Variables de entorno inválidas — ver arriba")
   }
 }

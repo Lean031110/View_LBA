@@ -162,6 +162,12 @@ interface ScreenEntry {
     uptime?: number
     reconnects?: number
   }
+  // FASE 7: audio reportado por la PROPIA pantalla (nunca por el admin)
+  audioInfo?: {
+    devices: { deviceId: string; label: string }[]
+    supportsSinkId: boolean
+    reportedAt: number
+  }
 }
 
 const screens = new Map<string, ScreenEntry>() // key: socketId
@@ -203,6 +209,7 @@ function snapshot() {
     online: Date.now() - s.lastSeen < OFFLINE_AFTER_MS,
     streamState: s.streamState,
     streamInfo: s.streamInfo,
+    audioInfo: s.audioInfo ?? null,
   }))
 }
 
@@ -283,6 +290,23 @@ io.on("connection", (socket: Socket) => {
       s.lastSeen = Date.now()
       if (data.resolution) s.resolution = data.resolution
       persistLastSeen(s.screenCode)
+    }
+  })
+
+  // FASE 7: la pantalla reporta SUS dispositivos de audio (enumerados en su
+  // propio navegador) + si soporta setSinkId. El admin elige de esta lista.
+  socket.on("screen:audio", (data: { devices?: { deviceId: string; label: string }[]; supportsSinkId?: boolean }) => {
+    const s = screens.get(socket.id)
+    if (s && Array.isArray(data?.devices)) {
+      s.audioInfo = {
+        devices: data.devices.slice(0, 16).map((d) => ({
+          deviceId: String(d.deviceId ?? "").slice(0, 128),
+          label: String(d.label ?? "").slice(0, 80) || "Dispositivo",
+        })),
+        supportsSinkId: Boolean(data.supportsSinkId),
+        reportedAt: Date.now(),
+      }
+      pushSnapshotToAdmins()
     }
   })
 

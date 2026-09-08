@@ -94,9 +94,12 @@ export async function PUT(req: NextRequest) {
 
   // Notificar en tiempo real: contenido general + audio si cambió
   await broadcast("content:update", { section: "settings", ts: Date.now() }, "screens")
-  const audioFields = ["audioVolume", "audioMuted", "audioDeviceId"].some((f) => f in data)
+  const audioFields = ["audioVolume", "audioMuted"].some((f) => f in data)
   if (audioFields) {
-    await broadcast("audio:config", { volume: item.audioVolume, muted: item.audioMuted, deviceId: item.audioDeviceId }, "screens")
+    // FASE 7: el volumen/mute son globales; el deviceId de salida es POR
+    // PANTALLA (ver /api/admin/screens/[id]) — ya no se emite un deviceId
+    // global (pertenecía al navegador del admin: arquitectura corregida).
+    await broadcast("audio:config", { volume: item.audioVolume, muted: item.audioMuted }, "screens")
   }
   return NextResponse.json({ settings: { ...item, streamKey: undefined, streamKeyMasked: maskKey(item.streamKey), hasStreamKey: Boolean(item.streamKey) } })
 }

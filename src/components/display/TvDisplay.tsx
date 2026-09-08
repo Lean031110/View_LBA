@@ -248,6 +248,35 @@ export default function TvDisplay() {
     }
   }, [])
 
+  // ---------- FASE 7: audio — la TV enumera SUS dispositivos y reporta ----------
+  // (NUNCA pide micrófono: enumerateDevices funciona sin permiso; las
+  // etiquetas pueden venir vacías y se numeran — no rompe la enumeración)
+  useEffect(() => {
+    const report = () => {
+      const socket = socketRef.current
+      if (!socket?.connected) return
+      navigator.mediaDevices
+        ?.enumerateDevices()
+        .then((all) => {
+          const outs = all
+            .filter((d) => d.kind === "audiooutput")
+            .slice(0, 16)
+            .map((d, i) => ({ deviceId: d.deviceId, label: d.label || `Dispositivo ${i + 1}` }))
+          const el = document.createElement("audio")
+          const supportsSinkId = typeof (el as HTMLVideoElement & { setSinkId?: unknown }).setSinkId === "function"
+          socket.emit("screen:audio", { devices: outs, supportsSinkId })
+        })
+        .catch(() => {})
+    }
+    // Reportar al conectar y cuando cambian los dispositivos (HDMI conectado, etc.)
+    const t = setTimeout(report, 1500) // deja conectar el socket primero
+    navigator.mediaDevices?.addEventListener?.("devicechange", report)
+    return () => {
+      clearTimeout(t)
+      navigator.mediaDevices?.removeEventListener?.("devicechange", report)
+    }
+  }, [])
+
   // ---------- Reporte de métricas del stream al servicio realtime ----------
   const onMetrics = useCallback((m: StreamMetrics) => {
     metricsRef.current = m
@@ -270,6 +299,12 @@ export default function TvDisplay() {
   const activePromos = useMemo(() => (content ? content.promotions.filter((p) => promoVisible(now, p)) : []), [content, now])
   const dishes = useMemo(() => (content ? pickDishes(now, content.dishes) : []), [content, now])
   const tickerTexts = useMemo(() => content?.ticker.map((t) => t.text) ?? [], [content])
+  // FASE 7: salida de audio persistida de ESTA pantalla (elegida por el admin
+  // de la lista que este mismo navegador reportó)
+  const screenAudioDeviceId = useMemo(
+    () => content?.screens.find((sc) => sc.code === screenCode)?.audioDeviceId ?? null,
+    [content, screenCode]
+  )
 
   const handleSelectScreen = (code: string | null) => {
     if (code) localStorage.setItem(SCREEN_KEY, code)
@@ -373,7 +408,13 @@ export default function TvDisplay() {
 
         {/* TRANSMISIÓN — elemento dominante */}
         <div className="tv-stream-col min-h-0 h-full">
-          <StreamPlayer settings={s!} audioConfig={audioConfig} onMetrics={onMetrics} serverLive={serverLive} />
+          <StreamPlayer
+            settings={s!}
+            audioConfig={audioConfig}
+            onMetrics={onMetrics}
+            serverLive={serverLive}
+            initialSinkId={screenAudioDeviceId}
+          />
         </div>
       </main>
 

@@ -111,7 +111,7 @@ export interface ContentBundle {
   schedules: ScheduleDTO[]
   socials: SocialLinkDTO[]
   ticker: TickerMessageDTO[]
-  screens: { code: string; name: string; location: string | null }[]
+  screens: { code: string; name: string; location: string | null; audioDeviceId: string | null }[]
   serverTime: string
 }
 
@@ -124,6 +124,7 @@ export interface ScreenStatus {
   connectedAt: number
   lastSeen: number
   online: boolean
+  verified?: boolean // ¿presentó token de pairing válido? (FASE 5)
   streamState: StreamState
   streamInfo: {
     resolution?: string
@@ -132,4 +133,10 @@ export interface ScreenStatus {
     uptime?: number
     reconnects?: number
   }
+  // FASE 7: dispositivos de audio reportados por la propia pantalla
+  audioInfo?: {
+    devices: { deviceId: string; label: string }[]
+    supportsSinkId: boolean
+    reportedAt: number
+  } | null
 }

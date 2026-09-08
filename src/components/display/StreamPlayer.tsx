@@ -20,6 +20,8 @@ interface Props {
   onMetrics?: (m: StreamMetrics) => void
   /** Estado del servidor RTMP local (modo "local"): null = desconocido/externo */
   serverLive?: boolean | null
+  /** FASE 7: deviceId persistido de ESTA pantalla (de Screen.audioDeviceId) */
+  initialSinkId?: string | null
 }
 
 type UiState = "connecting" | "live" | "reconnecting" | "fallback" | "waiting" | "disabled"
@@ -58,7 +60,7 @@ const LOCAL_FLV_URL = "/api/stream/live.flv"
  *
  * Reconexión automática, watchdog anti-congelamiento y contenido de respaldo.
  */
-export default function StreamPlayer({ settings, audioConfig, onMetrics, serverLive = null }: Props) {
+export default function StreamPlayer({ settings, audioConfig, onMetrics, serverLive = null, initialSinkId = null }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const hlsRef = useRef<Hls | null>(null)
@@ -401,12 +403,28 @@ export default function StreamPlayer({ settings, audioConfig, onMetrics, serverL
     video.muted = localMuted
   }, [localVolume, localMuted, uiState])
 
+  // ---------- FASE 7: salida de audio (setSinkId) ----------
+  // El deviceId es SIEMPRE de ESTE navegador (lo reporta esta propia TV y el
+  // admin lo elige de esa lista). Si no existe o el navegador no soporta
+  // setSinkId (Firefox/Safari/TVs antiguas) → salida predeterminada del
+  // sistema, SIN romper la reproducción.
   useEffect(() => {
     const video = videoRef.current as (HTMLVideoElement & { setSinkId?: (id: string) => Promise<void> }) | null
-    if (audioConfig?.deviceId && video && typeof video.setSinkId === "function") {
-      video.setSinkId(audioConfig.deviceId).catch(() => {})
+    const deviceId = audioConfig?.deviceId ?? initialSinkId
+    if (!deviceId || !video) return
+    if (typeof video.setSinkId !== "function") {
+      // Salida específica no compatible: se usará la predeterminada (misión F7)
+      console.info("[StreamPlayer] setSinkId no soportado — usando salida predeterminada del sistema")
+      return
     }
-  }, [audioConfig])
+    video
+      .setSinkId(deviceId)
+      .catch((e: unknown) => {
+        // deviceId de otra máquina / desconectado → NO romper el video:
+        // cae a la salida predeterminada y se informa por consola
+        console.warn("[StreamPlayer] No se pudo aplicar la salida de audio (usando la predeterminada):", (e as Error)?.message ?? e)
+      })
+  }, [audioConfig, initialSinkId, uiState])
 
   // ---------- Fullscreen ----------
   useEffect(() => {

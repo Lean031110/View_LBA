@@ -37,6 +37,9 @@ model Screen {
   tokenHash    String?
   lastSeenAt   DateTime?
   metadata     String? // JSON: { resolution, userAgent, audioDevices? ... }
+  // FASE 7: salida de audio seleccionada PARA esta pantalla (el deviceId lo
+  // reporta el propio navegador del TV; el admin solo elige de esa lista)
+  audioDeviceId String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
