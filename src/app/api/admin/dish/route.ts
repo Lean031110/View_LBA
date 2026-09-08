@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { requireAuth, isNextResponse } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { pickFields, readBody, logAction, notifyContentUpdate } from "@/lib/crud"
+import { validateData, dishCreate } from "@/lib/validators"
 
 const SPEC = {
   name: "s",
@@ -29,6 +30,8 @@ export async function POST(req: NextRequest) {
   if (isNextResponse(auth)) return auth
   const data = pickFields(await readBody(req), SPEC)
   if (!data.name) return NextResponse.json({ error: "Nombre requerido" }, { status: 400 })
+  const v = validateData(dishCreate, data)
+  if (!v.ok) return NextResponse.json({ error: v.error, field: v.field }, { status: 400 })
   const item = await db.dish.create({ data: data as never })
   await logAction(auth, "CREATE", "dish", String(data.name))
   await notifyContentUpdate("dish")

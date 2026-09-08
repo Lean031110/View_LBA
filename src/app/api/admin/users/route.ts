@@ -3,6 +3,7 @@ import { requireAuth, isNextResponse } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { pickFields, readBody, logAction } from "@/lib/crud"
 import { hashPassword } from "@/lib/auth"
+import { validateData, userCreate } from "@/lib/validators"
 
 const SPEC = {
   email: "s",
@@ -26,18 +27,14 @@ export async function POST(req: NextRequest) {
   if (isNextResponse(auth)) return auth
   const body = await readBody(req)
   const data = pickFields(body, SPEC)
-  const password = String(body.password ?? "")
-  if (!data.email || !data.name || !password) {
-    return NextResponse.json({ error: "Email, nombre y contraseña requeridos" }, { status: 400 })
-  }
-  if (!["ADMIN", "OPERATOR", "VIEWER"].includes(String(data.role))) {
-    return NextResponse.json({ error: "Rol no válido" }, { status: 400 })
-  }
+  // FASE 9/17: validación con política de contraseña y formato de email
+  const v = validateData(userCreate, { ...data, password: body.password })
+  if (!v.ok) return NextResponse.json({ error: v.error, field: v.field }, { status: 400 })
   const email = String(data.email).toLowerCase().trim()
   const exists = await db.user.findUnique({ where: { email } })
   if (exists) return NextResponse.json({ error: "Ya existe un usuario con ese email" }, { status: 409 })
   const item = await db.user.create({
-    data: { email, name: String(data.name), role: String(data.role), passwordHash: hashPassword(password) },
+    data: { email, name: String(data.name), role: String(data.role), passwordHash: hashPassword(String(body.password)) },
   })
   await logAction(auth, "CREATE", "users", email)
   return NextResponse.json({ item: { id: item.id, email: item.email, name: item.name, role: item.role, active: item.active } })

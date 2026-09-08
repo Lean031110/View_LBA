@@ -3,6 +3,7 @@ import { requireAuth, isNextResponse } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { pickFields, readBody, logAction } from "@/lib/crud"
 import { broadcast } from "@/lib/realtime"
+import { validateData, settingsUpdatePartial } from "@/lib/validators"
 
 const SPEC: Record<string, string> = {
   restaurantName: "s",
@@ -81,6 +82,9 @@ export async function PUT(req: NextRequest) {
     )
   }
   const data = pickFields(body, SPEC)
+  // FASE 9: validación semántica (rangos, enums, colores, URLs seguras)
+  const v = validateData(settingsUpdatePartial, data)
+  if (!v.ok) return NextResponse.json({ error: v.error, field: v.field }, { status: 400 })
   if (Object.keys(data).length === 0) {
     return NextResponse.json({ error: "Sin cambios" }, { status: 400 })
   }

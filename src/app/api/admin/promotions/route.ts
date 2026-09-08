@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { requireAuth, isNextResponse } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { pickFields, readBody, logAction, notifyContentUpdate } from "@/lib/crud"
+import { validateData, promotionCreate } from "@/lib/validators"
 
 const SPEC = {
   title: "s",
@@ -33,6 +34,8 @@ export async function POST(req: NextRequest) {
   if (isNextResponse(auth)) return auth
   const data = pickFields(await readBody(req), SPEC)
   if (!data.title) return NextResponse.json({ error: "Título requerido" }, { status: 400 })
+  const v = validateData(promotionCreate, data)
+  if (!v.ok) return NextResponse.json({ error: v.error, field: v.field }, { status: 400 })
   const item = await db.promotion.create({ data: data as never })
   await logAction(auth, "CREATE", "promotions", String(data.title))
   await notifyContentUpdate("promotions")

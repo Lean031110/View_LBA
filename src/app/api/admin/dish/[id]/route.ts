@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { requireAuth, isNextResponse } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { pickFields, readBody, logAction, notifyContentUpdate } from "@/lib/crud"
+import { validateData, dishUpdate } from "@/lib/validators"
 
 const SPEC = {
   name: "s",
@@ -22,6 +23,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (isNextResponse(auth)) return auth
   const { id } = await params
   const data = pickFields(await readBody(req), SPEC)
+  const v = validateData(dishUpdate, data)
+  if (!v.ok) return NextResponse.json({ error: v.error, field: v.field }, { status: 400 })
   const item = await db.dish.update({ where: { id }, data: data as never }).catch(() => null)
   if (!item) return NextResponse.json({ error: "Plato no encontrado" }, { status: 404 })
   await logAction(auth, "UPDATE", "dish", item.name)

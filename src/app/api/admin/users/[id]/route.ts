@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { requireAuth, isNextResponse, hashPassword, invalidateSessionCache } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { pickFields, readBody, logAction } from "@/lib/crud"
+import { validateData, userUpdate } from "@/lib/validators"
 
 const SPEC = {
   email: "s",
@@ -16,11 +17,11 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   const { id } = await params
   const body = await readBody(req)
   const data = pickFields(body, SPEC)
-  if (data.role && !["ADMIN", "OPERATOR", "VIEWER"].includes(String(data.role))) {
-    return NextResponse.json({ error: "Rol no válido" }, { status: 400 })
-  }
   if (data.email) data.email = String(data.email).toLowerCase().trim()
 
+  // FASE 9/17: validación (contraseña solo si viene; email/rol/active con política)
+  const v = validateData(userUpdate, body.password ? { ...data, password: String(body.password) } : data)
+  if (!v.ok) return NextResponse.json({ error: v.error, field: v.field }, { status: 400 })
   const updateData: Record<string, unknown> = { ...data }
   if (body.password) updateData.passwordHash = hashPassword(String(body.password))
   // Evitar auto-degradación: un admin no puede quitarse su propio rol

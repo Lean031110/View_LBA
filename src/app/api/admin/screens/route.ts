@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { requireAuth, isNextResponse } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { pickFields, readBody, logAction } from "@/lib/crud"
+import { validateData, screenCreate } from "@/lib/validators"
 import { broadcast } from "@/lib/realtime"
 import type { ScreenStatus } from "@/lib/types"
 
@@ -60,6 +61,8 @@ export async function POST(req: NextRequest) {
   const auth = await requireAuth("OPERATOR")
   if (isNextResponse(auth)) return auth
   const data = pickFields(await readBody(req), SPEC)
+  const v = validateData(screenCreate, data)
+  if (!v.ok) return NextResponse.json({ error: v.error, field: v.field }, { status: 400 })
   if (!data.code || !data.name) return NextResponse.json({ error: "Código y nombre requeridos" }, { status: 400 })
   const exists = await db.screen.findUnique({ where: { code: String(data.code) } })
   if (exists) return NextResponse.json({ error: "Ya existe una pantalla con ese código" }, { status: 409 })
