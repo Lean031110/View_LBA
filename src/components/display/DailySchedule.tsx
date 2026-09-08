@@ -1,8 +1,9 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Coffee, Sun, Moon, UtensilsCrossed, Star, Clock, Wine, Croissant, Soup, Sparkles, type LucideIcon } from "lucide-react"
 import type { ScheduleDTO } from "@/lib/types"
+import { getTimeParts, hhmmToMinutes, inTimeWindow } from "@/lib/timezone"
 
 const ICONS: Record<string, LucideIcon> = {
   coffee: Coffee,
@@ -17,38 +18,36 @@ const ICONS: Record<string, LucideIcon> = {
   sparkles: Sparkles,
 }
 
-function toMinutes(hhmm: string): number {
-  const [h, m] = hhmm.split(":").map(Number)
-  return (h || 0) * 60 + (m || 0)
-}
-
 function isScheduleActive(s: ScheduleDTO, nowMinutes: number): boolean {
-  const start = toMinutes(s.startTime)
-  const end = toMinutes(s.endTime)
-  if (end > start) return nowMinutes >= start && nowMinutes < end
-  // horario que cruza medianoche (ej. 22:00 - 02:00)
-  return nowMinutes >= start || nowMinutes < end
+  const start = hhmmToMinutes(s.startTime)
+  const end = hhmmToMinutes(s.endTime)
+  // Horas corruptas en DB (legado) → no marcar como activo
+  if (start === null || end === null) return false
+  // inTimeWindow soporta franjas que cruzan medianoche (22:00 - 02:00)
+  return inTimeWindow(nowMinutes, start, end)
 }
 
-/** HORARIO DE HOY: franja con los turnos; el activo se destaca. */
-export default function DailySchedule({ schedules, animationsEnabled }: { schedules: ScheduleDTO[]; animationsEnabled: boolean }) {
-  const [nowMinutes, setNowMinutes] = useState(() => {
-    const d = new Date()
-    return d.getHours() * 60 + d.getMinutes()
-  })
+/** HORARIO DE HOY: franja con los turnos; el activo se destaca.
+ *  FASE 8: la hora y el día se evalúan en la zona horaria del RESTAURANTE
+ *  (prop timezone de Settings), no en la del navegador de la TV. */
+export default function DailySchedule({ schedules, animationsEnabled, timezone }: { schedules: ScheduleDTO[]; animationsEnabled: boolean; timezone?: string }) {
+  const tz = timezone || "America/Havana"
+  const [parts, setParts] = useState(() => getTimeParts(new Date(), tz))
 
   useEffect(() => {
-    const id = setInterval(() => {
-      const d = new Date()
-      setNowMinutes(d.getHours() * 60 + d.getMinutes())
-    }, 30_000)
+    const id = setInterval(() => setParts(getTimeParts(new Date(), tz)), 30_000)
     return () => clearInterval(id)
-  }, [])
+  }, [tz])
 
-  const today = new Date().getDay()
-  const visible = schedules
-    .filter((s) => s.dayOfWeek === null || s.dayOfWeek === undefined || s.dayOfWeek === today)
-    .sort((a, b) => toMinutes(a.startTime) - toMinutes(b.startTime))
+  const visible = useMemo(
+    () =>
+      schedules
+        .filter((s) => s.dayOfWeek === null || s.dayOfWeek === undefined || s.dayOfWeek === parts.weekday)
+        .sort((a, b) => (hhmmToMinutes(a.startTime) ?? 0) - (hhmmToMinutes(b.startTime) ?? 0)),
+    [schedules, parts.weekday]
+  )
+
+  const nowMinutes = parts.minutes
 
   if (visible.length === 0) return null
 

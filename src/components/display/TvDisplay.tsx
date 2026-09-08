@@ -6,6 +6,7 @@ import type { Socket } from "socket.io-client"
 import type { ContentBundle, PublicSettings } from "@/lib/types"
 import { connectSocket } from "@/lib/client-socket"
 import { APP_LOGO_MARK } from "@/lib/brand"
+import { getTimeParts, inPromoWindow, pickDishesForToday, type TimeParts } from "@/lib/timezone"
 import Clock from "./Clock"
 import DailySchedule from "./DailySchedule"
 import RestaurantLogo from "./RestaurantLogo"
@@ -19,33 +20,6 @@ import ScreenPicker from "./ScreenPicker"
 const SCREEN_KEY = "signage.screenCode"
 const SCREEN_CHOSEN_KEY = "signage.screenChosen"
 const SCREEN_TOKEN_KEY = "signage.screenToken" // token de pairing (FASE 5/32)
-
-/** ¿La promoción está dentro de su ventana de fecha/hora? */
-function promoVisible(now: Date, p: ContentBundle["promotions"][number]): boolean {
-  if (p.startDate && now < new Date(p.startDate)) return false
-  if (p.endDate && now > new Date(p.endDate)) return false
-  if (p.startTime || p.endTime) {
-    const mins = now.getHours() * 60 + now.getMinutes()
-    const toM = (s: string) => Number(s.slice(0, 2)) * 60 + Number(s.slice(3, 5))
-    if (p.startTime && mins < toM(p.startTime)) return false
-    if (p.endTime && mins >= toM(p.endTime)) return false
-  }
-  return true
-}
-
-/** Sugerencias del día visibles hoy: fecha específica → día de semana → genéricas.
- *  Devuelve LISTA (varias sugerencias rotan en el banner con auto-slide). */
-function pickDishes(now: Date, dishes: ContentBundle["dishes"]) {
-  const today = now.getDay()
-  const iso = now.toISOString().slice(0, 10)
-  const byDate = dishes.filter((d) => d.date && d.date.slice(0, 10) === iso)
-  const byDay = dishes.filter((d) => d.dayOfWeek === today && !d.date)
-  const generic = dishes.filter((d) => d.dayOfWeek == null && !d.date)
-  if (byDate.length > 0) return byDate
-  if (byDay.length > 0) return byDay
-  if (generic.length > 0) return generic
-  return dishes.slice(0, 1)
-}
 
 /**
  * PANTALLA TV — Aplicación de señalización digital para televisores.
@@ -295,9 +269,21 @@ export default function TvDisplay() {
 
   // ---------- Derivados ----------
   const s: PublicSettings | null = content?.settings ?? null
+  // FASE 8: TODO el contenido programado se evalúa en la zona horaria del
+  // RESTAURANTE (Settings.timezone), nunca en la del navegador de la TV.
   const now = useMemo(() => new Date(), [content])
-  const activePromos = useMemo(() => (content ? content.promotions.filter((p) => promoVisible(now, p)) : []), [content, now])
-  const dishes = useMemo(() => (content ? pickDishes(now, content.dishes) : []), [content, now])
+  const tzParts: TimeParts = useMemo(
+    () => getTimeParts(now, s?.timezone ?? "America/Havana"),
+    [now, s?.timezone]
+  )
+  const activePromos = useMemo(
+    () => (content ? content.promotions.filter((p) => inPromoWindow(tzParts, now, p)) : []),
+    [content, now, tzParts]
+  )
+  const dishes = useMemo(
+    () => (content ? pickDishesForToday(tzParts, content.dishes) : []),
+    [content, tzParts]
+  )
   const tickerTexts = useMemo(() => content?.ticker.map((t) => t.text) ?? [], [content])
   // FASE 7: salida de audio persistida de ESTA pantalla (elegida por el admin
   // de la lista que este mismo navegador reportó)
@@ -375,7 +361,7 @@ export default function TvDisplay() {
         />
         {s!.showSchedule && (
           <div className="flex-1 flex justify-center min-w-0">
-            <DailySchedule schedules={content.schedules} animationsEnabled={s!.animationsEnabled} />
+            <DailySchedule schedules={content.schedules} animationsEnabled={s!.animationsEnabled} timezone={s!.timezone} />
           </div>
         )}
         <div style={{ justifySelf: s!.logoPosition === "left" ? "start" : "end" }}>
