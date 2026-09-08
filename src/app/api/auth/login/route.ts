@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { db } from "@/lib/db"
-import { verifyPassword, signSession, SESSION_COOKIE } from "@/lib/auth"
+import { verifyPassword, signSession, SESSION_COOKIE, SESSION_TTL_HOURS } from "@/lib/auth"
 
 export async function POST(req: NextRequest) {
   try {
@@ -28,6 +28,7 @@ export async function POST(req: NextRequest) {
       email: user.email,
       name: user.name,
       role: user.role as "ADMIN" | "OPERATOR" | "VIEWER",
+      av: user.authVersion,
     })
 
     const res = NextResponse.json({
@@ -38,7 +39,7 @@ export async function POST(req: NextRequest) {
       httpOnly: true,
       sameSite: "lax",
       path: "/",
-      maxAge: 60 * 60 * 24 * 7,
+      maxAge: 60 * 60 * SESSION_TTL_HOURS, // 24h — alineado con el TTL del token (antes 7 días)
     })
     return res
   } catch {

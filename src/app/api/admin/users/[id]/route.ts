@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireAuth, isNextResponse, hashPassword } from "@/lib/auth"
+import { requireAuth, isNextResponse, hashPassword, invalidateSessionCache } from "@/lib/auth"
 import { db } from "@/lib/db"
 import { pickFields, readBody, logAction } from "@/lib/crud"
 
@@ -27,12 +27,25 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (id === auth.uid && data.role && data.role !== "ADMIN") {
     return NextResponse.json({ error: "No puedes cambiar tu propio rol de administrador" }, { status: 400 })
   }
+  // FASE 2: desactivar al propio usuario se evita igualmente (sin sesión válida se quedaría a medias)
+  if (id === auth.uid && data.active === false) {
+    return NextResponse.json({ error: "No puedes desactivar tu propio usuario" }, { status: 400 })
+  }
+
+  // FASE 2 (misión): password/rol/active cambian → authVersion++ → sesiones viejas mueren
+  const touchesAuth =
+    Boolean(body.password) || data.role !== undefined || data.active !== undefined
+  if (touchesAuth) updateData.authVersion = { increment: 1 }
 
   const item = await db.user
     .update({ where: { id }, data: updateData as never })
     .catch(() => null)
   if (!item) return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 })
-  await logAction(auth, "UPDATE", "users", item.email)
+
+  // Invalidar cache de sesión inmediatamente (efecto instantáneo, sin esperar TTL 30s)
+  if (touchesAuth) invalidateSessionCache(id)
+
+  await logAction(auth, "UPDATE", "users", `${item.email}${touchesAuth ? " (sesiones invalidadas)" : ""}`)
   return NextResponse.json({ item: { id: item.id, email: item.email, name: item.name, role: item.role, active: item.active } })
 }
 
@@ -48,6 +61,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   }
   const item = await db.user.delete({ where: { id } }).catch(() => null)
   if (!item) return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 })
+  invalidateSessionCache(id) // el usuario ya no existe → sesiones mueren al instante
   await logAction(auth, "DELETE", "users", item.email)
   return NextResponse.json({ ok: true })
 }
