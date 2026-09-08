@@ -424,7 +424,8 @@ const internalServer = createServer((req: IncomingMessage, res: ServerResponse) 
   }
 
   if (req.method === "GET" && req.url?.startsWith("/status")) {
-    res.writeHead(200, { "Content-Type": "application/json" })
+    // no-store: los clientes (incl. fetch de bun) NO deben cachear estado vivo
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" })
     return res.end(
       JSON.stringify({
         ok: true,
