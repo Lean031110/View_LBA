@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { db } from "@/lib/db"
 import { verifyPassword, signSession, SESSION_COOKIE, SESSION_TTL_HOURS } from "@/lib/auth"
+import { loginRateLimiter, clientIp } from "@/lib/rate-limit"
 
 export async function POST(req: NextRequest) {
   try {
@@ -8,19 +9,39 @@ export async function POST(req: NextRequest) {
     if (!email || !password) {
       return NextResponse.json({ error: "Email y contraseña requeridos" }, { status: 400 })
     }
-    const user = await db.user.findUnique({ where: { email: String(email).toLowerCase().trim() } })
+    const normalizedEmail = String(email).toLowerCase().trim()
+    const ip = clientIp(req)
+
+    // FASE 3: rate limiting ANTES de tocar la DB (brute force)
+    const rl = loginRateLimiter.check(ip, normalizedEmail)
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: "Demasiados intentos. Espera antes de reintentar." },
+        { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } }
+      )
+    }
+
+    const user = await db.user.findUnique({ where: { email: normalizedEmail } })
     if (!user || !user.active || !verifyPassword(String(password), user.passwordHash)) {
+      loginRateLimiter.recordFailure(ip, normalizedEmail)
       await db.log
         .create({
-          data: { action: "LOGIN_FAILED", section: "auth", details: `email=${String(email).slice(0, 60)}` },
+          data: {
+            action: "LOGIN_FAILED",
+            section: "auth",
+            details: `email=${normalizedEmail.slice(0, 60)} ip=${ip}`,
+          },
         })
         .catch(() => {})
+      // 401 genérico idéntico para usuario inexistente / password errónea / inactivo
+      // (no revela cuál es la causa)
       return NextResponse.json({ error: "Credenciales inválidas" }, { status: 401 })
     }
 
+    loginRateLimiter.recordSuccess(ip, normalizedEmail)
     await db.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } })
     await db.log
-      .create({ data: { userId: user.id, userName: user.name, action: "LOGIN", section: "auth" } })
+      .create({ data: { userId: user.id, userName: user.name, action: "LOGIN", section: "auth", details: `ip=${ip}` } })
       .catch(() => {})
 
     const token = signSession({
