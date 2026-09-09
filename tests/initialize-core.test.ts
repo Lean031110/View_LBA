@@ -20,6 +20,7 @@ import { mkdtempSync, existsSync, writeFileSync, mkdirSync, rmSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
 import { randomBytes } from "crypto"
+import { Database } from "bun:sqlite"
 import {
   parseEnvFile,
   sqlitePathFromUrl,
@@ -205,7 +206,6 @@ describe("initializeProduction: DATABASE_URL externa + .env distinto → target 
     // El target fue migrado de verdad: archivo + tabla User + admin
     const targetPath = join(tmp, "db", "target.db")
     expect(existsSync(targetPath)).toBe(true)
-    const { Database } = require("bun:sqlite")
     const con = new Database(targetPath, { readonly: true })
     const tables = con.query("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>
     expect(tables.map((t) => t.name)).toContain("User")
@@ -250,8 +250,7 @@ describe("initializeProduction: DATABASE_URL externa + .env distinto → target 
       expect(result.steps.find((s) => s.name === "admin")?.status).toBe("failed")
       expect(result.error).toContain("política")
       // sin usuarios: la creación fue rechazada
-      const { Database } = require("bun:sqlite")
-      const con = new Database(join(tmp2, "target.db"), { readonly: true })
+        const con = new Database(join(tmp2, "target.db"), { readonly: true })
       const users = con.query("SELECT email FROM User").all() as Array<{ email: string }>
       expect(users).toEqual([])
       con.close()

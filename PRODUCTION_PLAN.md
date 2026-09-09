@@ -222,9 +222,15 @@
 - [x] No-commit verificado: .gitignore cubre .env*/db/*.db/worklog ✓; grep del HISTORIAL git completo: 0 secretos reales (solo fixtures DUMMY de tests y placeholders documentados)
 - [x] gitleaks en CI (security job, BLOQUEANTE) con .gitleaks.toml — allowlist estricto solo para fixtures de tests
 
-## FASE 31 — Installer [ ]
-- [ ] `scripts/install.ts` interactivo: deps → env (genera secrets) → migrate deploy → primer admin → seed opcional → health checks (app/realtime/stream) → resumen
-- [ ] Probar en limpio (clone fresh)
+## FASE 31 — Installer [x]
+- [x] Arquitectura en 3 capas: `scripts/install.ts` (CLI + preflight: bun/node/git/disco/permisos) → `scripts/lib/production-init.ts` (`initializeProduction(options)` SIN stdin/readline/process.exit) → resultado estructurado. CLI interactivo delgado encima (`scripts/init-production.ts`)
+- [x] PASO 1 (bug Bun/readline): protocolo rl.close() + process.stdin.unref() + cleanup posterior; process.exit SOLO como watchdog de seguridad unref'd con evidencia en log (nunca mecanismo normal)
+- [x] PASO 3-4 (protección DATABASE_URL): .env leído directamente como fuente de verdad (dotenv NO pisa variables existentes → shell contaminado hace silenciosamente que se ignore el .env local); target aplicado explícitamente a process.env y a cada hijo (spawnSync con env explícito); VERIFICACIÓN REAL del datasource vía `prisma migrate status` → abort exacto "Database target mismatch: aborting to prevent modifying another database." si difiere
+- [x] Reparación de .env incompleto (solo los secretos que faltan; los existentes jamás se regeneran); DATABASE_URL absoluta (rutas relativas se resuelven contra CWD, no contra el schema); permisos 600
+- [x] Multiplataforma: solo APIs fs/path/child_process (sin cp/rm/nohup embebidos); wrappers .sh/.ps1 siguen como capas por SO
+- [x] Tests: `tests/initialize-core.test.ts` 24/24 — incluye el test EXIGIDO: entorno con DATABASE_URL externa distinta + .env local → target seleccionado aplicado, DB contaminante INTACTA (verificación con prisma real + sqlite)
+- [x] Clone limpio REAL: escenario A (instalación completa con flags, Bun cargó el .env del directorio padre = contaminación real → guard funcionó, warning con evidencia, migraciones solo al target, EXIT=0, admin creado) y escenario B (re-run idempotente con stdin EOF: .env respetado, admin existente omitido, EXIT=0)
+- [x] Dogfooding: install.ts reparó el .env del entorno dev (secrets perdidos tras reset) y creó el admin; health de la app verificado (database/storage ok)
 
 ## FASE 32 — Screen pairing [ ]
 - [ ] Screen: + pairingCode temporal + screenTokenHash (hash del token; el token se muestra una vez) — migración

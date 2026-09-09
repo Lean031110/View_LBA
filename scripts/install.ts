@@ -29,7 +29,7 @@
  *   bun scripts/install.ts --email=a@b.c --password='Xy9!' --no-demo
  *   bun scripts/install.ts --no-build            # dev: sin compilar
  */
-import { existsSync, mkdirSync, writeFileSync, chmodSync, statSync, statfsSync, rmSync, readFileSync } from "fs"
+import { existsSync, mkdirSync, writeFileSync, chmodSync, statSync, statfsSync, rmSync, readFileSync, appendFileSync } from "fs"
 import { networkInterfaces } from "os"
 import { randomBytes } from "crypto"
 import { execSync, spawnSync } from "child_process"
@@ -125,9 +125,41 @@ function preflight(): string[] {
 /** Genera .env si no existe (secretos aleatorios; DB absoluta; 600). */
 function ensureEnv(): void {
   if (existsSync(ENV_PATH)) {
-    OK(".env ya existe — se respeta (los secretos NO se regeneran)")
     const envStat = statSync(ENV_PATH)
     if (envStat.mode & 0o077) WARN("perms de .env abiertas para grupo/otros (chmod 600 recomendado en Linux)")
+
+    // REPARACIÓN: .env existente pero incompleto (p. ej. template parcial o
+    // secretos perdidos): se generan SOLO los que faltan — los valores
+    // existentes se respetan (nunca se regenera un secreto que ya había).
+    const cur = readEnvFile(ENV_PATH) ?? {}
+    const repaired: string[] = []
+    const append: string[] = []
+    if (!cur.AUTH_SECRET) {
+      append.push(`AUTH_SECRET="${secret(24)}"`)
+      repaired.push("AUTH_SECRET")
+    }
+    if (!cur.REALTIME_TOKEN) {
+      append.push(`REALTIME_TOKEN="${secret(16)}"`)
+      repaired.push("REALTIME_TOKEN")
+    }
+    if (!cur.DATABASE_URL) {
+      const dbDir = join(PROJECT_ROOT, "db")
+      if (!existsSync(dbDir)) mkdirSync(dbDir, { recursive: true })
+      const dbPath = join(dbDir, "custom.db").replace(/\\/g, "/")
+      append.push(`DATABASE_URL="file:${dbPath}"`)
+      repaired.push("DATABASE_URL (absoluta por defecto)")
+    }
+    if (append.length > 0) {
+      appendFileSync(ENV_PATH, `\n# Secretos/valores regenerados por scripts/install.ts — ${new Date().toISOString()}\n${append.join("\n")}\n`)
+      try {
+        chmodSync(ENV_PATH, 0o600)
+      } catch {
+        /* noop */
+      }
+      WARN(`.env incompleto — regenerados (sin imprimir valores): ${repaired.join(", ")}`)
+    } else {
+      OK(".env ya existe y está completo — se respeta (los secretos NO se regeneran)")
+    }
     return
   }
   const port = arg("port") ?? "3000"

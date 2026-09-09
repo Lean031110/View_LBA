@@ -237,6 +237,15 @@ if (CAN_RUN) {
     120_000 // dev compila /api/health bajo demanda
   )
 
+  // CALENTAMIENTO de rutas (estabilidad CI — flake documentado en FASE 42):
+  // next dev compila BAJO DEMANDA y el primer hit paga la compilación; con la
+  // suite corriendo en paralelo ese primer hit puede tardar >10s y comerse el
+  // presupuesto de los samplers (2 fallos en 3 corridas completas, siempre en
+  // "reproducción"). Se compilan AHORA /api/stream/status y /api/stream/live.flv
+  // (503 esperable sin publicador); los asserts no cambian.
+  await fetch(`${APP}/api/stream/status`, { signal: AbortSignal.timeout(30_000) }).catch(() => {})
+  await fetch(`${APP}/api/stream/live.flv`, { signal: AbortSignal.timeout(30_000) }).catch(() => {})
+
   // espera determinista de arranque completo del servicio de streaming
   await waitFor(async () => (await svcStatus()).hasKey, (k) => k === true, 10_000)
 } else {
@@ -276,7 +285,7 @@ d("FASE 23: pipeline de streaming real", () => {
       expect(svc.publisherIp).toContain("127.0.0.1")
 
       // la app (proxy) refleja el estado: source local + serverOk + live
-      const pubSt = await waitFor(publicStatus, (s) => s.live === true, 10_000)
+      const pubSt = await waitFor(publicStatus, (s) => s.live === true, 20_000)
       expect(pubSt.source).toBe("local")
       expect(pubSt.serverOk).toBeTrue()
     } finally {
@@ -289,7 +298,7 @@ d("FASE 23: pipeline de streaming real", () => {
     try {
       await waitFor(async () => (await svcStatus()).live, (l) => l === true, 20_000)
 
-      const sample = await sampleFlv(150_000, 15_000)
+      const sample = await sampleFlv(150_000, 45_000) // presupuesto CI-contención: reconnects incluidos
       expect(sample.status).toBe(200)
       expect(sample.contentType).toContain("video/x-flv")
       expect(sample.firstBytes).toBe("FLV")
@@ -322,7 +331,7 @@ d("FASE 23: pipeline de streaming real", () => {
       expect(stayedLive).toBeTrue()
 
       // y el FLV vuelve a fluir por el proxy con el nuevo publicador
-      const sample = await sampleFlv(100_000, 12_000)
+      const sample = await sampleFlv(100_000, 30_000) // presupuesto CI-contención
       expect(sample.status).toBe(200)
       expect(sample.firstBytes).toBe("FLV")
       expect(sample.totalBytes).toBeGreaterThan(50_000)
@@ -350,9 +359,9 @@ d("FASE 23: pipeline de streaming real", () => {
     const pub = startPublisher()
     try {
       await waitFor(async () => (await svcStatus()).live, (l) => l === true, 20_000)
-      await waitFor(publicStatus, (s) => s.live === true, 10_000)
+      await waitFor(publicStatus, (s) => s.live === true, 20_000)
 
-      const sample = await sampleFlv(100_000, 12_000)
+      const sample = await sampleFlv(100_000, 30_000) // presupuesto CI-contención
       expect(sample.status).toBe(200)
       expect(sample.firstBytes).toBe("FLV")
       expect(sample.totalBytes).toBeGreaterThan(50_000)
