@@ -155,9 +155,16 @@
   - SKIP VISIBLE si no hay ffmpeg o puertos ocupados (E2E en marcha comparte .next)
 - [x] En CI: ubuntu-latest de GitHub incluye ffmpeg (validado localmente; si CI no lo tuviera → skip visible NOT VERIFIED)
 
-## FASE 24 — CI/CD [ ]
-- [ ] Cache bun/prisma; jobs: lint+tsc+unit+build, integration (dev server), services (realtime/stream), Playwright, `bun audit`
-- [ ] Sin verde si falla algo crítico; artefactos de logs en fallo
+## FASE 24 — CI/CD [x]
+- [x] GitHub Actions con 4 jobs paralelos (todos requeridos para el verde):
+  - **quality**: install reproducible (--frozen-lockfile + cache bun) · prisma generate · lint · typecheck · bun test (12 suites unit + realtime-service spawn + stream-pipeline con ffmpeg) · build standalone
+  - **integration**: e2e-setup (DB + seed demo) → dev server :3000 real → `bun test tests/integration/api.test.ts` (19/19 validados localmente) → teardown + logs como artefacto en fallo
+  - **e2e**: cache de navegadores Playwright · chromium --with-deps · e2e-setup · `bunx playwright test` (bootea app+realtime+stream) · traces/screenshots como artefactos en fallo
+  - **security**: `bun audit --audit-level=critical` BLOQUEANTE (0 hoy) + reporte completo registrado como warning
+- [x] Sin verde si falla algo crítico: los 4 jobs son required; audit crítico bloquea
+- [x] Artefactos de logs en fallo: dev-server.log + playwright failures
+- [x] Saneamiento de runtime (evidencia del audit): eliminadas `lodash` y `@reactuses/core` (0 imports en src — la segunda arrastraba js-cookie ≤3.0.5 HIGH). Las 30 restantes viven SOLO en cadenas dev/CLI (eslint→babel→browserslist, prisma-config, picomatch) — no forman parte del binario standalone
+- Registro: `bun update` sin cambios (todo en último semver compatible)
 
 ## FASE 25 — Health [ ]
 - [ ] `/api/health` real: {status: ok|degraded|unhealthy, database, storage(MEDIA_DIR writable+quota), realtime(:3004/health), stream(:8100/health)} — sin secretos, con timeout y fallback

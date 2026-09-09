@@ -14,22 +14,30 @@ concurrency:
 permissions:
   contents: read
 
-jobs:
-  ci:
-    name: Lint · Tipos · Tests · Build
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+env:
+  # Secretos DUMMY solo para que la validación de entorno (src/lib/env.ts)
+  # no falle en CI. Nunca son secretos reales; la producción usa los suyos.
+  AUTH_SECRET: ci-dummy-secret-0123456789abcdef0123456789
+  REALTIME_TOKEN: ci-dummy-rt-token-0123456789abcdef
+  DATABASE_URL: file:./db/ci-quality.db
 
+jobs:
+  # ---------------------------------------------------------------- 1. Calidad
+  quality:
+    name: Calidad (lint · tipos · unit+services · build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Instalar Bun
+      - name: Instalar Bun (con cache de dependencias)
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+          cache: true
 
-      - name: Instalar dependencias
+      - name: Instalar dependencias (reproducible)
         run: bun install --frozen-lockfile
 
       - name: Generar Prisma Client
@@ -37,30 +45,155 @@ jobs:
 
       - name: Lint (ESLint)
         run: bun run lint
-        env:
-          # Secretos dummy SOLO para que el build/validación no fallen en CI
-          # (nunca son secretos reales; el runtime de producción usa los suyos)
-          AUTH_SECRET: ci-dummy-secret-0123456789abcdef0123456789
-          REALTIME_TOKEN: ci-dummy-rt-token-0123456789abcdef
-          DATABASE_URL: file:./ci-build.db
 
       - name: Tipos (TypeScript)
         run: bun run typecheck
-        env:
-          AUTH_SECRET: ci-dummy-secret-0123456789abcdef0123456789
-          REALTIME_TOKEN: ci-dummy-rt-token-0123456789abcdef
-          DATABASE_URL: file:./ci-build.db
 
-      - name: Tests (bun test)
+      - name: Tests unit + mini-services + pipeline de streaming
+        # Incluye: 12 suites unit, realtime-service (spawn propio :3103/:3104)
+        # y stream-pipeline FASE 23 (spawn propio :1935/:8000/:8100 + next :3100,
+        # publisher ffmpeg real). Los de integración se omiten aquí SIN
+        # servidor (visible en salida) — corren de verdad en el job integration.
         run: bun test
-        env:
-          AUTH_SECRET: ci-dummy-secret-0123456789abcdef0123456789
-          REALTIME_TOKEN: ci-dummy-rt-token-0123456789abcdef
-          DATABASE_URL: file:./ci-build.db
 
       - name: Build de producción (Next.js standalone)
         run: bun run build
-        env:
-          AUTH_SECRET: ci-dummy-secret-0123456789abcdef0123456789
-          REALTIME_TOKEN: ci-dummy-rt-token-0123456789abcdef
-          DATABASE_URL: file:./ci-build.db
+
+  # ------------------------------------------------------- 2. Integración (API)
+  integration:
+    name: Integración (API contra servidor real)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Instalar Bun (con cache)
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+          cache: true
+
+      - name: Instalar dependencias (reproducible)
+        run: bun install --frozen-lockfile
+
+      - name: Generar Prisma Client
+        run: bunx prisma generate
+
+      - name: Preparar DB de integración (migrate deploy + seed demo)
+        # Misma DB aislada que usa el E2E: migraciones versionadas + usuarios demo
+        run: bun scripts/e2e-setup.ts
+
+      - name: Arrancar servidor (dev) con la DB de integración
+        run: |
+          DATABASE_URL="file:../db/e2e.db" \
+          AUTH_SECRET="${{ env.AUTH_SECRET }}" \
+          REALTIME_TOKEN="${{ env.REALTIME_TOKEN }}" \
+          LOGIN_RATE_LIMIT_IP_MAX=500 \
+            nohup bunx next dev -p 3000 > dev-server.log 2>&1 &
+          echo $! > /tmp/dev-server.pid
+
+      - name: Esperar health del servidor
+        run: |
+          for i in $(seq 1 90); do
+            if curl -sf http://127.0.0.1:3000/api/health > /dev/null; then
+              echo "✓ servidor listo (intento $i)"; exit 0
+            fi
+            sleep 2
+          done
+          echo "✗ el servidor no arrancó"; tail -n 50 dev-server.log; exit 1
+
+      - name: Tests de integración (rutas API reales)
+        run: DATABASE_URL="file:../db/e2e.db" APP_URL=http://127.0.0.1:3000 bun test tests/integration/api.test.ts
+
+      - name: Parar servidor
+        if: always()
+        run: |
+          kill $(cat /tmp/dev-server.pid) 2>/dev/null || true
+          pkill -f "next dev" 2>/dev/null || true
+
+      - name: Logs del servidor (solo en fallo)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-dev-server-log
+          path: dev-server.log
+          retention-days: 7
+
+  # ------------------------------------------------------------------- 3. E2E
+  e2e:
+    name: E2E (Playwright · 26 tests / 23 escenarios)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Instalar Bun (con cache)
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+          cache: true
+
+      - name: Instalar dependencias (reproducible)
+        run: bun install --frozen-lockfile
+
+      - name: Generar Prisma Client
+        run: bunx prisma generate
+
+      - name: Cache de navegadores Playwright
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+
+      - name: Instalar Chromium para Playwright
+        run: bunx playwright install --with-deps chromium
+
+      - name: Preparar DB E2E (migrate deploy + seed demo + VIEWER + streamKey)
+        run: bun scripts/e2e-setup.ts
+
+      - name: Tests E2E (bootean app + realtime + stream ellos mismos)
+        run: bunx playwright test
+
+      - name: Artefactos de fallo (traces/screenshots)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-failures
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ------------------------------------------------------------- 4. Seguridad
+  security:
+    name: Seguridad (dependencias)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Instalar Bun (con cache)
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+          cache: true
+
+      - name: Instalar dependencias (reproducible)
+        run: bun install --frozen-lockfile
+
+      # BLOQUEANTE: ninguna vulnerabilidad CRÍTICA es aceptable.
+      - name: Auditoría de dependencias (críticas — bloqueante)
+        run: bun audit --audit-level=critical
+
+      # REGISTRO: el reporte completo se registra como warning del run.
+      # Contexto (documentado en PRODUCTION_PLAN FASE 24): las vulnerabilidades
+      # restantes viven en cadenas DEV/CLI (eslint→babel→browserslist,
+      # prisma-config, picomatch/minimatch) que NO forman parte del binario
+      # de producción (standalone). Dependencias de runtime ya saneadas
+      # (js-cookie/lodash eliminadas por no usarse).
+      - name: Auditoría completa (registro, no bloqueante)
+        run: bun audit || echo "::warning::Vulnerabilidades registradas (cadenas dev/CLI, ver PRODUCTION_PLAN FASE 24)"
