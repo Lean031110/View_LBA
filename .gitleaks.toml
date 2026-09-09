@@ -1,0 +1,16 @@
+# Configuración de gitleaks — escaneo de secretos en el historial (FASE 30)
+#
+# Regla del proyecto: JAMÁS secretos reales en el repo. Se permiten EXCLUSIVAMENTE
+# los "secretos" DUMMY de fixtures de tests (valores fijos, etiquetados como
+# tests, válidos solo en entornos efímeros de E2E/CI) y los placeholders
+# documentados de ejemplo.
+[allowlist]
+  description = "Fixtures de tests con secretos DUMMY (no reales) y placeholders documentados"
+  paths = [
+    '''(^|/)tests/realtime-service\.test\.ts$''',
+    '''(^|/)tests/stream-pipeline\.test\.ts$''',
+    '''(^|/)playwright\.config\.ts$''',
+    '''(^|/)\.env\.example$''',
+    '''(^|/)scripts/publish-github\.sh$''',
+    '''(^|/)\.github/workflows/ci\.yml$''',
+  ]

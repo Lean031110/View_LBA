@@ -205,9 +205,10 @@
 - NOT VERIFIED: ejecución real en Windows (sin Windows en este entorno) — install.ps1/manage.ps1 sin validar en PS (sin pwsh); marcado para FASE 42/43. El runtime del código es multiplataforma verificado en la parte ejecutable aquí
 - Extra: sampler FLV del pipeline hecho determinista (reconexión como el player real; bytes como métrica de continuidad) — 4/4 estable
 
-## FASE 30 — Configuración [ ]
-- [ ] `.env.example` final completo (PORT, DATABASE_URL, AUTH_SECRET, REALTIME_TOKEN, TIMEZONE, MEDIA_DIR, BACKUP_DIR, LOG_DIR, ALLOWED_ORIGINS, STREAM_TEST_ALLOWED_HOSTS, RTMP_*, HTTP_FLV_PORT, MEDIA_MAX_TOTAL_MB, LOGIN_RATE_LIMIT)
-- [ ] Validar que .env/DB/tokens no se commitean (gitignore ya OK + gitleaks en CI)
+## FASE 30 — Configuración [x]
+- [x] `.env.example` FINAL completo con las ~24 variables reales que el código lee (inventario verificado con grep): obligatorias (AUTH_SECRET/REALTIME_TOKEN/DATABASE_URL) · app (PORT/TIMEZONE) · almacenamiento (MEDIA_DIR/BACKUP_DIR/LOG_DIR/DATA_DIR) · seguridad (LOGIN_RATE_LIMIT_IP_MAX/ALLOW_SVG/ALLOWED_ORIGINS/STREAM_TEST_ALLOWED_HOSTS/MEDIA_MAX_TOTAL_MB) · realtime (REALTIME_PORT/REALTIME_INTERNAL_PORT) · stream (RTMP_PORT/HTTP_FLV_PORT/HTTP_FLV_BIND) · auditoría/backups (LOG_RETENTION_DAYS/BACKUP_RETENTION) · health (REALTIME_HEALTH_URL/STREAM_HEALTH_URL) — con referencias a los instaladores que lo generan
+- [x] No-commit verificado: .gitignore cubre .env*/db/*.db/worklog ✓; grep del HISTORIAL git completo: 0 secretos reales (solo fixtures DUMMY de tests y placeholders documentados)
+- [x] gitleaks en CI (security job, BLOQUEANTE) con .gitleaks.toml — allowlist estricto solo para fixtures de tests
 
 ## FASE 31 — Installer [ ]
 - [ ] `scripts/install.ts` interactivo: deps → env (genera secrets) → migrate deploy → primer admin → seed opcional → health checks (app/realtime/stream) → resumen

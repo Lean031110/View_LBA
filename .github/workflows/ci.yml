@@ -216,3 +216,11 @@ jobs:
       # (js-cookie/lodash eliminadas por no usarse).
       - name: Auditoría completa (registro, no bloqueante)
         run: bun audit || echo "::warning::Vulnerabilidades registradas (cadenas dev/CLI, ver PRODUCTION_PLAN FASE 24)"
+
+      # FASE 30: NINGÚN secreto real en el historial git (bloqueante).
+      # Allowlist estricto (.gitleaks.toml): solo fixtures DUMMY de tests.
+      - name: Escaneo de secretos en el historial (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
