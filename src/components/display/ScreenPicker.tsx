@@ -1,7 +1,7 @@
 "use client"
 
 import { motion } from "framer-motion"
-import { MonitorPlay, MonitorSmartphone } from "lucide-react"
+import { KeyRound, MonitorPlay, MonitorSmartphone } from "lucide-react"
 
 /** Selector de identidad: ¿qué pantalla física es este dispositivo? */
 export default function ScreenPicker({
@@ -9,11 +9,16 @@ export default function ScreenPicker({
   current,
   onSelect,
   onClose,
+  pairCode,
+  pairError,
 }: {
   screens: { code: string; name: string; location: string | null }[]
   current: string | null
   onSelect: (code: string | null) => void
   onClose: () => void
+  /** FASE 32: código temporal de vinculación (solo TV sin identidad) */
+  pairCode?: string | null
+  pairError?: string | null
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-6" style={{ background: "rgba(5,5,8,0.82)", backdropFilter: "blur(10px)" }}>
@@ -28,10 +33,31 @@ export default function ScreenPicker({
           <h2 className="text-xl font-bold text-white">Identificar esta pantalla</h2>
         </div>
         <p className="text-white/55 text-sm mb-6 leading-relaxed">
-          Selecciona qué pantalla física es este dispositivo. La asociación se guarda en el navegador y permite al
-          panel de administración monitorearla y enviarle comandos remotos. (Podrás cambiarla más tarde pulsando la
-          tecla <kbd className="px-1.5 py-0.5 rounded bg-white/10 text-white/80">S</kbd>).
+          Vincula esta pantalla desde el panel de administración con el código de abajo, o selecciona qué pantalla
+          física es este dispositivo. La asociación se guarda en el navegador y permite al panel monitorearla y
+          enviarle comandos remotos. (Podrás cambiarla más tarde pulsando la tecla{" "}
+          <kbd className="px-1.5 py-0.5 rounded bg-white/10 text-white/80">S</kbd>).
         </p>
+
+        {pairCode && (
+          <div className="mb-6 rounded-xl border border-amber-400/30 bg-amber-400/[0.06] p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <KeyRound size={18} style={{ color: "var(--tv-primary)" }} />
+              <span className="text-sm font-semibold text-white">Vincular esta pantalla</span>
+              <span className="ml-auto flex items-center gap-1.5 text-[10px] text-amber-300/80">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                esperando vinculación
+              </span>
+            </div>
+            <div data-testid="pair-code" className="font-mono text-4xl font-bold tracking-[0.35em] text-amber-300 mb-3 select-all">{pairCode}</div>
+            <p className="text-xs text-white/50 leading-relaxed">
+              En el panel de administración: <b className="text-white/75">Pantallas → Nueva pantalla</b> e introduce
+              este código. La pantalla recibirá su token automáticamente y quedará verificada. El código caduca a los
+              10 minutos y se renueva solo.
+            </p>
+            {pairError && <p className="text-xs text-red-400 mt-2">⚠ {pairError}</p>}
+          </div>
+        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-80 overflow-y-auto custom-scrollbar pr-1">
           {screens.map((s) => (

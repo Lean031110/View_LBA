@@ -232,12 +232,18 @@
 - [x] Clone limpio REAL: escenario A (instalación completa con flags, Bun cargó el .env del directorio padre = contaminación real → guard funcionó, warning con evidencia, migraciones solo al target, EXIT=0, admin creado) y escenario B (re-run idempotente con stdin EOF: .env respetado, admin existente omitido, EXIT=0)
 - [x] Dogfooding: install.ts reparó el .env del entorno dev (secrets perdidos tras reset) y creó el admin; health de la app verificado (database/storage ok)
 
-## FASE 32 — Screen pairing [ ]
-- [ ] Screen: + pairingCode temporal + screenTokenHash (hash del token; el token se muestra una vez) — migración
-- [ ] Flujo: TV sin vincular → "Esta pantalla no está vinculada" + código 6 dígitos → Admin: Agregar pantalla → introduce código → nombre/ubicación → generar token → TV lo recibe y persiste (localStorage + registro autenticado)
-- [ ] screen:register exige token válido (hash match, screen active) — junto a F5
-- [ ] Reinicio de TV conserva identidad; token comprometible → regenerar desde admin
-- [ ] E2E del flujo completo
+## FASE 32 — Screen pairing [x]
+> Auditoría previa: el modelo Screen YA tenía tokenHash/lastSeenAt/metadata/audioDeviceId (F5/F7) y screen:register YA validaba code+active+sha256(token) — NO se creó arquitectura paralela; se COMPLETÓ el flujo que faltaba (la TV leía el token de localStorage pero NADIE lo escribía: el emparejamiento verificado era imposible).
+
+- [x] Flujo completo de la misión: TV nueva → selector muestra código temporal de 6 dígitos (crypto.getRandomValues, TTL 10 min con renovación automática) → Admin: Nueva pantalla con el código (code TV-### auto) o Vincular en tarjeta existente → token generado (randomBytes 24, sha256 en DB) → entrega por room `pair:<código>` del realtime (POST /broadcast interno, solo prefijo pair: permitido) → la TV lo persiste (localStorage) → re-registro VERIFICADO → reinicio conserva identidad
+- [x] Órden crítico corregido (carrera REAL encontrada en E2E): el hash rige en la DB ANTES del broadcast — la TV re-registra al instante y el realtime valida contra la DB; hash huérfano revertido a null si nadie recibió el token
+- [x] Robustez ante carreras: re-join periódico del pair room desde la TV (heartbeat 15s) + reintento del broadcast (600ms) — la TV muestra el código ANTES de que su socket (fallback ws→polling) se una al room
+- [x] Regeneración invalida el token anterior (hash sustituido); la TV con token viejo queda rechazada (bad-token) → identidad limpiada → selector con código nuevo para re-vincular
+- [x] screenCode NUNCA es el secreto (el token es independiente); el token claro NO se guarda (solo sha256); rate-limit de pair:wait (5 intentos/socket, 1 room activo)
+- [x] audioDevices persistidos en Screen.metadata (throttled 60s) — el admin los ve aunque la TV esté offline
+- [x] UI admin: campo "Código de vinculación de la TV" en Nueva pantalla + botón "Vincular" (solo ADMIN) por tarjeta + instrucciones actualizadas
+- [x] Tests realtime (16/16): código inválido, room vacío (clients:0), flujo COMPLETO (pair:wait → pair:complete → register verificado), regeneración (token antiguo rechazado + nuevo funciona) — se suman a los 5 ya existentes (desconocida/inactiva/token malo/token bueno/sin token)
+- [x] E2E (29/29 con DB fresca): 3 specs nuevos — vinculación completa con persistencia tras recarga, re-vinculación a otra TV con invalidación del token anterior, código sin TV esperando → pantalla creada sin entrega; los 26 existentes sin regresión
 
 ## FASE 33 — Recovery [ ]
 - [ ] Simulaciones scriptadas (deploy/linux/recovery-test.sh): matar Next/realtime/stream/DB bloqueada/red/OBS/TV socket → comprobar: restart automático, TV reconnect, stream reconnect, contenido en cache, sin corrupción, sin duplicación

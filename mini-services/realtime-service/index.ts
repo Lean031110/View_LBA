@@ -145,6 +145,38 @@ function persistLastSeen(code: string): void {
   }
 }
 
+/** FASE 32: persiste la lista de dispositivos de audio de la pantalla en
+ *  Screen.metadata (JSON) — el admin la ve aunque la TV esté offline. */
+const AUDIO_PERSIST_INTERVAL = 60_000 // por pantalla
+const audioPersistedAt = new Map<string, number>()
+function persistAudioDevices(
+  code: string,
+  audioInfo: { devices: { deviceId: string; label: string }[]; supportsSinkId: boolean }
+): void {
+  const now = Date.now()
+  const last = audioPersistedAt.get(code) ?? 0
+  if (now - last < AUDIO_PERSIST_INTERVAL) return
+  audioPersistedAt.set(code, now)
+  try {
+    const w = new Database(DB_PATH, { timeout: 4000 })
+    try {
+      const row = w.query("SELECT metadata FROM Screen WHERE code = ?").get(code) as
+        | { metadata: string | null }
+        | null
+      if (!row) return
+      const meta = row.metadata ? (JSON.parse(row.metadata) as Record<string, unknown>) : {}
+      meta.audioDevices = audioInfo.devices
+      meta.audioSupportsSinkId = audioInfo.supportsSinkId
+      meta.audioReportedAt = new Date().toISOString()
+      w.query("UPDATE Screen SET metadata = ? WHERE code = ?").run(JSON.stringify(meta), code)
+    } finally {
+      w.close()
+    }
+  } catch {
+    // no crítico: el snapshot en memoria siempre manda
+  }
+}
+
 // ---------- Estado en memoria ----------
 interface ScreenEntry {
   socketId: string
@@ -172,6 +204,30 @@ interface ScreenEntry {
 
 const screens = new Map<string, ScreenEntry>() // key: socketId
 const admins = new Map<string, AdminIdentity>() // key: socketId
+
+// ---------- FASE 32: pairing por código temporal ----------
+// La TV no emparejada genera un código de 6 dígitos (crypto del navegador),
+// lo MUESTRA en pantalla y espera en el room `pair:<code>`. El admin crea la
+// pantalla con ese código → el API Next.js hace POST /broadcast con
+// {event:"pair:complete", room:"pair:<code>", payload:{screenCode, token,...}}
+// → la TV recibe el token, lo persiste (localStorage) y se registra como
+// verificada (screen:register con token → sha256 contra Screen.tokenHash).
+// El código caduca solo (TTL), un solo room activo por socket y con tope de
+// intentos — modelo de amenaza LAN (el código solo se muestra en la TV física).
+const PAIR_ROOM_TTL_MS = 10 * 60_000
+const PAIR_MAX_ATTEMPTS = 5 // por socket: anti-fuerza bruta de rooms
+const pairAttempts = new Map<string, number>() // socketId → intentos
+const pairRoomOf = new Map<string, { room: string; timer: ReturnType<typeof setTimeout> }>()
+
+/** Libera el room de pairing de un socket (TTL, nuevo wait o disconnect). */
+function cleanupPairRoom(socketId: string): void {
+  const entry = pairRoomOf.get(socketId)
+  if (!entry) return
+  clearTimeout(entry.timer)
+  pairRoomOf.delete(socketId)
+  const sock = io.sockets.sockets.get(socketId)
+  if (sock) void sock.leave(entry.room)
+}
 
 // Puerto 3003: socket.io puro (los endpoints HTTP los maneja el servidor interno en 3004)
 const io = new Server(createServer(), {
@@ -284,6 +340,31 @@ io.on("connection", (socket: Socket) => {
     }
   )
 
+  // ---------- FASE 32: TV no emparejada esperando su código temporal ----------
+  socket.on("pair:wait", (data: { pairCode?: string }) => {
+    const code = String(data?.pairCode ?? "")
+    if (!/^\d{6}$/.test(code)) {
+      socket.emit("pair:error", { error: "Código de vinculación inválido (6 dígitos)" })
+      return
+    }
+    const attempts = (pairAttempts.get(socket.id) ?? 0) + 1
+    pairAttempts.set(socket.id, attempts)
+    if (attempts > PAIR_MAX_ATTEMPTS) {
+      socket.emit("pair:error", { error: "Demasiados intentos de vinculación — recarga la página" })
+      return
+    }
+    cleanupPairRoom(socket.id) // un room activo por socket
+    const room = `pair:${code}`
+    void socket.join(room)
+    const timer = setTimeout(() => {
+      cleanupPairRoom(socket.id)
+      socket.emit("pair:expired", { code })
+    }, PAIR_ROOM_TTL_MS)
+    timer.unref?.()
+    pairRoomOf.set(socket.id, { room, timer })
+    console.log(`🔗 [realtime] TV esperando vinculación (${room})`)
+  })
+
   socket.on("screen:heartbeat", (data: { resolution?: string }) => {
     const s = screens.get(socket.id)
     if (s) {
@@ -306,6 +387,8 @@ io.on("connection", (socket: Socket) => {
         supportsSinkId: Boolean(data.supportsSinkId),
         reportedAt: Date.now(),
       }
+      // FASE 32: persistir en Screen.metadata (throttled) para el admin
+      persistAudioDevices(s.screenCode, s.audioInfo)
       pushSnapshotToAdmins()
     }
   })
@@ -372,6 +455,8 @@ io.on("connection", (socket: Socket) => {
   socket.on("disconnect", () => {
     const wasScreen = screens.delete(socket.id)
     admins.delete(socket.id)
+    cleanupPairRoom(socket.id)
+    pairAttempts.delete(socket.id)
     if (wasScreen) pushSnapshotToAdmins()
   })
 
@@ -446,7 +531,16 @@ const internalServer = createServer((req: IncomingMessage, res: ServerResponse) 
     req.on("data", (c) => (body += c))
     req.on("end", () => {
       try {
-        const { event, payload, target, screenCode } = JSON.parse(body || "{}")
+        const { event, payload, target, screenCode, room } = JSON.parse(body || "{}")
+        // FASE 32: emisión a un ROOM de pairing (pair:NNNNNN) — validado por
+        // prefijo: el API interno NUNCA puede apuntar a rooms arbitrarias.
+        // Se responde con el número de clientes del room (¿la TV esperaba?).
+        if (typeof room === "string" && /^pair:\d{6}$/.test(room)) {
+          const clients = io.sockets.adapter.rooms.get(room)?.size ?? 0
+          if (clients > 0) io.to(room).emit(event, payload)
+          res.writeHead(200, { "Content-Type": "application/json" })
+          return res.end(JSON.stringify({ ok: true, event, room, clients }))
+        }
         emitToTarget(event, payload, target, screenCode)
         res.writeHead(200, { "Content-Type": "application/json" })
         res.end(JSON.stringify({ ok: true, event, delivered: true }))

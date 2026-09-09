@@ -32,6 +32,8 @@ export default function TvDisplay() {
   const [backendOnline, setBackendOnline] = useState(true)
   const [screenCode, setScreenCode] = useState<string | null>(null)
   const [showPicker, setShowPicker] = useState(false)
+  const [pairCode, setPairCode] = useState<string | null>(null) // FASE 32: código temporal de vinculación
+  const [pairError, setPairError] = useState<string | null>(null)
   const [cursorHidden, setCursorHidden] = useState(false)
   const [audioConfig, setAudioConfig] = useState<{ volume: number; muted: boolean; deviceId: string | null } | null>(null)
   const [serverLive, setServerLive] = useState<boolean | null>(null) // estado del servidor RTMP local (OBS)
@@ -63,6 +65,28 @@ export default function TvDisplay() {
     fetchContent()
   }, [fetchContent])
 
+  // ---------- FASE 32: código temporal de vinculación ----------
+  // TV no emparejada (picker visible sin identidad) → genera un código de
+  // 6 dígitos que el ADMIN introduce en el panel (Pantallas → Nueva
+  // pantalla). El servidor hará llegar el token por este código y aquí se
+  // persiste (localStorage) → reinicios conservan la identidad verificada.
+  const pairCodeRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!showPicker || screenCode) return
+    const gen = () => {
+      const digits = new Uint32Array(6)
+      crypto.getRandomValues(digits)
+      const code = Array.from(digits, (d) => String(d % 10)).join("")
+      pairCodeRef.current = code
+      setPairCode(code)
+      setPairError(null)
+      // esperar en el room de pairing (re-emite si el código se renueva)
+      const sock = socketRef.current
+      if (sock?.connected) sock.emit("pair:wait", { pairCode: code })
+    }
+    gen()
+  }, [showPicker, screenCode])
+
   // ---------- Realtime: cambios instantáneos desde administración ----------
   useEffect(() => {
     const socket = connectSocket()
@@ -76,13 +100,59 @@ export default function TvDisplay() {
         // FASE 5: token de pairing si la pantalla fue emparejada
         token: localStorage.getItem(SCREEN_TOKEN_KEY) ?? undefined,
       })
+      // FASE 32: TV sin identidad esperando su código de vinculación
+      if (!localStorage.getItem(SCREEN_KEY) && pairCodeRef.current) {
+        socket.emit("pair:wait", { pairCode: pairCodeRef.current })
+      }
     })
 
     // FASE 5: la pantalla no fue aceptada por el servicio (código desconocido,
     // inactiva o token inválido) → mostrar el selector para re-vincular
     socket.on("screen:rejected", (d: { reason?: string; message?: string }) => {
       console.warn("[TV] Registro rechazado:", d?.reason)
+      // Token invalidado (p. ej. regenerado desde el panel) → limpiar la
+      // identidad caducada y ofrecer re-vinculación por código (FASE 32)
+      if (d?.reason === "bad-token" && localStorage.getItem(SCREEN_TOKEN_KEY)) {
+        localStorage.removeItem(SCREEN_TOKEN_KEY)
+        localStorage.removeItem(SCREEN_KEY)
+        setScreenCode(null)
+      }
       setShowPicker(true)
+    })
+
+    // FASE 32: el admin vinculó esta TV (introdujo el código en el panel) →
+    // llega {screenCode, token, name} → persistir y re-registrar verificada
+    socket.on("pair:complete", (d: { screenCode?: string; token?: string; name?: string }) => {
+      if (!d?.screenCode || !d?.token) return
+      localStorage.setItem(SCREEN_KEY, String(d.screenCode))
+      localStorage.setItem(SCREEN_TOKEN_KEY, String(d.token))
+      localStorage.setItem(SCREEN_CHOSEN_KEY, "1")
+      setScreenCode(String(d.screenCode))
+      setPairCode(null)
+      pairCodeRef.current = null
+      setShowPicker(false)
+      // re-registro inmediato con el token recién recibido (verificado)
+      socket.emit("screen:register", {
+        screenCode: String(d.screenCode),
+        resolution: `${window.screen.width}×${window.screen.height}`,
+        userAgent: navigator.userAgent.slice(0, 120),
+        token: String(d.token),
+      })
+    })
+
+    // El código temporal caducó (10 min sin vincular) → renovar y seguir esperando
+    socket.on("pair:expired", () => {
+      if (!pairCodeRef.current) return
+      const digits = new Uint32Array(6)
+      crypto.getRandomValues(digits)
+      const code = Array.from(digits, (d) => String(d % 10)).join("")
+      pairCodeRef.current = code
+      setPairCode(code)
+      socket.emit("pair:wait", { pairCode: code })
+    })
+
+    socket.on("pair:error", (d: { error?: string }) => {
+      setPairError(d?.error ?? "Error de vinculación")
     })
 
     socket.on("content:update", () => fetchContent())
@@ -113,6 +183,11 @@ export default function TvDisplay() {
         socket.emit("screen:heartbeat", {
           resolution: `${window.innerWidth}×${window.innerHeight}`,
         })
+        // FASE 32: mantener viva la espera de vinculación (re-unirse al room
+        // pair:<código> tras cualquier reemplazo de sesión del socket)
+        if (!localStorage.getItem(SCREEN_KEY) && pairCodeRef.current) {
+          socket.emit("pair:wait", { pairCode: pairCodeRef.current })
+        }
       }
     }, 15_000)
 
@@ -424,6 +499,8 @@ export default function TvDisplay() {
           current={screenCode}
           onSelect={handleSelectScreen}
           onClose={() => setShowPicker(false)}
+          pairCode={!screenCode ? pairCode : null}
+          pairError={pairError}
         />
       )}
 

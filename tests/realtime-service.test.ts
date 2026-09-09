@@ -307,6 +307,142 @@ describe("realtime-service: broadcast interno", () => {
   }, 25000)
 })
 
+describe("realtime-service: FASE 32 — pairing por código temporal", () => {
+  it("pair:wait con código inválido → pair:error", async () => {
+    const result = await new Promise<string>((res) => {
+      const s = connect()
+      s.on("connect", () => {
+        s.emit("pair:wait", { pairCode: "ABC123" })
+        s.on("pair:error", (d: { error?: string }) => { s.disconnect(); res(d.error ?? "") })
+        setTimeout(() => { s.disconnect(); res("timeout") }, 5000)
+      })
+      setTimeout(() => { s.disconnect(); res("timeout") }, 6000)
+    })
+    expect(result).toContain("inválido")
+  }, 15000)
+
+  it("room sin TV esperando → broadcast responde clients:0 y NO entrega", async () => {
+    const res = await fetch(`http://127.0.0.1:${INTERNAL}/broadcast`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-internal-token": REALTIME_TOKEN },
+      body: JSON.stringify({ event: "pair:complete", room: "pair:999999", payload: { screenCode: "TV-002", token: "nadie-recibe-esto" } }),
+    })
+    expect(res.status).toBe(200)
+    const data = (await res.json()) as { ok?: boolean; clients?: number }
+    expect(data.ok).toBeTrue()
+    expect(data.clients).toBe(0)
+  }, 15000)
+
+  it("flujo COMPLETO: pair:wait → pair:complete al room → TV recibe token → register VERIFICADO", async () => {
+    const pairCode = "424242"
+    const newToken = "nuevo-token-entregado-por-pairing-32c"
+
+    // 1. TV sin identidad conecta y espera su código de vinculación
+    const s = connect()
+    try {
+      const tokenPromise = new Promise<{ screenCode: string; token: string }>((res) => {
+        s.on("pair:complete", (d: { screenCode?: string; token?: string }) => {
+          res({ screenCode: String(d.screenCode ?? ""), token: String(d.token ?? "") })
+        })
+        setTimeout(() => res({ screenCode: "", token: "" }), 8000)
+      })
+      const joined = await new Promise<boolean>((res) => {
+        s.on("connect", () => {
+          s.emit("pair:wait", { pairCode })
+          setTimeout(() => res(true), 500)
+        })
+        setTimeout(() => res(false), 5000)
+      })
+      expect(joined).toBeTrue()
+
+      // 2. El "API" (como la ruta real): actualiza el hash ANTES de difundir
+      const hash = createHash("sha256").update(newToken).digest("hex")
+      const db = new Database(dbPath)
+      db.run("UPDATE Screen SET tokenHash = ? WHERE code = 'TV-002'", [hash])
+      db.close()
+
+      // 3. Broadcast interno al room → la TV en espera lo recibe
+      const res = await fetch(`http://127.0.0.1:${INTERNAL}/broadcast`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-internal-token": REALTIME_TOKEN },
+        body: JSON.stringify({
+          event: "pair:complete",
+          room: `pair:${pairCode}`,
+          payload: { screenCode: "TV-002", token: newToken, name: "Dos" },
+        }),
+      })
+      const data = (await res.json()) as { ok?: boolean; clients?: number }
+      expect(data.ok).toBeTrue()
+      expect(data.clients).toBe(1) // la TV estaba esperando
+
+      // 4. La TV "persiste" el token (aquí: lo usa directamente) y se registra
+      const got = await tokenPromise
+      expect(got.screenCode).toBe("TV-002")
+      expect(got.token).toBe(newToken)
+
+      const reg = await new Promise<unknown>((res2) => {
+        s.on("screen:registered", (d: unknown) => res2(d))
+        s.on("screen:rejected", (d: unknown) => res2(d))
+        s.emit("screen:register", { screenCode: "TV-002", resolution: "1920x1080", userAgent: "t", token: newToken })
+        setTimeout(() => res2("timeout"), 5000)
+      })
+      const d = reg as { ok?: boolean; verified?: boolean; screenCode?: string }
+      expect(d.ok).toBeTrue()
+      expect(d.verified).toBeTrue() // emparejada de verdad: sha256 coincide
+      expect(d.screenCode).toBe("TV-002")
+    } finally {
+      s.disconnect()
+    }
+  }, 20000)
+
+  it("REGENERACIÓN del token → el token ANTIGUO queda rechazado", async () => {
+    // (muta TV-001 al final del archivo a propósito: los tests anteriores ya
+    // validaron el token original; este simula POST /token o re-vinculación)
+    // 1. acepta con el token vigente (sanity)
+    const okBefore = await new Promise<unknown>((res) => {
+      const s = connect()
+      s.on("connect", () => {
+        s.emit("screen:register", { screenCode: "TV-001", resolution: "1x1", userAgent: "t", token: screenToken })
+        s.on("screen:registered", (d: unknown) => { s.disconnect(); res(d) })
+        s.on("screen:rejected", (d: unknown) => { s.disconnect(); res(d) })
+      })
+      setTimeout(() => { s.disconnect(); res("timeout") }, 5000)
+    })
+    expect((okBefore as { verified?: boolean }).verified).toBeTrue()
+
+    // 2. regenerar: hash NUEVO en la DB (lo que hace la ruta /token)
+    const db = new Database(dbPath)
+    db.run("UPDATE Screen SET tokenHash = ? WHERE code = 'TV-001'", [
+      createHash("sha256").update("token-regenerado-33333333").digest("hex"),
+    ])
+    db.close()
+
+    // 3. el token ANTIGUO (el que la TV aún tiene en localStorage) → rechazado
+    const result = await new Promise<string>((res) => {
+      const s = connect()
+      s.on("connect", () => {
+        s.emit("screen:register", { screenCode: "TV-001", resolution: "1x1", userAgent: "t", token: screenToken })
+        s.on("screen:rejected", (d: { reason: string }) => { s.disconnect(); res(d.reason) })
+        s.on("screen:registered", () => { s.disconnect(); res("registered") })
+      })
+      setTimeout(() => { s.disconnect(); res("timeout") }, 5000)
+    })
+    expect(result).toBe("bad-token")
+
+    // 4. y el token NUEVO funciona (la re-vinculación sirve)
+    const okAfter = await new Promise<unknown>((res) => {
+      const s = connect()
+      s.on("connect", () => {
+        s.emit("screen:register", { screenCode: "TV-001", resolution: "1x1", userAgent: "t", token: "token-regenerado-33333333" })
+        s.on("screen:registered", (d: unknown) => { s.disconnect(); res(d) })
+        s.on("screen:rejected", (d: unknown) => { s.disconnect(); res(d) })
+      })
+      setTimeout(() => { s.disconnect(); res("timeout") }, 5000)
+    })
+    expect((okAfter as { verified?: boolean }).verified).toBeTrue()
+  }, 25000)
+})
+
 describe("realtime-service: health", () => {
   it("GET /health responde ok con uptime", async () => {
     const res = await fetch(`http://127.0.0.1:${INTERNAL}/health`)

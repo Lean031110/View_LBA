@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { MonitorPlay, Plus, Trash2, Loader2, RotateCw, Pencil, MapPin, Terminal } from "lucide-react"
+import { MonitorPlay, Plus, Trash2, Loader2, RotateCw, Pencil, MapPin, Terminal, KeyRound } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -18,8 +18,8 @@ interface ScreenRow {
   online?: boolean; live?: ScreenStatus | null
 }
 
-interface FormState { code: string; name: string; location: string; notes: string; active: boolean }
-const emptyForm: FormState = { code: "", name: "", location: "", notes: "", active: true }
+interface FormState { code: string; name: string; location: string; notes: string; active: boolean; pairCode: string }
+const emptyForm: FormState = { code: "", name: "", location: "", notes: "", active: true, pairCode: "" }
 
 export default function ScreensSection({
   user,
@@ -52,17 +52,44 @@ export default function ScreensSection({
   const liveByCode = new Map(screensStatus.map((s) => [s.screenCode, s]))
 
   const submit = async () => {
-    if (!form.code.trim() || !form.name.trim()) return toast({ title: "Código y nombre requeridos", variant: "destructive" })
+    // FASE 32: con código de vinculación, el código de pantalla es opcional (auto TV-###)
+    if (!form.name.trim()) return toast({ title: "Nombre requerido", variant: "destructive" })
+    if (!editing && !form.code.trim() && !/^\d{6}$/.test(form.pairCode.trim())) {
+      return toast({ title: "Indica el código de la pantalla (TV-004) o el código de 6 dígitos que muestra la TV", variant: "destructive" })
+    }
     setBusy(true)
     try {
-      if (editing) await putJSON(`/api/admin/screens/${editing}`, form)
-      else await postJSON("/api/admin/screens", form)
+      if (editing) {
+        await putJSON(`/api/admin/screens/${editing}`, form)
+      } else {
+        const res = await postJSON<{ paired?: boolean; note?: string; pairDelivered?: number }>("/api/admin/screens", {
+          ...form,
+          pairCode: /^\d{6}$/.test(form.pairCode.trim()) ? form.pairCode.trim() : undefined,
+          code: form.code.trim() || undefined,
+        })
+        if (res?.paired) toast({ title: "Pantalla vinculada", description: "La TV recibió su token y quedó verificada." })
+        else if (res?.note) toast({ title: "Pantalla creada", description: res.note })
+        else toast({ title: "Pantalla guardada" })
+      }
       setOpen(false)
       load()
-      toast({ title: "Pantalla guardada" })
     } catch (e) {
       toast({ title: "Error", description: (e as Error).message, variant: "destructive" })
     } finally { setBusy(false) }
+  }
+
+  /** FASE 32: (re)vincular una pantalla existente — la TV muestra un código
+   *  de 6 dígitos y el token nuevo se le entrega directamente. */
+  const pairScreen = async (sc: ScreenRow) => {
+    if (user.role !== "ADMIN") return toast({ title: "Solo ADMIN puede vincular pantallas", variant: "destructive" })
+    const code = (prompt(`Código de 6 dígitos que muestra la TV ${sc.code} (tecla S en el TV para reabrir el selector):`) ?? "").trim()
+    if (!/^\d{6}$/.test(code)) return toast({ title: "Código inválido", description: "Deben ser exactamente 6 dígitos.", variant: "destructive" })
+    try {
+      await postJSON(`/api/admin/screens/${sc.id}/token`, { pairCode: code })
+      toast({ title: "Vinculada", description: `${sc.code} recibió su token nuevo. El token anterior quedó invalidado.` })
+    } catch (e) {
+      toast({ title: "No se pudo vincular", description: (e as Error).message, variant: "destructive" })
+    }
   }
 
   const reloadScreen = async (code?: string) => {
@@ -142,7 +169,12 @@ export default function ScreensSection({
                         <Button size="sm" variant="outline" onClick={() => reloadScreen(sc.code)} className="border-white/12 bg-white/[0.03] hover:bg-white/10 h-7 text-xs gap-1.5">
                           <RotateCw size={11} /> Reiniciar
                         </Button>
-                        <Button size="icon" variant="ghost" onClick={() => { setForm({ code: sc.code, name: sc.name, location: sc.location ?? "", notes: sc.notes ?? "", active: sc.active }); setEditing(sc.id); setOpen(true) }} className="h-7 w-7 text-white/60 hover:text-white"><Pencil size={13} /></Button>
+                        {user.role === "ADMIN" && (
+                          <Button size="sm" variant="outline" onClick={() => pairScreen(sc)} className="border-amber-500/30 bg-amber-500/[0.08] hover:bg-amber-500/20 h-7 text-xs gap-1.5 text-amber-300">
+                            <KeyRound size={11} /> Vincular
+                          </Button>
+                        )}
+                        <Button size="icon" variant="ghost" onClick={() => { setForm({ code: sc.code, name: sc.name, location: sc.location ?? "", notes: sc.notes ?? "", active: sc.active, pairCode: "" }); setEditing(sc.id); setOpen(true) }} className="h-7 w-7 text-white/60 hover:text-white"><Pencil size={13} /></Button>
                         <Button size="icon" variant="ghost" onClick={async () => { if (confirm(`¿Eliminar ${sc.code}?`)) { await deleteJSON(`/api/admin/screens/${sc.id}`).catch(() => {}); load() } }} className="h-7 w-7 text-white/60 hover:text-red-400"><Trash2 size={13} /></Button>
                       </>
                     )}
@@ -161,8 +193,9 @@ export default function ScreensSection({
         </CardHeader>
         <CardContent className="text-xs text-white/45 leading-relaxed space-y-1.5">
           <p>1. Abre el navegador del TV (o mini PC / Android TV) en la URL de la plataforma con <code className="text-amber-300/80 bg-white/5 px-1 rounded">?view=tv</code></p>
-          <p>2. La primera vez, selecciona qué pantalla es (TV-001, TV-002…). Queda guardada en el navegador del dispositivo.</p>
-          <p>3. Para cambiar la identidad después: pulsa la tecla <kbd className="bg-white/8 px-1 rounded text-white/70">S</kbd> en la pantalla TV.</p>
+          <p>2. La primera vez, la TV muestra un <b className="text-amber-300/90">código de 6 dígitos</b>. Pulsa <b>Nueva pantalla</b>, introduce ese código y un nombre: la TV recibirá su token automáticamente y quedará <b>verificada</b> (nadie más podrá suplantarla).</p>
+          <p>3. Para cambiar/reparar la identidad después: pulsa la tecla <kbd className="bg-white/8 px-1 rounded text-white/70">S</kbd> en la pantalla TV (aparecerá un código nuevo) y usa <b>Vincular</b> en la tarjeta de esa pantalla.</p>
+          <p>4. La selección manual de la lista solo da identidad <i>no verificada</i> — adecuada para pantallas de prueba; las pantallas con token requieren vinculación por código.</p>
         </CardContent>
       </Card>
 
@@ -170,9 +203,16 @@ export default function ScreensSection({
         <DialogContent className="bg-[#14141b] border-white/12 max-w-lg">
           <DialogHeader><DialogTitle className="text-white">{editing ? "Editar pantalla" : "Nueva pantalla"}</DialogTitle></DialogHeader>
           <div className="grid grid-cols-2 gap-4 py-2">
+            {!editing && (
+              <div className="space-y-2 col-span-2 rounded-lg border border-amber-500/25 bg-amber-500/[0.05] p-3">
+                <Label className="text-amber-300/90 flex items-center gap-1.5"><KeyRound size={12} /> Código de vinculación de la TV</Label>
+                <Input value={form.pairCode} onChange={(e) => setForm({ ...form, pairCode: e.target.value.replace(/\D/g, "").slice(0, 6) })} placeholder="123456" className="bg-white/[0.04] border-white/10 font-mono tracking-widest" inputMode="numeric" />
+                <p className="text-[11px] text-white/40 leading-snug">El código de 6 dígitos que muestra la TV en pantalla. Con él, el token se entrega automáticamente (identidad verificada). Si lo dejas vacío, crea una pantalla manual.</p>
+              </div>
+            )}
             <div className="space-y-2">
-              <Label className="text-white/80">Código *</Label>
-              <Input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })} placeholder="TV-004" disabled={Boolean(editing)} className="bg-white/[0.04] border-white/10 font-mono" />
+              <Label className="text-white/80">Código {editing ? "*(inmutable)" : ""}</Label>
+              <Input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })} placeholder={form.pairCode ? "auto (TV-###)" : "TV-004"} disabled={Boolean(editing)} className="bg-white/[0.04] border-white/10 font-mono" />
             </div>
             <div className="space-y-2">
               <Label className="text-white/80">Nombre *</Label>
