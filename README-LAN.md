@@ -34,35 +34,46 @@ todo funciona en la red local del restaurante, **sin depender de Internet**.
 
 | Puerto | Servicio | Acceso |
 |---|---|---|
-| **3000** | Aplicación web (TV + administración) | Toda la LAN |
+| **3000** | Aplicación web (TV + administración + health) | Toda la LAN |
 | **1935** | RTMP ingest (OBS) | PCs con OBS |
-| **8000** | HTTP-FLV (lo consume solo el servidor vía proxy) | Solo localhost |
-| **3003** | Realtime WebSocket | Toda la LAN |
+| **8000** | HTTP-FLV (lo consume solo el servidor vía proxy; bind 127.0.0.1) | Solo localhost |
+| **3003** | Realtime WebSocket (TVs y paneles) | Toda la LAN |
+| **3004** | API interna del realtime (/health, /status, /broadcast) | Solo localhost |
 | **8100** | Control interno del stream-service | Solo localhost |
+
+Clasificación completa de firewall: `docs/FIREWALL.md`.
 
 ## Puesta en marcha
 
+### Instalación completa (recomendado — máquina nueva)
+
 ```bash
-# 1) Instalar dependencias de la aplicación principal
-bun install            # o npm install
-
-# 2) Preparar la base de datos
-bun run db:push        # crea/actualiza SQLite (db/custom.db)
-
-# 3) Arrancar la aplicación (puerto 3000)
-bun run dev            # desarrollo (o `bun run build && bun run start` para producción)
-
-# 4) Arrancar el servidor de streaming (en otra terminal)
-cd mini-services/stream-service
-bun install
-bun index.ts
-
-# 5) (Recomendado) Supervisor de auto-reinicio del servicio de streaming
-nohup scripts/stream-supervisor.sh &
+bun scripts/install.ts
+# preflight → dependencias → .env con secretos aleatorios → migraciones
+# (prisma migrate deploy, JAMÁS db push) → primer admin → build → health
 ```
 
-> En producción conviene crear servicios de **systemd** para los 3 procesos
-> (Next.js, stream-service, realtime-service) con reinicio automático.
+Multiplataforma e idempotente. Detalles: `docs/INSTALLATION.md`.
+
+### Producción 24/7
+
+| Plataforma | Instalación | Guía |
+|---|---|---|
+| Linux (systemd) | `sudo bash deploy/linux/install.sh` | `docs/LINUX_PRODUCTION.md` + runbook `docs/OPERATIONS.md` |
+| Windows (NSSM) | `deploy\windows\install.ps1` | `docs/WINDOWS_PRODUCTION.md` |
+
+### Desarrollo manual
+
+```bash
+bun install
+bun run db:generate && bun run db:deploy     # migraciones versionadas
+bun run db:seed                               # contenido demo (dev)
+bun run dev                                   # app :3000
+bun scripts/realtime-supervisor.sh &          # realtime (o bun mini-services/realtime-service/index.ts)
+bun scripts/stream-supervisor.sh &            # stream
+```
+
+> `db:push` queda SOLO para desarrollo experimental; producción usa migraciones.
 
 ## Conectar OBS (una sola vez)
 
@@ -83,11 +94,15 @@ son rechazadas automáticamente.
 ## Configurar los televisores
 
 1. En el navegador de cada TV abre `http://IP-DEL-SERVIDOR:3000/?view=tv`.
-2. La primera vez pide identificar la pantalla (TV-001 Salón Principal,
-   TV-002 Área de Espera, TV-003 Cocina…). Se puede cambiar luego con la tecla **S**.
-3. Activa pantalla completa (botón en la esquina o tecla F11).
+2. La primera vez, la TV muestra un **código de 6 dígitos**: en el panel →
+   **Pantallas → Nueva pantalla** → introduce el código y un nombre (p. ej.
+   "TV Salón Principal"). La TV queda **verificada** automáticamente (token
+   de pairing — nadie más puede suplantarla). Detalles: `docs/SCREEN_PAIRING.md`.
+3. Activa pantalla completa (tecla F o el botón de la esquina).
 4. Para modo kiosco 24/7: configura el navegador para arrancar en
    pantalla completa y restaurar la sesión (extensión *kiosk* o flags de Chrome).
+5. La TV sobrevive caídas: reconexión automática, último contenido conocido
+   y PWA instalable (`docs/TV_SETUP.md`).
 
 Cada pantalla aparece en el panel con su estado (ONLINE, resolución,
 estado del stream) y recibe los cambios del contenido **en tiempo real**

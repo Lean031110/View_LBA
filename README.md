@@ -98,6 +98,8 @@ flowchart TB
 | **8100** | Control del servidor de streaming | Solo localhost |
 
 > 📘 Guía operativa completa (firewall, arranque, TVs, OBS): [README-LAN.md](README-LAN.md)
+>
+> 📚 **Documentación completa** en [`docs/`](docs/): [ARQUITECTURA](docs/ARCHITECTURE.md) · [INSTALACIÓN](docs/INSTALLATION.md) · [LINUX](docs/LINUX_PRODUCTION.md) · [WINDOWS](docs/WINDOWS_PRODUCTION.md) · [OBS](docs/OBS_SETUP.md) · [TVs](docs/TV_SETUP.md) · [EMPAREJAMIENTO](docs/SCREEN_PAIRING.md) · [BACKUP](docs/BACKUP_RESTORE.md) · [FIREWALL](docs/FIREWALL.md) · [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) · [ACTUALIZAR](docs/UPGRADING.md) · [SEGURIDAD](docs/SECURITY.md) · [OPERACIONES](docs/OPERATIONS.md)
 
 ## 🚀 Puesta en marcha
 
@@ -108,15 +110,26 @@ flowchart TB
 - OBS Studio en el PC que transmitirá
 - TVs con navegador moderno (PC/mini-PC conectado, o Smart TV con Chrome/Edge/Firefox)
 
-### Instalación
+### Instalación (producción — multiplataforma, sin editar archivos)
 
 ```bash
 git clone https://github.com/Lean031110/Pantalla_Restaurante.git
 cd Pantalla_Restaurante
 
+bun scripts/install.ts
+# preflight → dependencias → .env con secretos aleatorios → migraciones
+# (prisma migrate deploy) → primer admin → build standalone → health
+```
+
+Despliegue 24/7: Linux systemd (`deploy/linux/install.sh`) · Windows NSSM
+(`deploy\windows\install.ps1`) — guías en `docs/LINUX_PRODUCTION.md` y
+`docs/WINDOWS_PRODUCTION.md`.
+
+### Desarrollo
+
+```bash
 bun install
-cp .env.example .env        # ⚠️ edita AUTH_SECRET y REALTIME_TOKEN
-bun run setup               # Prisma Client + base de datos + datos demo
+bun run setup               # Prisma Client + migraciones + datos demo
 bun run dev                 # → http://localhost:3000
 ```
 
@@ -175,9 +188,11 @@ automáticamente al reconectar — sin tocar nada.
 │   ├── stream-service/         # Servidor RTMP integrado (node-media-server)
 │   └── realtime-service/       # Hub Socket.io (estado, heartbeats, comandos)
 ├── prisma/                     # schema.prisma + seed
-├── tests/                      # Tests unitarios (bun test)
-├── scripts/                    # Supervisores + seed de streaming local
-└── docs/screenshots/           # Capturas del sistema
+├── tests/                      # Unit + realtime + stream-pipeline + recovery (bun test)
+├── e2e/                        # E2E Playwright (37 specs)
+├── scripts/                    # install · init-production · backup/restore · build/start · supervisores
+├── deploy/                     # linux (systemd) · windows (NSSM)
+└── docs/                       # Guías de producción + screenshots
 ```
 
 ## 🧪 Calidad
@@ -185,11 +200,14 @@ automáticamente al reconectar — sin tocar nada.
 ```bash
 bun run lint        # ESLint — 0 errores · 0 warnings
 bun run typecheck   # TypeScript estricto
-bun test            # Tests unitarios
+bun test            # 251 tests: unit + realtime + stream-pipeline + recovery
 bun run build       # Build de producción (standalone)
+bun run test:e2e    # E2E Playwright (37 specs: auth, contenido, pantallas,
+                    # pairing, streaming con ffmpeg real, offline, seguridad)
 ```
 
-CI en GitHub Actions ejecuta la misma secuencia en cada push/PR.
+CI en GitHub Actions: 4 jobs requeridos (quality · integration · e2e ·
+security con gitleaks y audit crítico bloqueantes).
 
 ## 🔒 Seguridad
 

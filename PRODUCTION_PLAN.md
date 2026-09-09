@@ -288,9 +288,11 @@
 - [x] E2E: revalidación condicional → 304 + ETag estable + If-None-Match distinto → 200 completo (spec #37); polling de la TV se MANTIENE (10s status/30s health — ya razonable; el plan lo conservaba)
 - [x] Suites completas: E2E 37/37 · bun test 251/251 · lint ✓ · typecheck ✓
 
-## FASE 39-40 — Docs/firewall [ ]
-- [ ] docs/: ARCHITECTURE, INSTALLATION, LINUX_PRODUCTION, WINDOWS_PRODUCTION, OBS_SETUP, TV_SETUP, SCREEN_PAIRING, BACKUP_RESTORE, TROUBLESHOOTING, SECURITY, OPERATIONS, UPGRADING
-- [ ] README/README-LAN actualizados (Node 20.9+, sin credenciales demo, puertos+firewall exactos, qué es LAN-only vs localhost)
+## FASE 39-40 — Docs/firewall [x]
+- [x] docs/ COMPLETO (12 guías + OPERATIONS preexistente): ARCHITECTURE (flujos VERIFIED, capas de seguridad, modelo de datos), INSTALLATION (flujo del instalador con tabla de pasos verificados), LINUX_PRODUCTION (systemd + manage.sh + primer admin), WINDOWS_PRODUCTION (preexistente F29), OBS_SETUP (config verificada, semántica de rotación documentada y probada), TV_SETUP (kiosco 24/7, audio por TV, offline), SCREEN_PAIRING (flujo F32 con casos verificados), BACKUP_RESTORE (scripts + timers + recuperación), TROUBLESHOOTING (9 síntomas con diagnóstico), SECURITY (inventario del endurecimiento verificado), UPGRADING (backup→migrate→build→health + rollback), FIREWALL
+- [x] docs/FIREWALL.md (FASE 40): tabla maestra de puertos con clasificación EXACTA — 3000/3003/1935 LAN · 3004/8100 localhost · 8000 localhost por bind real — + reglas ejemplo ufw/Windows + endpoints de health
+- [x] README/README-LAN actualizados: instalación por `scripts/install.ts` (adiós db:push manual), pairing por código en el flujo de TVs, puerto 3004 documentado, índice de docs completo, suites reales (251 tests + 37 E2E + 4 jobs CI), estructura actualizada
+- [x] Etiquetas VERIFIED / NOT VERIFIED aplicadas (systemd en hardware y PWA en Smart TV física marcadas NOT VERIFIED con motivo)
 
 ## FASE 41 — Security review [ ]
 - [ ] Checklist completo de la misión (14 ítems) con evidencia archivo:línea
