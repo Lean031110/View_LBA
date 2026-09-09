@@ -54,7 +54,9 @@ export default function TvDisplay() {
 
   const fetchContent = useCallback(async () => {
     try {
-      const res = await fetch("/api/content", { cache: "no-store" })
+      // FASE 37: sin cache:"no-store" → el HTTP cache revalida con ETag
+      // (304 barato cuando el contenido no cambió desde el último evento)
+      const res = await fetch("/api/content")
       if (!res.ok) throw new Error()
       const data = (await res.json()) as ContentBundle
       setContent(data)

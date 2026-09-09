@@ -69,3 +69,22 @@ test.describe("#35 API security", () => {
     expect(setCookie).not.toContain("Secure")
   })
 })
+
+test.describe("#37 cache ETag de /api/content", () => {
+  test("revalidación condicional → 304 sin re-serializar el bundle", async ({ request }) => {
+    const r1 = await request.get("/api/content")
+    expect(r1.status()).toBe(200)
+    const etag = r1.headers()["etag"]
+    expect(etag).toMatch(/^"c-[0-9a-f]{20}"$/)
+    expect(r1.headers()["cache-control"]).toContain("no-cache")
+
+    // petición condicional (la que emite el HTTP cache de la TV al revalidar)
+    const r2 = await request.get("/api/content", { headers: { "If-None-Match": etag } })
+    expect(r2.status()).toBe(304)
+    expect(r2.headers()["etag"]).toBe(etag)
+
+    // ETag distinto (o ausente) → respuesta completa, no 304
+    const r3 = await request.get("/api/content", { headers: { "If-None-Match": '"c-00000000000000000000"' } })
+    expect(r3.status()).toBe(200)
+  })
+})

@@ -1,10 +1,53 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
+import { createHash } from "crypto"
 import { db } from "@/lib/db"
 import type { ContentBundle, PublicSettings } from "@/lib/types"
 
-/** GET /api/content — bundle público para las pantallas TV (sin datos sensibles) */
-export async function GET() {
+/**
+ * GET /api/content — bundle público para las pantallas TV (sin datos sensibles).
+ *
+ * FASE 37 (caching): ETag de SELLO DE VERSIÓN — una única consulta agregada
+ * barata (COUNT + MAX(updatedAt) por tabla; el COUNT detecta también BORRADOS,
+ * que el MAX solo no vería). Si el cliente manda If-None-Match y el sello no
+ * cambió → 304 SIN ejecutar las 7 consultas ni serializar el bundle.
+ * Cache-Control: no-cache (almacenar y SIEMPRE revalidar) — la TV refresca
+ * por eventos realtime; cada refresco sin cambios cuesta una consulta en
+ * vez del bundle completo. El SW offline ya filtra los 304 (res.ok=false).
+ */
+async function contentVersionStamp(): Promise<string> {
+  const row = (await db.$queryRawUnsafe(
+    `SELECT
+      (SELECT COUNT(*) FROM Settings) AS c0, (SELECT MAX(updatedAt) FROM Settings) AS m0,
+      (SELECT COUNT(*) FROM Promotion) AS c1, (SELECT MAX(updatedAt) FROM Promotion) AS m1,
+      (SELECT COUNT(*) FROM Dish) AS c2, (SELECT MAX(updatedAt) FROM Dish) AS m2,
+      (SELECT COUNT(*) FROM Schedule) AS c3, (SELECT MAX(updatedAt) FROM Schedule) AS m3,
+      (SELECT COUNT(*) FROM SocialLink) AS c4, (SELECT MAX(updatedAt) FROM SocialLink) AS m4,
+      (SELECT COUNT(*) FROM TickerMessage) AS c5, (SELECT MAX(updatedAt) FROM TickerMessage) AS m5,
+      (SELECT COUNT(*) FROM Screen) AS c6, (SELECT MAX(updatedAt) FROM Screen) AS m6`
+  )) as Array<Record<string, string | number | null>>
+  const r = row[0] ?? {}
+  // NOTA: Prisma mapea COUNT(*) a BigInt → replacer stringify-safe
+  return createHash("sha256")
+    .update(
+      JSON.stringify([r.c0, r.m0, r.c1, r.m1, r.c2, r.m2, r.c3, r.m3, r.c4, r.m4, r.c5, r.m5, r.c6, r.m6], (_k, v) =>
+        typeof v === "bigint" ? v.toString() : v
+      )
+    )
+    .digest("hex")
+    .slice(0, 20)
+}
+
+export async function GET(req: NextRequest) {
   try {
+    // FASE 37: revalidación barata ANTES de construir el bundle
+    const etag = `"c-${await contentVersionStamp()}"`
+    if (req.headers.get("if-none-match") === etag) {
+      return new NextResponse(null, {
+        status: 304,
+        headers: { ETag: etag, "Cache-Control": "no-cache, must-revalidate" },
+      })
+    }
+
     const [settings, promotions, dishes, schedules, socials, ticker, screens] = await Promise.all([
       db.settings.findUnique({ where: { id: "main" } }),
       db.promotion.findMany({ where: { active: true }, orderBy: [{ order: "asc" }] }),
@@ -69,7 +112,7 @@ export async function GET() {
     }
 
     return NextResponse.json(bundle, {
-      headers: { "Cache-Control": "no-store" },
+      headers: { "Cache-Control": "no-cache, must-revalidate", ETag: etag },
     })
   } catch (e) {
     return NextResponse.json({ error: "Error cargando contenido" }, { status: 500 })

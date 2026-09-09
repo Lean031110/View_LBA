@@ -28,4 +28,16 @@ export async function register() {
     if (proc) proc.exit(1)
     else throw new Error("Variables de entorno inválidas — ver arriba")
   }
+
+  // FASE 38: SQLite en WAL — el realtime-service y stream-service LEEN la DB
+  // directamente (bun:sqlite) mientras Prisma escribe; en journal_mode=delete
+  // los lectores bloquean a los escritores. WAL es persistente en el archivo
+  // (idempotente) y compatible con todas las conexiones existentes. Best-effort:
+  // si falla (p. ej. filesystem de solo lectura), la app sigue (delete).
+  try {
+    const { db } = await import("./lib/db")
+    await db.$queryRawUnsafe("PRAGMA journal_mode=WAL")
+  } catch {
+    console.warn("[instrumentation] WAL no aplicable — usando journal por defecto")
+  }
 }

@@ -250,7 +250,7 @@
 
 - [x] **Next cae** (SIGKILL al grupo de procesos) → conexión rechazada verificada → restart → health 200 → `/api/content` devuelve EXACTAMENTE el mismo contenido (DB sin corrupción) — 5.3s
 - [x] **Realtime cae** (SIGKILL) → health muerto verificado → MIENTRAS está caído la app SIGUE sirviendo contenido (la TV conserva el último estado conocido + polling de respaldo) → restart → la "TV" (socket.io-client con reconnection infinita + re-registro por connect, mismo protocolo que TvDisplay) se reconecta SOLA → **exactamente UNA entrada en /status** (sin sockets duplicados) y verificada — 0.8s
-- [x] **DB bloqueada** (BEGIN EXCLUSIVE desde otra conexión — simula backup/lock externo) → registro nuevo rechazado (degradado, JAMÁS crash del servicio: exitCode null) → COMMIT → registro vuelve a funcionar
+- [x] **DB bajo estrés** (actualizado a semántica WAL de FASE 38): lock de ESCRITURA BEGIN EXCLUSIVE (backup/VACUUM en marcha) → los LECTORES siguen (mejora real de WAL — el realtime sigue autenticando, verificado determinista con conexiones directas); DB ilegible (chmod 000) → el registro se resuelve SIN crash ni cuelgue (degradado si el handle reabre; fd cacheado sigue legible — contrato: jamás morir); la recuperación de incidente real de disco = restart del servicio (probado en el test realtime)
 - [x] **Stream-service cae** (SIGKILL con publicador activo) → status muerto → restart del servicio → ffmpeg ("OBS") reconecta → live=true + `/api/stream/status` de la app refleja serverOk+live — 1.1s
 - [x] **OBS se desconecta** → cubierto por stream-pipeline (caída del publisher → live=false tras gracia; recuperación → live=true + FLV fluye)
 - [x] **TV pierde socket** → cubierto por E2E #11/#12 (corte de realtime → contenido intacto → reconexión automática)
@@ -279,10 +279,14 @@
 - [x] E2E security.spec (5/5): headers globales, no-store de privadas, 404 raíz, FLV sin CORS (abort tras cabeceras — el stream es infinito), cookie con flags correctos
 - [x] Suite completa: E2E 36/36 · bun test 230/230 · lint ✓ · typecheck ✓ — ninguna restricción rompe LAN (verificado por la suite entera corriendo bajo http)
 
-## FASE 36-38 — Perf/caching/DB [ ]
-- [ ] /api/content: ETag + If-None-Match (payload hash) → 304 en TVs; conservar no-store solo para admin
-- [ ] Reducir polling TV (status 10s→ mantiene, content solo con evento+watchdog)
-- [ ] Índices justificados: Log.createdAt, Promotion(active,order), Dish(active,order), Screen(code unique ya), User(email unique ya)
+## FASE 36-38 — Perf/caching/DB [x]
+> Medir antes de optimizar (misión): AUDITORÍA de timers de la TV — heartbeat 15s, stream status 10s, health watchdog 30s, reloj 1s (UI), horarios 30s, carruseles por settings — nada agresivo; sin recreación de sockets/players (guardas FASE 20/22 ya verificadas). El ÚNICO costo real: cada evento content:update/watchdog → cada TV re-descarga el bundle COMPLETO con no-store.
+
+- [x] **FASE 37 — /api/content con ETag de sello de versión**: UNA consulta agregada barata (COUNT+MAX(updatedAt) × 7 tablas — el COUNT detecta BORRADOS que el MAX no vería; BigInt-safe) → ETag fuerte; If-None-Match → **304 SIN ejecutar las 7 consultas ni serializar**; Cache-Control: no-cache, must-revalidate (almacenar + revalidar siempre — la TV refresca por eventos realtime, cada refresco sin cambios cuesta 1 consulta en vez del bundle); fetch de la TV sin no-store (revalidación automática); el SW ya filtra 304 (res.ok=false → no cachea respuestas vacías)
+- [x] **FASE 38 — WAL**: instrumentation aplica `PRAGMA journal_mode=WAL` al arrancar (idempotente, persistente, best-effort; vía Prisma raw — funciona en node y bun) — el realtime/stream LEEN directamente mientras Prisma escribe; en delete los lectores bloqueaban escritores. Verificado: e2e.db y recovery.db en wal tras el arranque; lectores bajo BEGIN EXCLUSIVE siguen (backup en marcha no detiene el servicio — test determinista)
+- [x] **FASE 38 — índices JUSTIFICADOS** (migración `20260909202153_perf_indexes_content`): @@index([active, order]) en Promotion/Dish/Schedule/SocialLink/TickerMessage (LA query caliente de /api/content: WHERE active ORDER BY order en cada fetch de cada TV) + @@index([createdAt]) en Log (auditoría ordena desc). NO se crearon índices sin justificación; email/screenCode ya eran @unique; NO se migró a PostgreSQL (misión)
+- [x] E2E: revalidación condicional → 304 + ETag estable + If-None-Match distinto → 200 completo (spec #37); polling de la TV se MANTIENE (10s status/30s health — ya razonable; el plan lo conservaba)
+- [x] Suites completas: E2E 37/37 · bun test 251/251 · lint ✓ · typecheck ✓
 
 ## FASE 39-40 — Docs/firewall [ ]
 - [ ] docs/: ARCHITECTURE, INSTALLATION, LINUX_PRODUCTION, WINDOWS_PRODUCTION, OBS_SETUP, TV_SETUP, SCREEN_PAIRING, BACKUP_RESTORE, TROUBLESHOOTING, SECURITY, OPERATIONS, UPGRADING

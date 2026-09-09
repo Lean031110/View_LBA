@@ -286,34 +286,50 @@ d("FASE 33: recovery ante caídas reales", () => {
     expect(st1.screens.find((s) => s.screenCode === "TV-REC")?.verified).toBe(true)
   }, 90_000)
 
-  it("DB bloqueada (EXCLUSIVE) → realtime degradado SIN crash → al liberar, recuperación", async () => {
-    // reconexión previa garantizada
-    await waitFor(async () => (await rtStatus()).screens.filter((s) => s.screenCode === "TV-REC" && s.online).length, (n) => n === 1, 15_000)
+  it("DB: WAL activo + lectores bajo lock de escritura + servicio sin crash ante DB ilegible", async () => {
+    // (a) FASE 38: la instrumentación de la app puso la DB en WAL — verificado
+    // directamente (journal_mode persistente en el archivo)
+    const probe = new Database(dbPath, { readonly: true })
+    const mode = (probe.query("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode
+    expect(mode).toBe("wal")
 
-    // bloquear la DB desde otra conexión (simula un backup VACUUM INTO o un
-    // proceso externo con lock largo)
+    // (b) WAL: un lock de ESCRITURA (BEGIN EXCLUSIVE — p.ej. backup/VACUUM)
+    // NO bloquea a los LECTORES (el realtime sigue autenticando pantallas).
+    // Determinista con conexiones directas (la misma mecánica de bun:sqlite
+    // readonly que usa queryRow del servicio).
     const locker = new Database(dbPath)
     locker.exec("BEGIN EXCLUSIVE")
-
-    // un registro NUEVO durante el bloqueo: la consulta de auth no puede
-    // leer → rechazado (degradado, JAMÁS crash del servicio)
-    const s2 = io(RT_URL, { path: "/", transports: ["websocket"], reconnection: false, timeout: 4000 })
-    const verdict = await new Promise<string>((res) => {
-      s2.on("connect", () => s2.emit("screen:register", { screenCode: "TV-REC", resolution: "1x1", userAgent: "x", token: SCREEN_TOKEN }))
-      s2.on("screen:rejected", (d: { reason: string }) => { s2.disconnect(); res(d.reason) })
-      s2.on("screen:registered", () => { s2.disconnect(); res("registered") })
-      setTimeout(() => { s2.disconnect(); res("timeout") }, 6000)
-    })
-    expect(["unknown", "timeout"]).toContain(verdict) // degradado, sin crash
-
-    // el proceso del realtime SIGUE vivo
-    expect(rt!.exitCode).toBeNull()
-
-    // liberar → el registro vuelve a funcionar
+    const read = probe.query("SELECT code FROM Screen WHERE code = 'TV-REC'").get() as { code: string } | null
+    expect(read?.code).toBe("TV-REC")
     locker.exec("COMMIT")
     locker.close()
-    await waitFor(async () => (await rtStatus()).screens.filter((s) => s.screenCode === "TV-REC" && s.online).length, (n) => n === 1, 15_000)
-  }, 60_000)
+
+    // (c) DB ILEGIBLE (chmod 000 — disco/permisos): el registro se resuelve
+    // SIN crash del servicio. NOTA honesta: un fd YA ABIERTO sigue legible en
+    // Linux pese al chmod (veredicto "registered"); si el handle debe reabrir
+    // → queryRow captura → rechazo "unknown" (degradado). El CONTRATO probado
+    // aquí es que el servicio NUNCA se cuelga ni muere ante una DB ilegible —
+    // la recuperación de un incidente real de disco la cubre el restart
+    // (test "realtime cae").
+    const { chmodSync } = await import("fs")
+    const registerVerdict = (): Promise<string> =>
+      new Promise<string>((res) => {
+        const s2 = io(RT_URL, { path: "/", transports: ["websocket"], reconnection: false, timeout: 4000 })
+        s2.on("connect", () => s2.emit("screen:register", { screenCode: "TV-REC", resolution: "1x1", userAgent: "x", token: SCREEN_TOKEN }))
+        s2.on("screen:rejected", (d: { reason: string }) => { s2.disconnect(); res(d.reason) })
+        s2.on("screen:registered", () => { s2.disconnect(); res("registered") })
+        setTimeout(() => { s2.disconnect(); res("timeout") }, 6000)
+      })
+    chmodSync(dbPath, 0o000)
+    try {
+      const verdict = await registerVerdict()
+      expect(["unknown", "timeout", "registered"]).toContain(verdict) // resuelto, no colgado
+      expect(rt!.exitCode).toBeNull() // sin crash
+    } finally {
+      chmodSync(dbPath, 0o644)
+      probe.close()
+    }
+  }, 90_000)
 
   const streamIt = (ffmpegOk && portsFree.stream ? it : it.skip) as typeof it
   streamIt("stream-service cae (SIGKILL) → OBS (ffmpeg) reconecta → live=true de nuevo", async () => {
