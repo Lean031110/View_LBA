@@ -245,9 +245,18 @@
 - [x] Tests realtime (16/16): código inválido, room vacío (clients:0), flujo COMPLETO (pair:wait → pair:complete → register verificado), regeneración (token antiguo rechazado + nuevo funciona) — se suman a los 5 ya existentes (desconocida/inactiva/token malo/token bueno/sin token)
 - [x] E2E (29/29 con DB fresca): 3 specs nuevos — vinculación completa con persistencia tras recarga, re-vinculación a otra TV con invalidación del token anterior, código sin TV esperando → pantalla creada sin entrega; los 26 existentes sin regresión
 
-## FASE 33 — Recovery [ ]
-- [ ] Simulaciones scriptadas (deploy/linux/recovery-test.sh): matar Next/realtime/stream/DB bloqueada/red/OBS/TV socket → comprobar: restart automático, TV reconnect, stream reconnect, contenido en cache, sin corrupción, sin duplicación
-- [ ] Documentar resultados reales
+## FASE 33 — Recovery [x]
+> Verificación REAL (no simulaciones de papel): `tests/recovery.test.ts` levanta el stack completo (app dev :3200, realtime :3203/3204, stream-service, DB temporal con migraciones reales) y SIGKILL-ea cada pieza. La caída del publicador OBS + reconexión del player ya estaban cubiertas por `tests/stream-pipeline.test.ts` (caída ~33s documentada + recuperación); la pérdida de socket de la TV por E2E #11/#12.
+
+- [x] **Next cae** (SIGKILL al grupo de procesos) → conexión rechazada verificada → restart → health 200 → `/api/content` devuelve EXACTAMENTE el mismo contenido (DB sin corrupción) — 5.3s
+- [x] **Realtime cae** (SIGKILL) → health muerto verificado → MIENTRAS está caído la app SIGUE sirviendo contenido (la TV conserva el último estado conocido + polling de respaldo) → restart → la "TV" (socket.io-client con reconnection infinita + re-registro por connect, mismo protocolo que TvDisplay) se reconecta SOLA → **exactamente UNA entrada en /status** (sin sockets duplicados) y verificada — 0.8s
+- [x] **DB bloqueada** (BEGIN EXCLUSIVE desde otra conexión — simula backup/lock externo) → registro nuevo rechazado (degradado, JAMÁS crash del servicio: exitCode null) → COMMIT → registro vuelve a funcionar
+- [x] **Stream-service cae** (SIGKILL con publicador activo) → status muerto → restart del servicio → ffmpeg ("OBS") reconecta → live=true + `/api/stream/status` de la app refleja serverOk+live — 1.1s
+- [x] **OBS se desconecta** → cubierto por stream-pipeline (caída del publisher → live=false tras gracia; recuperación → live=true + FLV fluye)
+- [x] **TV pierde socket** → cubierto por E2E #11/#12 (corte de realtime → contenido intacto → reconexión automática)
+- [x] **Integridad final**: PRAGMA integrity_check=ok + counts de tablas idénticos tras TODAS las caídas (sin duplicación ni pérdida)
+- [x] Suite completa estable: 230 pass / 0 fail (recovery incluido); lint ✓; typecheck ✓
+- NOT VERIFIED: arranque real de systemd ante caída (este entorno no tiene systemd — las unidades F28 están validadas sintácticamente; el mecanismo Restart=always es el equivalente productivo del "restart" simulado aquí)
 
 ## FASE 34 — PWA/offline [ ]
 - [ ] Service worker para TV: cache de shell + último /api/content (IndexedDB) → UI offline con último contenido conocido + banner "sin conexión"; sin streaming offline (nativo)
