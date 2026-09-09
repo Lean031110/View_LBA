@@ -1,0 +1,5 @@
+[test]
+# Descubrimiento de tests restringido a tests/ (FASE 22): los specs de
+# Playwright viven en e2e/ y SOLO corren con su propio runner:
+#   bun run test:e2e   (scripts/e2e-setup.ts + bunx playwright test)
+root = "tests"

@@ -136,11 +136,16 @@
 - [ ] Activar `reactStrictMode: true` en next.config.ts
 - [ ] lint+tsc+test+build+verificación browser (TV+admin) tras activar
 
-## FASE 22 — Testing ampliado [ ]
-- [ ] Unit: auth/authVersion/permissions/timezone/validators/stream-state/rate-limit/backup
-- [ ] Integration (rutas API con fetch contra dev server): login, middleware, users, screens, settings, uploads, stream endpoints
-- [ ] Realtime: handshake admin (con/sin token), screen auth, comandos, reconnect
-- [ ] E2E Playwright: los 23 escenarios de la misión (login, dashboard, CRUD completo, TV, realtime, stream, permisos, sesión invalidada, uploads, timezone, ticker, audio fallback)
+## FASE 22 — Testing ampliado [x]
+- [x] Unit: auth/authVersion/permissions/timezone/validators/stream-state/rate-limit/backup — `tests/*.test.ts` (12 suites, 184 tests)
+- [x] Integration (rutas API con fetch contra servidor): login, rate limiting, matriz de permisos, usuarios, pantallas, settings, uploads, stream endpoints — `tests/integration/api.test.ts` (skip visible si no hay servidor; FASE 24 los integra en CI con servidor real)
+- [x] Realtime: handshake admin (con/sin token/cookie), screen auth (desconocida/inactiva/token), comandos, broadcast saneado, heartbeat/audioInfo — `tests/realtime-service.test.ts` (spawn real del servicio en :3103/3104)
+- [x] E2E Playwright: **26 tests / 23 escenarios de la misión** — `e2e/` (auth-admin, content-crud, screens, stream, tv)
+  - Stack real por corrida: app dev :3000 + realtime :3003/:3004 + stream :1935/:8000/:8100 (webServer de playwright.config.ts)
+  - DB aislada `db/e2e.db` reseteada por `scripts/e2e-setup.ts` (migrate deploy + seed demo + VIEWER + streamKey)
+  - Publicador RTMP ffmpeg real para #13/#14 (FLV bytes verificados por el proxy)
+  - Runner: `bun run test:e2e` — dos corridas consecutivas 26/26 (estable)
+  - `bunfig.toml [test] root=tests` → bun test NO ejecuta los specs de Playwright
 
 ## FASE 23 — Stream E2E real [ ]
 - [ ] Test de integración: ffmpeg (RTMP publisher de prueba) → NMS → /api/stream/live.flv → consume FLV y valida bytes FLV header + continuidad; caída del publisher → 503; recuperación → 200

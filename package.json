@@ -16,6 +16,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
+    "test:e2e": "bun scripts/e2e-setup.ts && bunx playwright test",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:seed": "bun prisma/seed.ts && bun scripts/seed-stream-local.ts",
@@ -97,6 +98,7 @@
     "zustand": "^5.0.15"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",

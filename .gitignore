@@ -35,6 +35,11 @@ scripts/*_search.json
 scripts/tsc-check.log
 scripts/vlm-*.json
 
+# Playwright (FASE 22): artefactos y reportes — nunca al repo
+test-results/
+playwright-report/
+blob-report/
+
 # Entorno de desarrollo sandbox (no forman parte del proyecto)
 /skills/
 /.zscripts/
@@ -46,3 +51,6 @@ scripts/vlm-*.json
 tests/python-*.sh
 tests/database-*.sh
 tool-results/
+
+# Datos en caliente del stream-service cuando corre desde la raíz (NMS store)
+/data/

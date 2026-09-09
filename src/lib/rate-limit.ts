@@ -123,8 +123,15 @@ export function createLoginRateLimiter(opts?: Partial<RateLimiterOptions>): Logi
   }
 }
 
-/** Instancia global usada por POST /api/auth/login */
-export const loginRateLimiter = createLoginRateLimiter()
+/**
+ * Instancia única usada por POST /api/auth/login.
+ * FASE 30 (misión): límites configurables por entorno (LOGIN_RATE_LIMIT_IP_MAX);
+ * p. ej. E2E/CI los sube porque cada test abre sesiones nuevas desde 127.0.0.1.
+ * Sin la variable → defaults seguros (12/5min por IP, 5 fallos por cuenta).
+ */
+export const loginRateLimiter = createLoginRateLimiter({
+  ipMax: Number(process.env.LOGIN_RATE_LIMIT_IP_MAX ?? DEFAULTS.ipMax),
+})
 
 /**
  * IP del cliente para rate limiting. En LAN directa no hay proxy que fije
