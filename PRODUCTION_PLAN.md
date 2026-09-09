@@ -294,8 +294,25 @@
 - [x] README/README-LAN actualizados: instalación por `scripts/install.ts` (adiós db:push manual), pairing por código en el flujo de TVs, puerto 3004 documentado, índice de docs completo, suites reales (251 tests + 37 E2E + 4 jobs CI), estructura actualizada
 - [x] Etiquetas VERIFIED / NOT VERIFIED aplicadas (systemd en hardware y PWA en Smart TV física marcadas NOT VERIFIED con motivo)
 
-## FASE 41 — Security review [ ]
-- [ ] Checklist completo de la misión (14 ítems) con evidencia archivo:línea
+## FASE 41 — Security review [x]
+> Revisión final ejecutada (greps + inspección + historial git + CI config). Checklist de la misión con evidencia:
+
+- [x] **No default secrets** — `src/lib/env.ts:17-27` (FORBIDDEN_SECRETS + Zod fail-fast) · `mini-services/realtime-service/index.ts:56-71` y `stream-service/index.ts:51-65` (requireRealtimeToken/requireAuthSecret: NO arrancan sin credencial válida, placeholders rechazados) · grep de fallbacks `||`: 0
+- [x] **No default passwords** — `prisma/seed.ts` (usuarios demo SOLO con `--with-demo-users`, bloqueado en NODE_ENV=production) · `scripts/lib/production-init.ts` (PASSWORD_POLICY + emailSchema de validators.ts)
+- [x] **No SSRF** — `src/app/api/admin/stream-test/route.ts:20` (checkSsrfUrl ANTES del fetch; bloqueos verificados por tests FASE 12) · health solo URLs fijas 127.0.0.1 (`health/route.ts:26-27`)
+- [x] **No arbitrary upload execution** — `src/app/api/upload/route.ts` (magic bytes reales + límites + nombres de servidor) · `src/app/api/files/[...path]/route.ts` (nosniff + SVG attachment — sin ejecución same-origin)
+- [x] **No path traversal** — `files/[...path]/route.ts:28-32` (resolve + prefijo) — verificado por tests FASE 10
+- [x] **No admin sockets without auth** — `realtime-service/index.ts` adminFromHandshake (cookie HMAC+authVersion; admin:register/command rechazados sin ella — tests 16/16)
+- [x] **No CORS \*** — grep en src+mini-services: 0 (el último `*` residual del FLV se eliminó en FASE 35; verificado por E2E)
+- [x] **No stale sessions** — authVersion en token + verificación contra DB (E2E: sesión invalidada tras cambio de password/estado)
+- [x] **No role bypass** — requireAuth en TODAS las rutas admin (matriz verificada por tests de integración + E2E "usuario sin permisos")
+- [x] **No public sensitive stream status** — `/api/stream/status` público = {source, serverOk, live} sin viewers/publisherIp (detalle solo admin)
+- [x] **No external assets required for LAN** — grep de URLs externas en src: 0 · demo imágenes locales (`public/demo/`) · fonts self-hosted (next/font)
+- [x] **No database destructive deployment** — `migrate deploy` en TODOS los flujos (install.ts, init-production, deploy/linux, deploy/windows, CI); `db:push:force` documentado como solo-dev
+- [x] **No credentials in git** — `git ls-files`: solo `.env.example` · grep del historial completo: solo fixtures DUMMY de tests + código de generación (no valores) · **gitleaks BLOQUEANTE en CI** (workflow security job; allowlist estricto actualizado con tests nuevos: recovery, initialize-core)
+- [x] **No unsafe logs** — `src/lib/logger.ts` redact() (passwords/tokens/JWT/cookies truncados; strings>512) — tests logger 8/8 · sin console.debug/debugger/Math.random en src
+
+Resultado: **0 secretos reales, 0 hallazgos abiertos.**
 
 ## FASE 42 — Final test matrix [ ]
 - [ ] bun install/lint/typecheck/test/build + integration + E2E + services + health + recovery + backup/restore REAL; lo no ejecutable en este entorno → NOT VERIFIED explícito

@@ -9,6 +9,8 @@
   paths = [
     '''(^|/)tests/realtime-service\.test\.ts$''',
     '''(^|/)tests/stream-pipeline\.test\.ts$''',
+    '''(^|/)tests/recovery\.test\.ts$''',
+    '''(^|/)tests/initialize-core\.test\.ts$''',
     '''(^|/)playwright\.config\.ts$''',
     '''(^|/)\.env\.example$''',
     '''(^|/)scripts/publish-github\.sh$''',
