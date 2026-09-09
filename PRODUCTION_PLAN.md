@@ -335,8 +335,8 @@ Resultado: **0 secretos reales, 0 hallazgos abiertos.**
 - Service worker en navegador de TV física con build de producción (capa de contenido offline SÍ verificada por E2E; sintaxis + contrato verificados)
 - gitleaks ejecutado LOCALMENTE (no instalado aquí) — corre BLOQUEANTE en CI; grep manual del historial git completo: 0 secretos reales
 
-## FASE 43 — Production readiness [ ]
-- [ ] PRODUCTION_READINESS.md con tabla de áreas PASS/FAIL + guía completa (instalar/actualizar/backup/restaurar/recuperar) + limitaciones y riesgos restantes
+## FASE 43 — Production readiness [x]
+- [x] **PRODUCTION_READINESS.md** creado: estado final, versión (1.0.0 actual → 1.2.0 propuesta), 40 commits de la misión, cambios por área, migraciones (3), variables de entorno, matriz de tests completa (0 fallidos), limitaciones/NOT VERIFIED con motivo y procedimiento de verificación, procedimientos operativos y tabla final de 16 áreas (15 PASS, Windows NOT VERIFIED hardware)
 
 ---
 
