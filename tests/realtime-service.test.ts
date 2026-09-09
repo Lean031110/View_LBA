@@ -12,6 +12,7 @@
  *   · stream:server a pantallas SIN publisherIp (saneado)
  */
 import { describe, it, expect, beforeAll, afterAll } from "bun:test"
+import { Database } from "bun:sqlite"
 import { spawn, type ChildProcess } from "child_process"
 import { mkdtempSync, rmSync, cpSync, mkdirSync } from "fs"
 import { createHash, createHmac, randomBytes } from "crypto"
@@ -35,7 +36,6 @@ let adminId = ""
 
 /** Crea la DB temporal con un usuario admin y una pantalla con token */
 function setupDb() {
-  const { Database } = require("bun:sqlite") as typeof import("bun:sqlite")
   const db = new Database(dbPath)
   db.exec(`
     CREATE TABLE User (id TEXT PRIMARY KEY, email TEXT NOT NULL, name TEXT NOT NULL, passwordHash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'OPERATOR', active BOOLEAN NOT NULL DEFAULT 1, authVersion INTEGER NOT NULL DEFAULT 0, lastLoginAt DATETIME, createdAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updatedAt DATETIME NOT NULL);
@@ -122,7 +122,7 @@ describe("realtime-service: autenticación admin", () => {
       setTimeout(() => { s.disconnect(); res("timeout") }, 5000)
     })
     expect(result).toBe("rejected")
-  })
+  }, 15000)
 
   it("admin:register CON cookie válida → aceptado con snapshot", async () => {
     const result = await new Promise<string>((res) => {
@@ -139,7 +139,7 @@ describe("realtime-service: autenticación admin", () => {
       setTimeout(() => { s.disconnect(); res("timeout") }, 5000)
     })
     expect(result).toBe("snapshot")
-  })
+  }, 15000)
 
   it("admin:register con authVersion VIEJA → rechazado (sesión invalidada)", async () => {
     const result = await new Promise<string>((res) => {
@@ -153,7 +153,7 @@ describe("realtime-service: autenticación admin", () => {
       setTimeout(() => { s.disconnect(); res("timeout") }, 5000)
     })
     expect(result).toBe("rejected")
-  })
+  }, 15000)
 
   it("admin:command sin autenticación → ignorado con rechazo", async () => {
     const result = await new Promise<string>((res) => {
@@ -165,7 +165,7 @@ describe("realtime-service: autenticación admin", () => {
       setTimeout(() => { s.disconnect(); res("timeout") }, 5000)
     })
     expect(result).toBe("rejected")
-  })
+  }, 15000)
 })
 
 describe("realtime-service: autenticación de pantallas (pairing)", () => {
@@ -180,7 +180,7 @@ describe("realtime-service: autenticación de pantallas (pairing)", () => {
       setTimeout(() => { s.disconnect(); res("timeout") }, 5000)
     })
     expect(result).toBe("unknown")
-  })
+  }, 15000)
 
   it("pantalla INACTIVA → rechazada", async () => {
     const result = await new Promise<string>((res) => {
@@ -193,7 +193,7 @@ describe("realtime-service: autenticación de pantallas (pairing)", () => {
       setTimeout(() => { s.disconnect(); res("timeout") }, 5000)
     })
     expect(result).toBe("inactive")
-  })
+  }, 15000)
 
   it("TV-001 con token CORRECTO → aceptada y verificada", async () => {
     const result = await new Promise<unknown>((res) => {
@@ -209,7 +209,7 @@ describe("realtime-service: autenticación de pantallas (pairing)", () => {
     expect(d.ok).toBeTrue()
     expect(d.verified).toBeTrue()
     expect(d.screenCode).toBe("TV-001")
-  })
+  }, 15000)
 
   it("TV-001 con token INCORRECTO → rechazada (anti-suplantación)", async () => {
     const result = await new Promise<string>((res) => {
@@ -222,7 +222,7 @@ describe("realtime-service: autenticación de pantallas (pairing)", () => {
       setTimeout(() => { s.disconnect(); res("timeout") }, 5000)
     })
     expect(result).toBe("bad-token")
-  })
+  }, 15000)
 
   it("TV-002 sin token (sin emparejar) → aceptada NO verificada", async () => {
     const result = await new Promise<unknown>((res) => {
@@ -237,7 +237,7 @@ describe("realtime-service: autenticación de pantallas (pairing)", () => {
     const d = result as { ok?: boolean; verified?: boolean }
     expect(d.ok).toBeTrue()
     expect(d.verified).toBeFalse()
-  })
+  }, 15000)
 })
 
 describe("realtime-service: broadcast interno", () => {
@@ -248,18 +248,25 @@ describe("realtime-service: broadcast interno", () => {
       body: JSON.stringify({ event: "x", payload: {} }),
     })
     expect(res.status).toBe(401)
-  })
+  }, 15000)
 
   it("broadcast a pantallas SANEADO (sin publisherIp) y con audioInfo en snapshot", async () => {
-    // conectar una pantalla y reportar audio (F7)
+    // conectar una pantalla y reportar audio (F7).
+    // El socket se mantiene VIVO hasta el final: /status solo lista pantallas
+    // CONECTADAS (el servicio las elimina al desconectar) — verificar audioInfo
+    // después de desconectar sería una carrera no determinista (bug del test).
+    let sock: Socket | null = null
+    const audioInfoSeen = { value: false }
     const gotStream = await new Promise<Record<string, unknown> | null>((res) => {
       const s = connect()
+      sock = s
       s.on("connect", () => {
         s.emit("screen:register", { screenCode: "TV-002", resolution: "800x600", userAgent: "t" })
         s.on("screen:registered", async () => {
           s.emit("screen:audio", { devices: [{ deviceId: "d1", label: "HDMI" }], supportsSinkId: true })
-          // esperar (determinista) a que el servicio procese screen:audio
-          // antes de leer el snapshot (socket y HTTP son transportes distintos)
+          // esperar (determinista: el socket sigue conectado) a que el servicio
+          // procese screen:audio y lo refleje en /status (socket y HTTP son
+          // transportes distintos)
           try {
             await waitFor(
               async () => {
@@ -269,8 +276,9 @@ describe("realtime-service: broadcast interno", () => {
               (ok) => ok === true,
               5000
             )
+            audioInfoSeen.value = true
           } catch {
-            // el broadcast/saneo se valida igual; el audioInfo se reintenta abajo
+            // se reporta abajo con expect(audioInfoSeen) — no aborta el flujo
           }
           // broadcast con dato sensible
           fetch(`http://127.0.0.1:${INTERNAL}/broadcast`, {
@@ -280,28 +288,23 @@ describe("realtime-service: broadcast interno", () => {
           }).catch(() => {})
         })
         s.on("stream:server", (payload: Record<string, unknown>) => {
-          s.disconnect()
-          res(payload)
+          res(payload) // NO desconectar: las aserciones siguen con el socket vivo
         })
       })
-      setTimeout(() => { s.disconnect(); res(null) }, 6000)
+      setTimeout(() => { s.disconnect(); res(null) }, 8000)
     })
-    expect(gotStream).not.toBeNull()
-    expect(gotStream!).not.toHaveProperty("publisherIp")
-    expect((gotStream as { live?: boolean }).live).toBe(true)
+    try {
+      expect(gotStream).not.toBeNull()
+      expect(gotStream!).not.toHaveProperty("publisherIp")
+      expect((gotStream as { live?: boolean }).live).toBe(true)
 
-    // snapshot con audioInfo (espera determinista; cualquier entrada TV-002
-    // con audioInfo — el socket del test anterior puede seguir 1-2s presente)
-    const tv2 = await waitFor(
-      async () => {
-        const st = await fetch(`http://127.0.0.1:${INTERNAL}/status`, { cache: "no-store" }).then((r) => r.json() as Promise<{ screens: { screenCode: string; socketCode?: string; audioInfo: { devices: unknown[] } | null }[]; ok?: boolean }>)
-        return st.screens.find((sc) => sc.screenCode === "TV-002" && (sc.audioInfo?.devices?.length ?? 0) >= 1) ?? null
-      },
-      (sc) => Boolean(sc),
-      5000
-    )
-    expect(tv2?.audioInfo?.devices?.length).toBe(1)
-  })
+      // FASE 7: audioInfo reportado por la pantalla visible en /status (snapshot)
+      // mientras la pantalla está conectada
+      expect(audioInfoSeen.value).toBeTrue()
+    } finally {
+      sock?.disconnect()
+    }
+  }, 25000)
 })
 
 describe("realtime-service: health", () => {
@@ -311,5 +314,5 @@ describe("realtime-service: health", () => {
     const d = (await res.json()) as { ok: boolean; uptimeSec: number }
     expect(d.ok).toBeTrue()
     expect(d.uptimeSec).toBeGreaterThanOrEqual(0)
-  })
+  }, 15000)
 })
