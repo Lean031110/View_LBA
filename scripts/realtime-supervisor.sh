@@ -7,7 +7,8 @@ cd "$ROOT/mini-services/realtime-service"
 LOG="$ROOT/realtime-supervisor.log"
 
 while true; do
-  if ! curl -s --max-time 2 http://127.0.0.1:3004/status > /dev/null 2>&1; then
+  # FASE 25: /health real del servicio (estado del proceso, no solo puerto vivo)
+  if ! curl -s --max-time 2 http://127.0.0.1:3004/health > /dev/null 2>&1; then
     echo "[$(date '+%F %T')] Realtime caído → reiniciando" >> "$LOG"
     (setsid nohup bun index.ts >> "$ROOT/realtime.log" 2>&1 < /dev/null &)
     sleep 5

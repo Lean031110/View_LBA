@@ -207,6 +207,22 @@ d("validación de datos (FASE 9 en integración)", () => {
 })
 
 d("endpoints públicos", () => {
+  it("/api/health (FASE 25): 200, DB viva, sin secretos", async () => {
+    const r = await api("GET", "/api/health")
+    // este job solo levanta la app (sin mini-servicios) → ok|degraded, NUNCA
+    // unhealthy (la DB debe estar viva) y siempre 200 en ese rango
+    expect(r.status).toBe(200)
+    const d = r.data as { status: string; database: { ok: boolean }; realtime: { ok: boolean }; stream: { ok: boolean } }
+    expect(["ok", "degraded"]).toContain(d.status)
+    expect(d.database.ok).toBeTrue()
+    // sin mini-servicios en este entorno → degraded por realtime/stream caídos
+    expect(d.realtime.ok).toBeFalse()
+    expect(d.stream.ok).toBeFalse()
+    // sin secretos en la respuesta
+    expect(JSON.stringify(r.data)).not.toContain("streamKey")
+    expect(JSON.stringify(r.data)).not.toContain("AUTH_SECRET")
+  })
+
   it("/api/content: bundle sin streamKey", async () => {
     const r = await api("GET", "/api/content")
     expect(r.status).toBe(200)

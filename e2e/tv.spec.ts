@@ -11,6 +11,15 @@ import { ADMIN, login, openTv, bindTvScreen, startRtmpPublisher, stopPublisher }
 
 test.describe("#10 TV carga contenido", () => {
   test("módulos del seed: reloj, horarios, platos, promos, redes y ticker", async ({ page }) => {
+    // FASE 25: con el stack E2E completo (app+realtime+stream) el health es "ok"
+    const h = await page.request.get("/api/health")
+    expect(h.status()).toBe(200)
+    const hd = (await h.json()) as { status: string; database: { ok: boolean }; realtime: { ok: boolean }; stream: { ok: boolean } }
+    expect(hd.status).toBe("ok")
+    expect(hd.database.ok).toBe(true)
+    expect(hd.realtime.ok).toBe(true)
+    expect(hd.stream.ok).toBe(true)
+
     await openTv(page)
 
     // reloj (aria-label propio del componente Clock)

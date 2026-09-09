@@ -40,6 +40,16 @@ jobs:
       - name: Instalar dependencias (reproducible)
         run: bun install --frozen-lockfile
 
+      - name: Instalar dependencias de mini-servicios
+        # stream-service y realtime-service tienen package.json propio
+        run: |
+          (cd mini-services/realtime-service && bun install --frozen-lockfile)
+          (cd mini-services/stream-service && bun install --frozen-lockfile)
+
+      - name: Instalar ffmpeg (publisher RTMP de los tests de pipeline)
+        # ubuntu-latest ya NO incluye ffmpeg — necesario para stream-pipeline
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
       - name: Generar Prisma Client
         run: bunx prisma generate
 
@@ -137,6 +147,15 @@ jobs:
 
       - name: Instalar dependencias (reproducible)
         run: bun install --frozen-lockfile
+
+      - name: Instalar dependencias de mini-servicios
+        # los webServer de Playwright arrancan realtime + stream-service
+        run: |
+          (cd mini-services/realtime-service && bun install --frozen-lockfile)
+          (cd mini-services/stream-service && bun install --frozen-lockfile)
+
+      - name: Instalar ffmpeg (escenarios de stream E2E #13/#14)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
 
       - name: Generar Prisma Client
         run: bunx prisma generate

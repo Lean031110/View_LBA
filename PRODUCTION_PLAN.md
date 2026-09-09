@@ -166,10 +166,11 @@
 - [x] Saneamiento de runtime (evidencia del audit): eliminadas `lodash` y `@reactuses/core` (0 imports en src — la segunda arrastraba js-cookie ≤3.0.5 HIGH). Las 30 restantes viven SOLO en cadenas dev/CLI (eslint→babel→browserslist, prisma-config, picomatch) — no forman parte del binario standalone
 - Registro: `bun update` sin cambios (todo en último semver compatible)
 
-## FASE 25 — Health [ ]
-- [ ] `/api/health` real: {status: ok|degraded|unhealthy, database, storage(MEDIA_DIR writable+quota), realtime(:3004/health), stream(:8100/health)} — sin secretos, con timeout y fallback
-- [ ] Health endpoints de ambos mini-servicios robustecidos (F13/F5)
-- [ ] Supervisor usa /health reales
+## FASE 25 — Health [x]
+- [x] `/api/health` REAL: {status: ok|degraded|unhealthy, database(SELECT 1 con timeout), storage(MEDIA_DIR writable+uso/cuota con caché 60s), realtime(:3004/health), stream(:8100/health)} — sin secretos, probes con timeout 1.5s, 503 solo si la DB cae (degraded = la app sigue sirviendo contenido con polling de respaldo)
+- [x] Health de mini-servicios ya reales: realtime (:3004/health FASE 5) y stream (TCP listeners de RTMP/FLV FASE 13 — un proceso zombi da 503)
+- [x] Supervisor realtime actualizado a /health (antes /status)
+- [x] Tests: integración (degraded sin servicios + DB viva + sin secretos) y E2E (ok con stack completo) — suite 210/210 estable ×2
 
 ## FASE 26 — Logging [ ]
 - [ ] `src/lib/logger.ts`: JSON estructurado (ts, level, event, actor, ip) a stdout + archivo rotativo en LOG_DIR
