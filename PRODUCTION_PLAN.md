@@ -196,11 +196,14 @@
 - [x] Verificación del runtime REAL: build standalone + arranque con NODE_ENV=production + DATABASE_URL absoluta + PORT → health 200 (degraded sin mini-servicios, database/storage ok) — mismo binario que ejecuta el servicio systemd
 - NOT VERIFIED (hardware): arranque de systemd en máquina real — este entorno no tiene systemd; unidades validadas sintácticamente y runtime del binario verificado. Marcar para FASE 42/43 (test matrix) en hardware destino
 
-## FASE 29 — Windows deployment [ ]
-- [ ] Scripts multiplataforma: build sin `cp -r` (node script), start portable
-- [ ] `docs/WINDOWS_PRODUCTION.md`: NSSM (o sc) para los 3 servicios, firewall, rutas C:\PantallaRestaurante\*
-- [ ] `deploy/windows/` con .ps1 de instalación/servicio
-- [ ] Verificar: app arranca en Windows (rutas, prisma, mpegts es cliente, NMS server-side OK)
+## FASE 29 — Windows deployment [x]
+- [x] Scripts multiplataforma: `scripts/build.ts` (next build + fs.cpSync portable — sin `cp -r`) y `scripts/start.ts` (arranca standalone con NODE_ENV/PORT + reenvío de señales — sin prefijo env ni `tee`) — ambos VERIFICADOS en Linux (bun run build desde cero + arranque health 200); package.json actualizado (dev/build/start)
+- [x] `deploy/windows/install.ps1`: deps (bun/nssm con guía) · layout C:\PantallaRestaurante\{app,data,logs} · secretos RNG · .env único (lo consumen los 3 servicios) · install raíz+mini-servicios · prisma generate · migrate deploy · build portable · 3 servicios NSSM (reinicio 5s, logs rotativos 5MB) · firewall (3000/3003 LAN, 1935 OBS) · arranque + health wait
+- [x] `deploy/windows/manage.ps1`: start/stop/restart/status/logs/health/backup/restore/upgrade
+- [x] `docs/WINDOWS_PRODUCTION.md`: requisitos, arquitectura, instalación, primer admin, gestión, backup programado (Task Scheduler), firewall, recuperación, notas de portabilidad (mpegts cliente · NMS Node puro · rutas Prisma con /)
+- [x] Los supervisores .sh quedan como utilidades Linux-opcionales (NSSM/systemd los sustituyen en producción)
+- NOT VERIFIED: ejecución real en Windows (sin Windows en este entorno) — install.ps1/manage.ps1 sin validar en PS (sin pwsh); marcado para FASE 42/43. El runtime del código es multiplataforma verificado en la parte ejecutable aquí
+- Extra: sampler FLV del pipeline hecho determinista (reconexión como el player real; bytes como métrica de continuidad) — 4/4 estable
 
 ## FASE 30 — Configuración [ ]
 - [ ] `.env.example` final completo (PORT, DATABASE_URL, AUTH_SECRET, REALTIME_TOKEN, TIMEZONE, MEDIA_DIR, BACKUP_DIR, LOG_DIR, ALLOWED_ORIGINS, STREAM_TEST_ALLOWED_HOSTS, RTMP_*, HTTP_FLV_PORT, MEDIA_MAX_TOTAL_MB, LOGIN_RATE_LIMIT)
