@@ -32,6 +32,8 @@ export const metadata: Metadata = {
   icons: {
     icon: APP_LOGO_MARK,
   },
+  // FASE 34: PWA instalable en TVs (manifest + standalone/fullscreen)
+  manifest: "/manifest.webmanifest",
 };
 
 export const viewport: Viewport = {

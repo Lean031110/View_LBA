@@ -147,3 +147,42 @@ test.describe("#23 audio fallback (setSinkId)", () => {
     expect(realErrors).toEqual([])
   })
 })
+
+test.describe("#34 offline: último contenido conocido (FASE 34)", () => {
+  test("servidor caído tras recarga → la TV muestra el último contenido + banner, no pantalla vacía", async ({ page }) => {
+    // 1. carga normal: el contenido vivo queda persistido (localStorage)
+    await page.goto("/?view=tv")
+    await expect(page.getByText("La Terraza Grill & Bar").first()).toBeVisible({ timeout: 30_000 })
+
+    // 2. simular servidor caído SOLO para /api/content (el resto del dev server
+    //    sigue: en producción real el shell lo serviría el SW desde su cache)
+    await page.route("**/api/content", (route) => route.abort())
+    await page.reload()
+
+    // 3. la TV ARRANCA con el ÚLTIMO contenido conocido + banner de sin conexión
+    await expect(page.getByText("La Terraza Grill & Bar").first()).toBeVisible({ timeout: 30_000 })
+    await expect(page.getByText(/mostrando el último contenido conocido/i)).toBeVisible({ timeout: 10_000 })
+
+    // 4. al recuperar el servidor, el contenido se refresca y el banner desaparece
+    await page.unroute("**/api/content")
+    await page.reload()
+    await expect(page.getByText("La Terraza Grill & Bar").first()).toBeVisible({ timeout: 30_000 })
+    await expect(page.getByText(/mostrando el último contenido conocido/i)).toBeHidden({ timeout: 15_000 })
+  })
+
+  test("assets de PWA servidos: manifest + service worker (sintaxis válida)", async ({ request }) => {
+    const manifest = await request.get("/manifest.webmanifest")
+    expect(manifest.status()).toBe(200)
+    const body = (await manifest.json()) as { start_url?: string; display?: string; name?: string }
+    expect(body.start_url).toBe("/?view=tv")
+    expect(body.display).toBe("fullscreen")
+
+    const sw = await request.get("/sw-tv.js")
+    expect(sw.status()).toBe(200)
+    const swText = await sw.text()
+    // contrato mínimo del SW: nunca cachea rutas privadas del admin
+    expect(swText).toContain("/api/admin/")
+    expect(swText).toContain("/api/auth/")
+    expect(swText).toContain("neverTouch")
+  })
+})

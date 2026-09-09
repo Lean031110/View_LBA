@@ -258,9 +258,15 @@
 - [x] Suite completa estable: 230 pass / 0 fail (recovery incluido); lint ✓; typecheck ✓
 - NOT VERIFIED: arranque real de systemd ante caída (este entorno no tiene systemd — las unidades F28 están validadas sintácticamente; el mecanismo Restart=always es el equivalente productivo del "restart" simulado aquí)
 
-## FASE 34 — PWA/offline [ ]
-- [ ] Service worker para TV: cache de shell + último /api/content (IndexedDB) → UI offline con último contenido conocido + banner "sin conexión"; sin streaming offline (nativo)
-- [ ] Registrar manifest PWA (instalable en TVs con Chrome)
+## FASE 34 — PWA/offline [x]
+> Auditoría previa: la TV YA conservaba el último contenido EN MEMORIA con banner "Reconectando…" (FASE 20) y el player YA tiene fallback "LA TRANSMISIÓN SE REANUDARÁ EN BREVE". GAPS reales: nada persistía el contenido (una RECARGA con servidor caído = pantalla vacía del navegador), sin shell offline y sin PWA instalable.
+
+- [x] Persistencia del último bundle válido de /api/content (localStorage, TTL 24h) — SOLO datos públicos (jamás /api/admin ni /api/auth: verificado por diseño y en el contrato del SW)
+- [x] Al fallar /api/content con contenido persistido aún fresco → se muestra ese contenido + banner "Sin conexión — mostrando el último contenido conocido" (nunca pantalla vacía); al recuperar el servidor → refresco y el banner desaparece
+- [x] Service worker (`public/sw-tv.js`, registro solo en producción y solo vista TV): shell cache-first para /_next/static (hash inmutable) + navegación network-first con fallback al shell cacheado + /api/content network-first con último-conocido; NEVER-TOUCH explícito de /api/admin/*, /api/auth/*, /api/upload, /api/files/* y .flv (privacidad + streaming); sintaxis validada (node --check)
+- [x] Manifest PWA (`public/manifest.webmanifest`): start_url /?view=tv, display fullscreen, theme/background #0b0b0f, iconos existentes → instalable en TVs con Chrome
+- [x] E2E (31/31): 2 specs nuevos — recarga con /api/content abortado → último contenido + banner + recuperación al des-abortar; manifest+SW servidos con contrato de rutas privadas
+- NOT VERIFIED: ejecución del SW en un navegador TV real con build de producción (el E2E corre dev sin SW por HMR; el fallback localStorage — la capa de contenido — SÍ está verificado; la capa de shell requiere hardware destino: documentado)
 
 ## FASE 35 — API security [ ]
 - [ ] Headers de seguridad (next.config: CSP prudente para TV/admin, X-Frame-Options SAMEORIGIN salvo embed TV permitido, Referrer-Policy, HSTS solo si https documentado)

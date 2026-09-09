@@ -16,6 +16,7 @@ import StreamPlayer, { type StreamMetrics } from "./StreamPlayer"
 import SocialLinks from "./SocialLinks"
 import NewsTicker from "./NewsTicker"
 import ScreenPicker from "./ScreenPicker"
+import { WifiOff } from "lucide-react"
 
 const SCREEN_KEY = "signage.screenCode"
 const SCREEN_CHOSEN_KEY = "signage.screenChosen"
@@ -30,6 +31,7 @@ export default function TvDisplay() {
   const [content, setContent] = useState<ContentBundle | null>(null)
   const [loadError, setLoadError] = useState(false)
   const [backendOnline, setBackendOnline] = useState(true)
+  const [staleContent, setStaleContent] = useState(false) // FASE 34: mostrando último contenido conocido
   const [screenCode, setScreenCode] = useState<string | null>(null)
   const [showPicker, setShowPicker] = useState(false)
   const [pairCode, setPairCode] = useState<string | null>(null) // FASE 32: código temporal de vinculación
@@ -43,6 +45,13 @@ export default function TvDisplay() {
   const metricsRef = useRef<StreamMetrics | null>(null)
 
   // ---------- Carga de contenido ----------
+  // FASE 34 (offline): el último bundle VÁLIDO se persiste en localStorage
+  // (solo datos públicos de /api/content — jamás datos privados del admin);
+  // si el servidor no responde (LAN caída tras recarga/reinicio de la TV),
+  // se muestra ese último contenido conocido en lugar de una pantalla vacía.
+  const CONTENT_KEY = "signage.lastContent"
+  const CONTENT_TTL_MS = 24 * 60 * 60 * 1000 // 24h: contenido claramente obsoleto tras un día
+
   const fetchContent = useCallback(async () => {
     try {
       const res = await fetch("/api/content", { cache: "no-store" })
@@ -51,8 +60,27 @@ export default function TvDisplay() {
       setContent(data)
       setLoadError(false)
       setBackendOnline(true)
+      setStaleContent(false)
       failCountRef.current = 0
+      // persistir el último válido (best-effort; quota excepcional → ignorar)
+      try {
+        localStorage.setItem(CONTENT_KEY, JSON.stringify({ ts: Date.now(), data }))
+      } catch {}
     } catch {
+      // offline: ¿tenemos último contenido conocido aún fresco?
+      try {
+        const raw = localStorage.getItem(CONTENT_KEY)
+        if (raw) {
+          const { ts, data } = JSON.parse(raw) as { ts: number; data: ContentBundle }
+          if (Date.now() - ts < CONTENT_TTL_MS && data) {
+            setContent((prev) => prev ?? data) // no pisar contenido en memoria más nuevo
+            setStaleContent(true)
+            setBackendOnline(false)
+            setLoadError(false)
+            return
+          }
+        }
+      } catch {}
       setLoadError(true)
     }
   }, [])
@@ -64,6 +92,18 @@ export default function TvDisplay() {
     if (!localStorage.getItem(SCREEN_CHOSEN_KEY)) setShowPicker(true)
     fetchContent()
   }, [fetchContent])
+
+  // ---------- FASE 34: Service Worker (shell offline de la TV) ----------
+  // Solo en producción (en dev rompería HMR). El SW cachea el shell y el
+  // último /api/content para sobrevivir a recargas con el servidor caído.
+  // NUNCA cachea /api/admin/* ni /api/auth/* (datos privados).
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "production") return
+    if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return
+    navigator.serviceWorker.register("/sw-tv.js").catch(() => {
+      // registro fallido (contexto sin SW): la TV funciona igual (memoria)
+    })
+  }, [])
 
   // ---------- FASE 32: código temporal de vinculación ----------
   // TV no emparejada (picker visible sin identidad) → genera un código de
@@ -509,6 +549,14 @@ export default function TvDisplay() {
         <div className="fixed top-[1vh] left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 rounded-full px-4 py-1.5 bg-red-500/90 text-white text-sm font-semibold shadow-lg">
           <AlertTriangle size={16} />
           Reconectando con el servidor…
+        </div>
+      )}
+
+      {/* FASE 34: sin servidor + último contenido conocido (la TV sigue viva) */}
+      {staleContent && (
+        <div className="fixed top-[4.6vh] left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 rounded-full px-4 py-1 bg-amber-500/85 text-black text-xs font-bold shadow-lg">
+          <WifiOff size={13} />
+          Sin conexión — mostrando el último contenido conocido
         </div>
       )}
 
