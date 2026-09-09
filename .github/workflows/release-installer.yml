@@ -1,0 +1,223 @@
+name: Release Installers
+
+# Artefactos oficiales de instalación de ViewLBA Server:
+#   Linux:   ViewLBA-Server.AppImage (GUI Tauri + --cli) · ViewLBA-Server-CLI.AppImage · .deb
+#   Windows: ViewLBA-Server-Setup.exe (GUI Tauri + sidecar)
+# Todos con checksum SHA256. El paquete es OFFLINE (servidor+deps+build+bun+NSSM).
+#
+# La GUI y los binarios de Windows SOLO se construyen aquí (el sandbox de
+# desarrollo no tiene Rust/Windows): la lógica común ya está testeada en CI
+# normal (tests/installer/*, incluida la lógica NSSM/netsh con RecordingRunner).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ------------------------------------------------------------------ Linux
+  linux:
+    name: Linux (AppImage GUI + CLI + deb)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+          cache: true
+
+      - name: Dependencias del repo (para compilar el sidecar y tests de humo)
+        run: bun install --frozen-lockfile
+
+      - name: Prisma Client (repo)
+        run: bunx prisma generate
+
+      - name: Tests del installer (lógica verificada antes de empaquetar)
+        run: bun test tests/installer/
+
+      - name: Ensamblar payload offline (servidor + deps + build + bun)
+        run: bun installer/package/bundle-server.ts --platform=linux
+
+      # ---- GUI (Tauri) ----
+      - name: Dependencias de sistema para Tauri (Linux)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Sidecar → src-tauri/binaries (sufijo target de Tauri)
+        run: |
+          mkdir -p installer/gui/src-tauri/binaries
+          cp dist/release/linux/ViewLBA-Server/viewlba-installer \
+             installer/gui/src-tauri/binaries/viewlba-installer-x86_64-unknown-linux-gnu
+
+      - name: Payload → src-tauri/resources
+        run: |
+          mkdir -p installer/gui/src-tauri/resources
+          cp -a dist/release/linux/ViewLBA-Server/resources installer/gui/src-tauri/resources/
+          cp -a dist/release/linux/ViewLBA-Server/runtime installer/gui/src-tauri/resources/
+          cp dist/release/linux/ViewLBA-Server/manifest.json installer/gui/src-tauri/resources/
+
+      - name: Construir la GUI (AppImage + deb con sidecar y payload)
+        working-directory: installer/gui/src-tauri
+        run: |
+          cargo install tauri-cli --version "^2" --locked
+          cargo tauri build
+        env:
+          # información de versión para el bundle
+          TAURI_BUNDLER_TOOLS_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Recoger artefactos GUI
+        run: |
+          mkdir -p dist/release/linux/gui
+          cp installer/gui/src-tauri/target/release/bundle/appimage/*.AppImage dist/release/linux/gui/ || true
+          cp installer/gui/src-tauri/target/release/bundle/deb/*.deb dist/release/linux/gui/ || true
+
+      # ---- CLI AppImage (headless, sin Rust — el mismo payload) ----
+      - name: AppImage CLI (headless)
+        run: bash installer/package/appimage.sh dist/release/linux/ViewLBA-Server
+
+      - name: Verificación REAL del AppImage (arranque del installer)
+        run: |
+          set -e
+          IMG=dist/release/linux/ViewLBA-Server-CLI.AppImage
+          APPIMAGE_EXTRACT_AND_RUN=1 "$IMG" --cli --json detect | head -c 200
+          echo
+          APPIMAGE_EXTRACT_AND_RUN=1 "$IMG" --cli preflight < /dev/null | tee /tmp/pre.txt
+          grep -q "systemd" /tmp/pre.txt || echo "::warning::preflight sin menciones de systemd"
+          cat dist/release/linux/ViewLBA-Server-CLI.AppImage.sha256
+
+      - name: SHA256SUMS (Linux)
+        run: |
+          cd dist/release/linux
+          sha256sum ViewLBA-Server-CLI.AppImage gui/*.AppImage gui/*.deb > SHA256SUMS.txt 2>/dev/null || \
+            sha256sum ViewLBA-Server-CLI.AppImage > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Subir artefactos (Linux)
+        uses: actions/upload-artifact@v4
+        with:
+          name: viewlba-linux-installer
+          path: |
+            dist/release/linux/ViewLBA-Server-CLI.AppImage
+            dist/release/linux/ViewLBA-Server-CLI.AppImage.sha256
+            dist/release/linux/gui/*
+            dist/release/linux/SHA256SUMS.txt
+          retention-days: 14
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------- Windows
+  windows:
+    name: Windows (Setup.exe — NOT VERIFIED en sandbox, construido en CI real)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+          cache: true
+
+      - name: Dependencias del repo
+        run: bun install --frozen-lockfile
+
+      - name: Prisma Client (repo)
+        run: bunx prisma generate
+
+      - name: Ensamblar payload offline (servidor + deps + build + bun + NSSM)
+        run: bun installer/package/bundle-server.ts --platform=windows
+        shell: bash
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Sidecar → src-tauri/binaries (sufijo target de Tauri)
+        shell: bash
+        run: |
+          mkdir -p installer/gui/src-tauri/binaries
+          cp dist/release/windows/ViewLBA-Server/viewlba-installer.exe \
+             installer/gui/src-tauri/binaries/viewlba-installer-x86_64-pc-windows-msvc.exe
+
+      - name: Payload → src-tauri/resources
+        shell: bash
+        run: |
+          mkdir -p installer/gui/src-tauri/resources
+          cp -a dist/release/windows/ViewLBA-Server/resources installer/gui/src-tauri/resources/
+          cp -a dist/release/windows/ViewLBA-Server/runtime installer/gui/src-tauri/resources/
+          cp dist/release/windows/ViewLBA-Server/manifest.json installer/gui/src-tauri/resources/
+
+      - name: Construir el instalador (NSIS: ViewLBA-Server-Setup.exe)
+        working-directory: installer/gui/src-tauri
+        run: |
+          cargo install tauri-cli --version "^2" --locked
+          cargo tauri build --bundles nsis
+        env:
+          TAURI_BUNDLER_TOOLS_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Smoke del sidecar (detect en Windows REAL)
+        shell: bash
+        run: |
+          ./dist/release/windows/ViewLBA-Server/viewlba-installer.exe --json detect | head -c 200
+          echo
+
+      - name: SHA256SUMS (Windows)
+        shell: bash
+        run: |
+          cd dist/release/windows
+          sha256sum installer/gui/src-tauri/target/release/bundle/nsis/*.exe > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Subir artefactos (Windows)
+        uses: actions/upload-artifact@v4
+        with:
+          name: viewlba-windows-installer
+          path: |
+            dist/release/windows/SHA256SUMS.txt
+            installer/gui/src-tauri/target/release/bundle/nsis/*.exe
+          retention-days: 14
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------- Release
+  release:
+    name: GitHub Release (artefactos + checksums)
+    needs: [linux, windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Consolidar SHA256SUMS
+        run: |
+          find artifacts -name "SHA256SUMS.txt" -exec cat {} \; > SHA256SUMS.txt
+          # re-computar sobre los archivos reales subidos
+          find artifacts -type f \( -name "*.AppImage" -o -name "*.exe" -o -name "*.deb" \) -exec sha256sum {} \; > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Crear Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            SHA256SUMS.txt
+            artifacts/**/*.AppImage
+            artifacts/**/*.exe
+            artifacts/**/*.deb
+            artifacts/**/*.sha256
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

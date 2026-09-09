@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ViewLBA Server — Installer</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <span class="logo">V</span>
+        <div>
+          <h1>ViewLBA Server</h1>
+          <p id="subtitle">Señalización digital para restaurantes · 100% LAN</p>
+        </div>
+      </div>
+      <nav id="nav" hidden>
+        <button data-view="wizard">Asistente</button>
+        <button data-view="manager">Servidor</button>
+      </nav>
+    </header>
+
+    <main>
+      <!-- ===================== Pantalla 1: bienvenida ===================== -->
+      <section id="view-welcome" class="view">
+        <div class="card hero">
+          <h2>Bienvenido al installer oficial</h2>
+          <p>
+            Este asistente instala y configura <b>todo el servidor</b>: aplicación, base de datos,
+            secretos, servicios 24/7, firewall de LAN y verificación de salud. Sin clonar GitHub
+            ni editar archivos a mano.
+          </p>
+          <div class="row">
+            <button id="btn-start" class="primary big">Instalar ViewLBA Server</button>
+            <button id="btn-manage" class="big" hidden>Gestionar instalación existente</button>
+          </div>
+          <p id="elevate-note" class="muted"></p>
+        </div>
+      </section>
+
+      <!-- ===================== Wizard ===================== -->
+      <section id="view-wizard" class="view" hidden>
+        <ol id="steps" class="steps">
+          <li data-step="preflight">Preflight</li>
+          <li data-step="directory">Directorio</li>
+          <li data-step="config">Configuración</li>
+          <li data-step="network">Red</li>
+          <li data-step="secrets">Secretos</li>
+          <li data-step="database">Base de datos</li>
+          <li data-step="services">Servicios</li>
+          <li data-step="firewall">Firewall</li>
+          <li data-step="health">Salud</li>
+          <li data-step="admin">Administrador</li>
+          <li data-step="run">Instalar</li>
+          <li data-step="done">Final</li>
+        </ol>
+
+        <!-- 2: preflight -->
+        <div class="card" id="pane-preflight" hidden>
+          <h2>2 · Comprobación del sistema</h2>
+          <p class="muted">Nada se modifica todavía. Un FAIL crítico bloquea el avance.</p>
+          <button id="btn-preflight" class="primary">Comprobar ahora</button>
+          <table id="preflight-table" class="checks" hidden></table>
+          <div class="row">
+            <button id="btn-preflight-next" class="primary" hidden>Continuar</button>
+          </div>
+        </div>
+
+        <!-- 3: directorio + modo -->
+        <div class="card" id="pane-directory" hidden>
+          <h2>3 · Directorio y modo</h2>
+          <div id="existing-info" class="muted"></div>
+          <div class="grid2">
+            <label>Modo
+              <select id="in-mode">
+                <option value="new">Nueva instalación</option>
+                <option value="update">Actualizar (datos intactos)</option>
+                <option value="repair">Reparar (datos intactos)</option>
+              </select>
+            </label>
+            <label>Directorio de la aplicación
+              <input id="in-dir" placeholder="/opt/pantalla-restaurante" />
+            </label>
+            <label>Directorio de datos
+              <input id="in-datadir" placeholder="/var/lib/pantalla-restaurante" />
+            </label>
+            <label>Directorio de logs
+              <input id="in-logdir" placeholder="/var/log/pantalla-restaurante" />
+            </label>
+          </div>
+          <button id="btn-dir-next" class="primary">Continuar</button>
+        </div>
+
+        <!-- 4: config básica -->
+        <div class="card" id="pane-config" hidden>
+          <h2>4 · Configuración básica</h2>
+          <div class="grid2">
+            <label>Nombre del restaurante <input id="in-name" value="Mi Restaurante" /></label>
+            <label>Zona horaria <input id="in-tz" value="America/Havana" /></label>
+            <label>Puerto web (app) <input id="in-port" type="number" value="3000" min="1" max="65535" /></label>
+            <label>Puerto realtime <input id="in-rtport" type="number" value="3003" min="1" max="65535" /></label>
+            <label>Puerto RTMP (OBS) <input id="in-rtmp" type="number" value="1935" min="1" max="65535" /></label>
+            <label>Puerto HTTP-FLV <input id="in-flv" type="number" value="8000" min="1" max="65535" /></label>
+            <label class="check"><input id="in-demo" type="checkbox" /> Sembrar contenido demo</label>
+            <label class="check"><input id="in-offline" type="checkbox" /> Instalación completamente offline</label>
+          </div>
+          <button id="btn-config-next" class="primary">Continuar</button>
+        </div>
+
+        <!-- 5: red -->
+        <div class="card" id="pane-network" hidden>
+          <h2>5 · Red</h2>
+          <div class="grid2">
+            <label class="check"><input id="in-lan" type="checkbox" checked /> Modo LAN (servir a las TVs)</label>
+            <label>Subred para firewall <input id="in-subnet" placeholder="192.168.1.0/24" /></label>
+          </div>
+          <p class="muted">Se abrirán 3000/3003/1935 a esa subred (docs/FIREWALL.md). 3004/8000/8100 son internos (localhost).</p>
+          <button id="btn-net-next" class="primary">Continuar</button>
+        </div>
+
+        <!-- 6-7: secrets + db (informativos) -->
+        <div class="card" id="pane-secrets" hidden>
+          <h2>6 · Secretos y base de datos</h2>
+          <p>· Los secretos (AUTH_SECRET, REALTIME_TOKEN) se generan con crypto y <b>nunca se muestran ni se reescriben si ya existen</b>.</p>
+          <p>· SQLite con migraciones versionadas (migrate deploy) y <b>verificación del target real</b> antes de migrar: jamás se toca otra base de datos.</p>
+          <p>· Si ya existe un .env, se respeta TODO (solo se completan los faltantes).</p>
+          <button id="btn-secrets-next" class="primary">Continuar</button>
+        </div>
+
+        <!-- 11 (recogida): admin -->
+        <div class="card" id="pane-admin" hidden>
+          <h2>7 · Primer administrador</h2>
+          <p class="muted">Se creará después de que el health final pase (fase 11 del pipeline). Puedes dejarlo vacío y crearlo luego.</p>
+          <div class="grid2">
+            <label>Email <input id="in-email" type="email" placeholder="admin@restaurante.local" /></label>
+            <label>Contraseña <input id="in-passwd" type="password" placeholder="mínimo 8, política completa al crear" /></label>
+          </div>
+          <button id="btn-admin-next" class="primary">Continuar</button>
+        </div>
+
+        <!-- resumen + ejecución (8-10: services/firewall/health se muestran en vivo) -->
+        <div class="card" id="pane-run" hidden>
+          <h2>8 · Instalar</h2>
+          <div id="run-summary" class="summary"></div>
+          <button id="btn-install" class="primary big">Iniciar instalación</button>
+          <button id="btn-cancel" class="danger" hidden>Cancelar</button>
+          <div id="run-log" class="runlog" hidden></div>
+        </div>
+
+        <!-- 12: final -->
+        <div class="card" id="pane-done" hidden>
+          <h2 id="done-title">Final</h2>
+          <div id="done-body"></div>
+          <div class="row">
+            <button id="btn-open-manager" class="primary">Abrir gestor del servidor</button>
+            <button id="btn-retry" class="hidden">Reintentar / Reparar</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================== Server Manager ===================== -->
+      <section id="view-manager" class="view" hidden>
+        <div class="card">
+          <h2>Servicios</h2>
+          <table id="svc-table" class="checks"></table>
+          <div class="row">
+            <button data-svc="start">Iniciar</button>
+            <button data-svc="stop">Detener</button>
+            <button data-svc="restart">Reiniciar</button>
+            <button id="svc-refresh">Actualizar</button>
+          </div>
+        </div>
+        <div class="grid2 cards">
+          <div class="card">
+            <h2>Health</h2>
+            <button id="btn-health" class="primary">Comprobar salud</button>
+            <table id="health-table" class="checks" hidden></table>
+          </div>
+          <div class="card">
+            <h2>Logs</h2>
+            <button id="btn-logs">Ver últimas líneas</button>
+            <pre id="logs-body" class="logbox" hidden></pre>
+          </div>
+          <div class="card">
+            <h2>Diagnóstico</h2>
+            <button id="btn-diag">Ejecutar diagnóstico</button>
+            <table id="diag-table" class="checks" hidden></table>
+          </div>
+          <div class="card">
+            <h2>Backup</h2>
+            <button id="btn-backup" class="primary">Backup ahora (verificado, online)</button>
+            <pre id="backup-body" class="logbox" hidden></pre>
+          </div>
+          <div class="card">
+            <h2>Mantenimiento</h2>
+            <div class="row">
+              <button id="btn-repair">Reparar</button>
+              <button id="btn-uninstall" class="danger">Desinstalar…</button>
+            </div>
+          </div>
+          <div class="card" id="uninstall-card" hidden>
+            <h2>Desinstalación</h2>
+            <p class="muted">Los datos se conservan POR DEFECTO. Marca explícitamente lo que quieras borrar.</p>
+            <label class="check"><input type="checkbox" id="un-app" checked /> Aplicación</label>
+            <label class="check"><input type="checkbox" id="un-svc" checked /> Servicios</label>
+            <label class="check"><input type="checkbox" id="un-cfg" checked /> Configuración (.env)</label>
+            <label class="check"><input type="checkbox" id="un-media" /> Medios</label>
+            <label class="check"><input type="checkbox" id="un-backups" /> Backups</label>
+            <label class="check danger-check"><input type="checkbox" id="un-db" /> Base de datos (TODO el contenido)</label>
+            <button id="btn-uninstall-confirm" class="danger">Confirmar desinstalación</button>
+            <pre id="uninstall-body" class="logbox" hidden></pre>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

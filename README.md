@@ -112,18 +112,30 @@ flowchart TB
 
 ### Instalación (producción — multiplataforma, sin editar archivos)
 
+**Instaladores oficiales (recomendado — paquete offline completo, sin clonar
+GitHub ni instalar dependencias a mano):**
+
+- Windows: `ViewLBA-Server-Setup.exe` (doble clic → asistente GUI → listo).
+- Linux: `ViewLBA-Server.AppImage` (GUI; `--cli` en headless) o el paquete
+  `.deb`. Incluyen servidor + build + Bun + (Windows) NSSM.
+
+Ver `docs/INSTALLER.md` (arquitectura y flujo), `docs/INSTALLER-LINUX.md`,
+`docs/INSTALLER-WINDOWS.md` y `docs/RELEASE.md` (artefactos y checksums).
+
+**Desde el repositorio (desarrollo/avanzado):**
+
 ```bash
 git clone https://github.com/Lean031110/Pantalla_Restaurante.git
 cd Pantalla_Restaurante
 
-bun scripts/install.ts
+bun scripts/install.ts          # delega en installer/cli (misma lógica oficial)
 # preflight → dependencias → .env con secretos aleatorios → migraciones
 # (prisma migrate deploy) → primer admin → build standalone → health
 ```
 
-Despliegue 24/7: Linux systemd (`deploy/linux/install.sh`) · Windows NSSM
-(`deploy\windows\install.ps1`) — guías en `docs/LINUX_PRODUCTION.md` y
-`docs/WINDOWS_PRODUCTION.md`.
+Despliegue 24/7: Linux systemd (`deploy/linux/install.sh` ·
+`viewlba-installer services …`) · Windows NSSM (`deploy\windows\install.ps1`)
+— guías en `docs/LINUX_PRODUCTION.md` y `docs/WINDOWS_PRODUCTION.md`.
 
 ### Desarrollo
 

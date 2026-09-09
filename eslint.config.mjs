@@ -44,7 +44,7 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     "no-useless-escape": "off",
   },
 }, {
-  ignores: ["node_modules/**", ".next/**", "out/**", "build/**", "next-env.d.ts", "examples/**", "skills", ".install-test/**"]
+  ignores: ["node_modules/**", ".next/**", "out/**", "build/**", "next-env.d.ts", "examples/**", "skills", ".install-test/**", "dist/**", "download/**", "installer/gui/src-tauri/resources/**", "installer/gui/src-tauri/binaries/**", "installer/gui/src-tauri/gen/**", "installer/gui/ui/**"]
 }];
 
 export default eslintConfig;

@@ -57,3 +57,9 @@ tool-results/
 # Datos en caliente del stream-service cuando corre desde la raíz (NMS store)
 /data/
 .install-test/
+
+# Staging de empaquetado del installer oficial (bundle-server.ts / appimage.sh)
+dist/
+installer/gui/src-tauri/binaries/
+installer/gui/src-tauri/resources/
+installer/gui/src-tauri/gen/

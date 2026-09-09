@@ -59,9 +59,11 @@ recomendada). Opcionales: `PORT`, `TIMEZONE`, `MEDIA_DIR/BACKUP_DIR/LOG_DIR/DATA
 | `bun install --frozen-lockfile` | **PASS** |
 | `bun run lint` / `bun run typecheck` | **PASS / PASS** (0 problemas) |
 | `bun run build` + arranque standalone en NODE_ENV=production | **PASS** (health 200, CSP prod, ETag+304, WAL) |
-| `bun test` (unit + realtime + stream-pipeline + recovery + initialize-core + backup + logger) | **PASS 230/230** (21 skip = integración ejecutada aparte) |
+| `bun test` (unit + realtime + stream-pipeline + recovery + initialize-core + backup + logger + **installer**) | **PASS 296/296** (21 skip = integración ejecutada aparte; +66 tests del installer oficial) |
 | Integración API contra servidor real (flujo CI) | **PASS 20/20** |
 | `bun run test:e2e` (Playwright, stack real + ffmpeg) | **PASS 37/37** |
+| **Payload offline del installer** (bundle-server.ts) | **PASS** — migrate deploy con Bun incluido (cero red) · arranque standalone · `/api/health` con database+storage ok · `GET /` 200 |
+| **AppImage CLI** (construcción local real) | **PASS** — `ViewLBA-Server-CLI.AppImage --cli --json detect` responde JSON correcto; preflight real 18 checks |
 | CI GitHub Actions (4 jobs requeridos) | Diseñado; corrida final en GitHub pendiente del push de estas fases |
 
 **Tests fallidos: 0.** Flaky conocido del pipeline de streaming: resuelto
@@ -71,8 +73,9 @@ recomendada). Opcionales: `PORT`, `TIMEZONE`, `MEDIA_DIR/BACKUP_DIR/LOG_DIR/DATA
 
 | Ítem | Estado | Detalle |
 |---|---|---|
-| systemd en hardware Linux | **NOT VERIFIED** | Sin systemd en el entorno de desarrollo. Unidades verificadas con `systemd-analyze verify` (0 warnings) y el MISMO binario standalone arrancado y verificado (health 200) — verificar en el servidor destino el primer arranque |
-| Windows real (NSSM/PowerShell) | **NOT VERIFIED** | Sin Windows en el entorno. `install.ps1`/`manage.ps1` redactados; runtime del código multiplataforma verificado en Linux — verificar en una máquina Windows |
+| systemd en hardware Linux | **NOT VERIFIED** | Sin systemd en el entorno de desarrollo. Unidades verificadas con `systemd-analyze verify` (0 warnings) y el MISMO binario standalone arrancado y verificado (health 200) — verificar en el servidor destino el primer arranque. El installer oficial exige systemd en preflight y aborta si falta |
+| Windows real (NSSM/PowerShell) | **NOT VERIFIED** | Sin Windows en el entorno. Lógica del adapter Windows VERIFICADA (secuencia NSSM/netsh exacta, tests RecordingRunner) y sidecar `.exe` compila; ejecución real: `docs/INSTALLER-WINDOWS.md` § procedimiento. `install.ps1`/`manage.ps1` redactados; runtime del código multiplataforma verificado en Linux |
+| GUI Tauri / Setup.exe / deb | **NOT VERIFIED** (sandbox sin Rust) | Proyecto completo en `installer/gui/` + workflow de release; se construyen en CI (`release-installer.yml`) |
 | Service worker en TV física | **NOT VERIFIED** | Capa de contenido offline verificada por E2E; la capa de shell (SW) requiere build de producción en navegador de TV real |
 | OBS Studio físico | Protocolo VERIFIED | El pipeline completo se prueba con publicador RTMP real (ffmpeg — mismo protocolo/clave). Primera transmisión con OBS real: verificar en el restaurante |
 | gitleaks local | Vía CI | No instalado en este entorno; grep manual del historial: 0 secretos reales; CI lo ejecuta bloqueante |

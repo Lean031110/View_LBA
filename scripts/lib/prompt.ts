@@ -17,24 +17,36 @@
 import { createInterface, type Interface } from "readline"
 
 let rl: Interface | null = null
+let stdinClosed = false
 
-function getRl(): Interface {
-  if (!rl) {
-    // `terminal: false` cuando stdin NO es TTY (pipes/CI): evita que readline
-    // ponga el terminal en raw mode y evita el eco raro en automatización.
-    rl = createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      terminal: process.stdin.isTTY === true,
-    })
-  }
-  return rl
+function getRl(): Interface | null {
+  if (rl) return rl
+  if (stdinClosed) return null
+  // `terminal: false` cuando stdin NO es TTY (pipes/CI): evita que readline
+  // ponga el terminal en raw mode y evita el eco raro en automatización.
+  const iface = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal: process.stdin.isTTY === true,
+  })
+  // EOF (stdin cerrado/pipe vacío): a partir de aquí toda ask() devuelve ""
+  // (defaults seguros) — determinista, sin recrear interfaces.
+  iface.once("close", () => {
+    stdinClosed = true
+    rl = null
+  })
+  rl = iface
+  return iface
 }
 
-/** Pregunta de texto plano (funciona en TTY y en pipes). */
+/** Pregunta de texto plano (funciona en TTY y en pipes; EOF → ""). */
 export function ask(question: string): Promise<string> {
+  const iface = getRl()
+  if (!iface) {
+    process.stdout.write(question)
+    return Promise.resolve("")
+  }
   return new Promise((res) => {
-    const iface = getRl()
     // EOF (stdin cerrado/pipe vacío) → respuesta vacía (defaults seguros)
     iface.once("close", () => res(""))
     iface.question(question, (answer) => res(answer))
@@ -43,6 +55,10 @@ export function ask(question: string): Promise<string> {
 
 /** Pregunta de contraseña oculta (solo TTY; en pipe se lee a cielo abierto). */
 export function askPassword(prompt: string): Promise<string> {
+  if (stdinClosed) {
+    process.stdout.write(prompt)
+    return Promise.resolve("")
+  }
   if (process.stdin.isTTY !== true) {
     // Sin TTY (automatización): leer como línea normal — la responsabilidad
     // de no poner secrets en pipes es del operador (flags --password=).
