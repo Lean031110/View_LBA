@@ -314,8 +314,26 @@
 
 Resultado: **0 secretos reales, 0 hallazgos abiertos.**
 
-## FASE 42 — Final test matrix [ ]
-- [ ] bun install/lint/typecheck/test/build + integration + E2E + services + health + recovery + backup/restore REAL; lo no ejecutable en este entorno → NOT VERIFIED explícito
+## FASE 42 — Final test matrix [x]
+> Matriz ejecutada COMPLETA el 2026-09-09 (evidencia: salida de esta sesión). Registro exacto sin inventar:
+
+| Bloque | Comando | Resultado |
+|---|---|---|
+| Instalación reproducible | `bun install --frozen-lockfile` | **PASS** — 688 installs, no changes |
+| Lint | `bun run lint` | **PASS** — 0 errores, 0 warnings |
+| Typecheck | `bun run typecheck` | **PASS** — tsc estricto |
+| Build de producción | `bun run build` | **PASS** — standalone portable + middleware integrado |
+| **Arranque del build en PRODUCCIÓN** | `NODE_ENV=production bun scripts/start.ts` (:3900) | **PASS** — health 200 (db+storage ok, degraded solo por mini-servicios no iniciados), CSP sin unsafe-eval, headers completos, ETag + **304 real verificado**, WAL aplicado a la DB main |
+| Unit + servicios | `bun test` | **PASS 230/230** (251 total: 21 skip = integración sin servidor, ejecutada aparte ↓) — incluye: auth/validators/timezone (12 suites), realtime-service spawn real (16), stream-pipeline con ffmpeg (5), recovery con SIGKILL de servicios (5), initialize-core con prisma real (24), backup/restore, logger |
+| Integración API (servidor real, flujo CI) | e2e-setup + dev :3000 + `bun test tests/integration/api.test.ts` | **PASS 20/20** — login, rate-limit, matriz de permisos, usuarios, pantallas (pairing incl.), settings, uploads (SVG rechazado), stream endpoints, SSRF bloqueado, health, content sin streamKey |
+| E2E Playwright (stack real completo) | `bun run test:e2e` | **PASS 37/37** — auth (5), contenido CRUD (7), pantallas/pairing (6), stream con ffmpeg (5), TV (5), offline (2), seguridad (5), ETag (1), logout/invalidaciones |
+| CI (GitHub Actions) | 4 jobs: quality · integration · e2e · security | **DISEÑADO Y VALIDADO LOCALMENTE** — el pipeline corre en cada push; NOT VERIFIED: última corrida en GitHub (pendiente de push de estas fases) |
+
+**NOT VERIFIED (documentados, con motivo):**
+- systemd en hardware Linux real (sin systemd en este entorno; unidades verificadas con `systemd-analyze verify` + runtime del binario standalone verificado)
+- NSSM/PowerShell en Windows real (sin Windows; scripts revisados + runtime multiplataforma del código verificado en Linux)
+- Service worker en navegador de TV física con build de producción (capa de contenido offline SÍ verificada por E2E; sintaxis + contrato verificados)
+- gitleaks ejecutado LOCALMENTE (no instalado aquí) — corre BLOQUEANTE en CI; grep manual del historial git completo: 0 secretos reales
 
 ## FASE 43 — Production readiness [ ]
 - [ ] PRODUCTION_READINESS.md con tabla de áreas PASS/FAIL + guía completa (instalar/actualizar/backup/restaurar/recuperar) + limitaciones y riesgos restantes
