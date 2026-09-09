@@ -72,7 +72,9 @@ jobs:
           cp -a dist/release/linux/ViewLBA-Server/resources/server installer/gui/src-tauri/resources/server
           cp -a dist/release/linux/ViewLBA-Server/runtime installer/gui/src-tauri/resources/runtime
           cp dist/release/linux/ViewLBA-Server/manifest.json installer/gui/src-tauri/resources/
-          test -f installer/gui/src-tauri/resources/resources/server/package.json
+          test -f installer/gui/src-tauri/resources/server/package.json
+          test -x installer/gui/src-tauri/resources/runtime/bun
+          test -f installer/gui/src-tauri/resources/manifest.json
 
       - name: "Construir la GUI (AppImage + deb con sidecar y payload)"
         working-directory: installer/gui/src-tauri
@@ -163,7 +165,10 @@ jobs:
           cp -a dist/release/windows/ViewLBA-Server/resources/server installer/gui/src-tauri/resources/server
           cp -a dist/release/windows/ViewLBA-Server/runtime installer/gui/src-tauri/resources/runtime
           cp dist/release/windows/ViewLBA-Server/manifest.json installer/gui/src-tauri/resources/
-          test -f installer/gui/src-tauri/resources/resources/server/package.json
+          test -f installer/gui/src-tauri/resources/server/package.json
+          test -f installer/gui/src-tauri/resources/runtime/bun.exe
+          test -f installer/gui/src-tauri/resources/runtime/nssm.exe
+          test -f installer/gui/src-tauri/resources/manifest.json
 
       - name: "Construir el instalador (NSIS: ViewLBA-Server-Setup.exe)"
         working-directory: installer/gui/src-tauri

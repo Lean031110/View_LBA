@@ -317,6 +317,12 @@ export async function runInstall(config: InstallConfig, deps: InstallDeps): Prom
           // bunx como alias (argv[0]) — igual que bundle-server.ts
           const bunxBin = join(runtimeDst, "bunx")
           if (!existsSync(bunxBin)) copyFileSync(installedBun, bunxBin)
+        } else {
+          // Windows: initializeProduction lanza "bunx prisma …" vía PATH —
+          // el runtime del paquete solo trae bun.exe → crear bunx.exe (argv[0]
+          // decide el modo, igual que bun/bunx en Linux).
+          const bunxExe = join(runtimeDst, "bunx.exe")
+          if (!existsSync(bunxExe)) copyFileSync(installedBun, bunxExe)
         }
         ctx.bunPath = installedBun
         ctx.env.PATH = `${runtimeDst}${ctx.env.PATH ? `:${ctx.env.PATH}` : ""}`

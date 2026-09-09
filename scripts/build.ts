@@ -16,10 +16,13 @@ import { dirname, join, resolve } from "path"
 const ROOT = resolve(import.meta.dir, "..")
 
 // ---- 1) next build ----------------------------------------------------------
-const bunx = process.platform === "win32" ? "bunx.cmd" : "bunx"
-const res = spawnSync(bunx, ["next", "build"], { cwd: ROOT, stdio: "inherit", env: { ...process.env } })
+// `bun x` (no "bunx"/"bunx.cmd"): bun.exe es un ejecutable REAL multi-OS;
+// "bunx.cmd" NO se puede lanzar con spawnSync en Windows sin shell, y el
+// runtime incluido del installer solo lleva bun.exe (+ bunx.exe copia).
+const res = spawnSync("bun", ["x", "next", "build"], { cwd: ROOT, stdio: "inherit", env: { ...process.env } })
 if (res.status !== 0) {
   console.error("✗ next build falló (código", res.status ?? "señal", ")")
+  if (res.error) console.error("  error de spawn:", res.error.message)
   process.exit(res.status ?? 1)
 }
 
