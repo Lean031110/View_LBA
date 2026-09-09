@@ -268,10 +268,16 @@
 - [x] E2E (31/31): 2 specs nuevos — recarga con /api/content abortado → último contenido + banner + recuperación al des-abortar; manifest+SW servidos con contrato de rutas privadas
 - NOT VERIFIED: ejecución del SW en un navegador TV real con build de producción (el E2E corre dev sin SW por HMR; el fallback localStorage — la capa de contenido — SÍ está verificado; la capa de shell requiere hardware destino: documentado)
 
-## FASE 35 — API security [ ]
-- [ ] Headers de seguridad (next.config: CSP prudente para TV/admin, X-Frame-Options SAMEORIGIN salvo embed TV permitido, Referrer-Policy, HSTS solo si https documentado)
-- [ ] CORS revisado (live.flv `*` → mismo host LAN permitido); cookies: Secure solo en https (documentado para LAN http)
-- [ ] No introducir restricciones que rompan LAN (misión)
+## FASE 35 — API security [x]
+> Auditoría completa ejecutada: matriz de auth de TODAS las rutas (todas /api/admin/* con requireAuth VIEWER/OPERATOR/ADMIN según operación ✓ — FASE 4 verificada por tests), /api/files con guard path-traversal + nosniff + SVG attachment (FASE 10) ✓, /api/upload OPERATOR+magic-bytes ✓, /api/auth/login con rate-limit ✓. Correcciones aplicadas:
+
+- [x] **Headers de seguridad globales** (next.config, /:path*): CSP prudente (default-src 'self'; connect-src ws: por el realtime en OTRO puerto; media-src blob: por MSE de mpegts.js; unsafe-eval SOLO dev; frame-ancestors 'self'), X-Content-Type-Options nosniff, X-Frame-Options SAMEORIGIN, Referrer-Policy strict-origin-when-cross-origin, Permissions-Policy camera=()/microphone=()/geolocation=(). HSTS deliberadamente NO (LAN documentado http; forzarlo dejaría fuera a las TVs)
+- [x] **CORS**: eliminado el `Access-Control-Allow-Origin: "*"` residual del proxy FLV (la TV lo pide same-origin; un origen cruzado NO debe leer el stream) — verificado por test
+- [x] **Cookies**: Secure condicional por protocolo (solo https — Secure en LAN http rompería el login, documentado), HttpOnly + SameSite=Lax en login y logout consistentes — verificado por test
+- [x] **Cache de APIs privadas**: middleware SOLO de cabeceras (matcher /api/admin/*, /api/auth/*, /api/upload → Cache-Control: no-store; cero lógica de auth — la autorización por-ruta de FASE 4 intacta) + no-store explícito en /api/auth/me
+- [x] **/api raíz**: stub "Hello, world!" eliminado → 404 discreto (no expone nada)
+- [x] E2E security.spec (5/5): headers globales, no-store de privadas, 404 raíz, FLV sin CORS (abort tras cabeceras — el stream es infinito), cookie con flags correctos
+- [x] Suite completa: E2E 36/36 · bun test 230/230 · lint ✓ · typecheck ✓ — ninguna restricción rompe LAN (verificado por la suite entera corriendo bajo http)
 
 ## FASE 36-38 — Perf/caching/DB [ ]
 - [ ] /api/content: ETag + If-None-Match (payload hash) → 304 en TVs; conservar no-store solo para admin

@@ -62,6 +62,9 @@ export async function POST(req: NextRequest) {
       sameSite: "lax",
       path: "/",
       maxAge: 60 * 60 * SESSION_TTL_HOURS, // 24h — alineado con el TTL del token (antes 7 días)
+      // FASE 35: Secure SOLO bajo https (los despliegues LAN documentados
+      // son http — Secure los rompería). Detrás de un proxy https se activa.
+      secure: req.nextUrl.protocol === "https:",
     })
     return res
   } catch {

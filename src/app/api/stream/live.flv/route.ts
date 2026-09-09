@@ -113,7 +113,9 @@ export async function GET(_req: NextRequest) {
       "Content-Type": "video/x-flv",
       "Cache-Control": "no-store, no-transform",
       "X-Accel-Buffering": "no", // desactivar buffering de proxies inversos
-      "Access-Control-Allow-Origin": "*",
+      // FASE 35: sin Access-Control-Allow-Origin — la TV (mpegts.js) pide
+      // este endpoint SAME-ORIGIN; un orígen cruzado NO debe poder leer el
+      // stream. (El CORS "*" era residual e innecesario.)
     },
   })
 }
