@@ -6,11 +6,23 @@
 ---
 
 ## Checkpoint de partida (hecho)
+
+> **Nota de sincronización (2026-09-09, re-aplicada tras reset del entorno):**
+> fases 1-30 verificadas por commits y muestreo de código. Evidencia: F1 `1c3e303` ·
+> F2 `af07d41` · F3 `592bf63` · F4 `6a0ffe5` · F5+6 `45d6f91` · F7 `78f8ab4` ·
+> F8 `fd6fd52` · F9 `aee0af9` · F10+11 `39c06ed` · F12 `a51d717` · F13+14 `deddaae` ·
+> F15+16 `b538eef` · F17-19 `34a5ed7` · F20+21 `862f9ca` · F22 `a65d93e` ·
+> F23 `0cb4b00` · F24 `c1af82c` · F25 `0981324` · F26+27 `c6ed1c1` ·
+> F28 `4f11058` · F29 `6a419dd` · F30 `4b6201d`. Post-sync: `c6c2a80` (FASE 31
+> PASO 1-4: core initializeProduction + protección DATABASE_URL + 24 tests) y
+> `af7318a` (bun.lock + .env.example). La BD dev fue baselined
+> (`prisma migrate resolve --applied 0_init` + `audit_log_fields`) para que
+> `migrate deploy` sea idempotente también localmente.
 - [x] Auditoría completa del repositorio → `PRODUCTION_AUDIT.md`
 - [x] Commit base: `48f9583` + `276ec6c` (misión)
 - [x] Servicios corriendo: Next :3000, realtime :3003/:3004, stream :1935/:8000/:8100
 
-## FASE 1 — Seguridad y dependencias [ ]
+## FASE 1 — Seguridad y dependencias [x]
 - [ ] `bun add next@16.3.4` (parche de seguridad, misma major) — verificar compat react19/prisma/zod/mpegts/NMS/socket.io — lint+tsc+tests+build
 - [ ] Crear `src/lib/env.ts` con Zod: AUTH_SECRET, REALTIME_TOKEN, DATABASE_URL, NODE_ENV; en production → fail-fast si faltan; en dev → error claro. **Quitar** fallbacks de auth.ts/realtime.ts/realtime-service/stream-service (leer del validador)
 - [ ] Mini-servicios: validar entorno al arranque (realtime: REALTIME_TOKEN; stream: REALTIME_TOKEN + DATABASE_URL)
@@ -19,25 +31,25 @@
 - [ ] `bun audit` + registro; quitar `log:['query']` de Prisma en producción (P1-15)
 - Checkpoint: lint+tsc+test+build+commit
 
-## FASE 2 — Auth y sesiones [ ]
+## FASE 2 — Auth y sesiones [x]
 - [ ] Prisma: `User.authVersion Int @default(0)` → **migración inicial** (base de F15, se crea aquí la carpeta migrations con `prisma migrate dev --name auth_version`)
 - [ ] `signSession` incluye `av` (authVersion); TTL reducido a 24h + renovación deslizante opcional
 - [ ] `requireAuth`: firma → exp → cargar usuario DB → active → authVersion → rol (con caché en memoria de 30s para no golpear la DB en cada request público-privado)
 - [ ] Incrementar authVersion en: password change, disable, enable, role change, delete
 - [ ] Tests unit: sign/verify, expiración, authVersion mismatch, usuario inactivo
 
-## FASE 3 — Rate limiting y login [ ]
+## FASE 3 — Rate limiting y login [x]
 - [ ] `src/lib/rate-limit.ts`: límite por IP (p.ej. 10 intentos/5min) + por cuenta (5/10min) con backoff exponencial y cooldown, en memoria (MAP) + tabla `LoginAttempt` opcional en SQLite para persistencia multi-proceso
 - [ ] Login: respuestas idénticas 401 genérico, log LOGIN_FAILED, sin revelar existencia de email
 - [ ] Tests: correcto, incorrecto, flood, recuperación tras cooldown, deshabilitado, inexistente
 
-## FASE 4 — Autorización [ ]
+## FASE 4 — Autorización [x]
 - [ ] Auditar/ajustar roles de TODAS las rutas (tabla en AUDIT §5): settings PUT streamKey → prohibir (solo endpoint dedicado); screens PUT code → prohibir cambiar code; logs GET → OPERATOR (VIEWER fuera); PATCH payload → validar esquema del comando
 - [ ] Helper `requireRole` homogéneo + respuestas 403 consistentes
 - [ ] Frontend: ocultar acciones según rol (ScreensSection) para coherencia UX
 - [ ] Tests: matriz VIEWER/OPERATOR/ADMIN × endpoints críticos
 
-## FASE 5 — Realtime service [ ]
+## FASE 5 — Realtime service [x]
 - [ ] CORS: origen configurable (env `ALLOWED_ORIGINS` o inferido del host de Next) — no `*`
 - [ ] Auth de sockets: `socket.auth.token` (admin → token de sesión verificado contra DB con authVersion/rol; pantallas → screen token propio)
 - [ ] `screen:register` exige par + token de pantalla (F32 adelanta el modelo: `Screen.screenTokenHash`); `admin:register`/`admin:command` exigen sesión válida
@@ -45,45 +57,45 @@
 - [ ] GET /health en realtime-service
 - [ ] Tests del servicio (bun test del mini-service): handshake sin token rechazado, admin con rol, broadcast token incorrecto → 401
 
-## FASE 6 — Bug realtimeOnline [ ]
+## FASE 6 — Bug realtimeOnline [x]
 - [ ] Backend: `realtimeOnline` = health check real (:3004/health, timeout 1.5s, fallback false) — eliminar condición `|| screens.length >= 0`
 - [ ] Test: UP→true, DOWN→false, timeout→false
 
-## FASE 7 — Audio output [ ]
+## FASE 7 — Audio output [x]
 - [ ] NUEVO: `AudioOutputSection` por pantalla — la TV enumera SUS dispositivos (sin micrófono si es posible: `enumerateDevices` directo; getUserMedia solo como último recurso), registra lista en realtime (`screen:audioDevices`), el admin elige por pantalla `TV-001 → HDMI` (etiqueta+deviceId guardados POR pantalla, no global)
 - [ ] StreamPlayer: aplica setSinkId del deviceId de SU pantalla; fallback claro "Salida específica no compatible…" si no existe setSinkId o el deviceId ya no está
 - [ ] Mantener volumen/mute globales como están (comportamiento actual conservado)
 - [ ] Migración: `Screen.audioDeviceId`, `Screen.audioDevices` (JSON) — vía migration
 
-## FASE 8 — Timezone [ ]
+## FASE 8 — Timezone [x]
 - [ ] `src/lib/timezone.ts`: getCurrentParts(tz) → {minutes, weekday, isoDate, hour}, comparisons; conversión explícita única fuente
 - [ ] TvDisplay: promoVisible/pickDishes usan tz de Settings (props); DailySchedule usa tz (nuevo prop) — el reloj ya está bien
 - [ ] serverTime de /api/content usado para skew (opcional)
 - [ ] Tests: America/Havana, cambio de día, overnight 22:00→02:00, DST edge
 
-## FASE 9 — Validación de datos [ ]
+## FASE 9 — Validación de datos [x]
 - [ ] `src/lib/validators.ts` (Zod): settings (rangos: volume 0-100, tickerSpeed 15-150, fontScale 0.7-1.6, streamRatio 0.45-0.8, animationSpeed 0.5-2, clockFormat 12|24, timezone no vacía, colores hex, urls http(s) seguras), promotions (duration 4-60, horas HH:MM, startDate<=endDate, dayOfWeek 0-6), schedules (HH:MM, end puede ser < start = overnight), socials (network enum, url http(s)), ticker (text<=200), screens (code regex ^[A-Z0-9-]{2,16}$)
 - [ ] Aplicar en TODAS las rutas POST/PUT con respuestas 400 consistentes {error, field?}
 - [ ] Tests unit de validators
 
-## FASE 10 — Uploads [ ]
+## FASE 10 — Uploads [x]
 - [ ] Extensiones permitidas por tipo (png/jpg/webp/gif/mp4/webm); **SVG deshabilitado por defecto** (env `ALLOW_SVG` con sanitización si se activa) — los logos pueden ser PNG
 - [ ] Magic bytes reales (PNG/JPEG/WebP/GIF/MP4 ftyp) — no confiar en MIME declarado
 - [ ] Cuota global configurable (MEDIA_MAX_TOTAL_MB) + límites por tipo ya existentes; limpieza de huérfanos (script `scripts/media-gc.ts`); logging de UPLOAD_CREATED/REJECTED
 - [ ] Files route: nunca servir SVG como imagen (Content-Disposition/neutral si existiera)
 - [ ] Tests: upload válido, SVG rechazado, MIME mentiroso rechazado, path traversal, demasiado grande
 
-## FASE 11 — Storage [ ]
+## FASE 11 — Storage [x]
 - [ ] env: MEDIA_DIR/BACKUP_DIR/LOG_DIR/DATA_DIR con defaults portables (Linux `/var/lib/pantalla-restaurante` o relativo `./data` en dev; Windows via env) — upload/ migra a MEDIA_DIR (symlink/copia en dev)
 - [ ] /api/files y /api/upload usan MEDIA_DIR; stream-service DB path via DATA_DIR
 - [ ] Documentar layout estándar Linux/Windows (AUDIT §P1-10)
 
-## FASE 12 — SSRF [ ]
+## FASE 12 — SSRF [x]
 - [ ] `src/lib/ssrf-guard.ts`: bloquear localhost/127/::1/0.0.0.0/link-local/RFC1918/metadata/169.254.169.254 por defecto; permitir solo hosts explícitos (env `STREAM_TEST_ALLOWED_HOSTS` o IPs LAN del servidor)
 - [ ] stream-test usa el guard; respuesta 400 con motivo
 - [ ] Tests: bloqueo localhost/RFC1918/metadata, permitir host autorizado
 
-## FASE 13 — Streaming [ ]
+## FASE 13 — Streaming [x]
 - [ ] stream-service /health real: comprueba NMS corriendo (listener RTMP vivo) — endpoint interno con detalle, público mínimo
 - [ ] /api/stream/status público: SOLO {source, streamEnabled, serverOk, live} (sin viewers/since) — detalle para admin
 - [ ] publisherIp: eliminar de broadcast a pantallas; en /api/admin/stream/rtmp GET → solo ADMIN
@@ -91,47 +103,47 @@
 - [ ] Verificar proxy FLV bajo carga (2+ viewers), reconexión, OBS real
 - [ ] Test de integración del pipeline (con ffmpeg publicando, base de F23)
 
-## FASE 14 — Stream keys [ ]
+## FASE 14 — Stream keys [x]
 - [ ] Documentar y TESTEAR comportamiento de rotación: OBS conectado sigue transmitiendo (NMS no corta sesión activa) → clave nueva aplica a NUEVAS conexiones; OBS desconectado con TV reproduciendo: la reproducción sigue hasta donePublish
 - [ ] Opcional (solo si es factible sin riesgo): cerrar sesión activa al rotar vía control API de NMS — documentar la decisión
 - [ ] Test: rotar con OBS vivo → publicación sigue; nueva conexión con clave vieja → rechazada
 
-## FASE 15 — Prisma migrations [ ]
+## FASE 15 — Prisma migrations [x]
 - [ ] `prisma migrate dev --name init` sobre schema actual (authVersion de F2 + cambios F7 ya incluidos) → historial versionado
 - [ ] package.json: `db:deploy` = `prisma migrate deploy` (producción); `db:push` queda SOLO para desarrollo con warning
 - [ ] CI usa migrate deploy contra SQLite temporal
 - [ ] Documentar: NUNCA accept-data-loss en producción
 
-## FASE 16 — Backups [ ]
+## FASE 16 — Backups [x]
 - [ ] `scripts/backup.ts`: SQLite backup online (VACUUM INTO), timestamp, retención configurable, verificación (integridad + row counts), rotación
 - [ ] `scripts/restore.ts`: restauración con parada segura de servicios + verificación
 - [ ] Backup manual desde admin (endpoint ADMIN + botón) y programado (systemd timer / tarea programada)
 - [ ] Test REAL: backup → borrar tabla → restore → datos íntegros
 
-## FASE 17 — Users/admin [ ]
+## FASE 17 — Users/admin [x]
 - [ ] Política de contraseña (>=10 chars, mayús/minús/número) + validación email Zod
 - [ ] Nunca devolver passwordHash (ya OK) ni secretos; auditoría en cambios de password/role/active (authVersion++)
 - [ ] Protecciones existentes conservadas (último admin, auto-rol)
 - [ ] Tests: política, últimos admin, invalidación de sesión tras cambio
 
-## FASE 18 — Seed/production init [ ]
+## FASE 18 — Seed/production init [x]
 - [ ] `prisma/seed.ts` → SOLO datos demo opcionales sin usuarios (o con usuarios demo claramente flaggeados `--demo`)
 - [ ] `scripts/init-production.ts`: crea primer ADMIN (password introducida por consola/one-time), Settings por defecto, genera secrets si faltan, ejecuta migrate deploy
 - [ ] LoginScreen: quitar credenciales demo visibles (mostrarlas solo si NODE_ENV=development)
 - [ ] Imágenes demo → assets locales (public/demo/) descargadas en instalación (no runtime)
 
-## FASE 19 — 100% LAN/offline [ ]
+## FASE 19 — 100% LAN/offline [x]
 - [ ] Eliminar URLs z-cdn.chatglm.cn del seed (usar /public/demo/); DEMO_HLS de StreamSection → quitar botón o marcarlo "requiere Internet"
 - [ ] Google Fonts: self-host ya lo hace next/font en build; documentar que build requiere Internet UNA VEZ (o empaquetar .next ya construido)
 - [ ] Barrido final de URLs externas (grep) + test de que /api/content no devuelve hosts externos salvo fallbacks configurados por el admin
 - [ ] Documentar qué necesita Internet (nada en runtime salvo stream externo configurado)
 
-## FASE 20 — Display 24/7 [ ]
+## FASE 20 — Display 24/7 [x]
 - [ ] Auditoría de efectos (todos con cleanup), timers, sockets (1 sola conexión), instancias player (guard gen ya OK)
 - [ ] Prueba de larga duración simulada: reconexión backend, visibilitychange, suspensión
 - [ ] Corregir lo encontrado (ya identificado: duplicación teórica de socket si StrictMode activado — se prepara para F21)
 
-## FASE 21 — StrictMode [ ]
+## FASE 21 — StrictMode [x]
 - [ ] Hacer efectos idempotentes (reconnect socket tras double-mount, player guard ya existente, interval cleanup)
 - [ ] Activar `reactStrictMode: true` en next.config.ts
 - [ ] lint+tsc+test+build+verificación browser (TV+admin) tras activar
