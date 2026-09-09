@@ -9,6 +9,8 @@ build/
 # Base de datos (runtime, se regenera con `bun run setup`)
 db/*.db
 db/*.db-journal
+db/*.db-wal
+db/*.db-shm
 
 # Entorno y secretos — NUNCA commitear
 .env
