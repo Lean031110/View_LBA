@@ -31,7 +31,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!v.ok) return NextResponse.json({ error: v.error, field: v.field }, { status: 400 })
   const item = await db.promotion.update({ where: { id }, data: data as never }).catch(() => null)
   if (!item) return NextResponse.json({ error: "Promoción no encontrada" }, { status: 404 })
-  await logAction(auth, "UPDATE", "promotions", item.title)
+  await logAction(auth, "CONTENT_UPDATED", "promotions", item.title, { resource: "promotion", resourceId: id })
   await notifyContentUpdate("promotions")
   return NextResponse.json({ item })
 }
@@ -42,7 +42,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const { id } = await params
   const item = await db.promotion.delete({ where: { id } }).catch(() => null)
   if (!item) return NextResponse.json({ error: "Promoción no encontrada" }, { status: 404 })
-  await logAction(auth, "DELETE", "promotions", item.title)
+  await logAction(auth, "CONTENT_DELETED", "promotions", item.title, { resource: "promotion", resourceId: id })
   await notifyContentUpdate("promotions")
   return NextResponse.json({ ok: true })
 }

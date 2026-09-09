@@ -27,7 +27,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!v.ok) return NextResponse.json({ error: v.error, field: v.field }, { status: 400 })
   const item = await db.dish.update({ where: { id }, data: data as never }).catch(() => null)
   if (!item) return NextResponse.json({ error: "Plato no encontrado" }, { status: 404 })
-  await logAction(auth, "UPDATE", "dish", item.name)
+  await logAction(auth, "CONTENT_UPDATED", "dish", item.name, { resource: "dish", resourceId: id })
   await notifyContentUpdate("dish")
   return NextResponse.json({ item })
 }
@@ -38,7 +38,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const { id } = await params
   const item = await db.dish.delete({ where: { id } }).catch(() => null)
   if (!item) return NextResponse.json({ error: "Plato no encontrado" }, { status: 404 })
-  await logAction(auth, "DELETE", "dish", item.name)
+  await logAction(auth, "CONTENT_DELETED", "dish", item.name, { resource: "dish", resourceId: id })
   await notifyContentUpdate("dish")
   return NextResponse.json({ ok: true })
 }

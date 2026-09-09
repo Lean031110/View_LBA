@@ -198,8 +198,14 @@ model Log {
   id        String   @id @default(cuid())
   userId    String?
   userName  String?
-  action    String // LOGIN | LOGOUT | CREATE | UPDATE | DELETE | STREAM | SCREEN
+  action    String // LOGIN | LOGIN_FAILED | LOGOUT | USER_CREATED | PASSWORD_CHANGED | ROLE_CHANGED | USER_ENABLED | USER_DISABLED | SCREEN_PAIRED | STREAM_KEY_ROTATED | UPLOAD_CREATED | UPLOAD_REJECTED | SETTINGS_CHANGED | CONTENT_CREATED | CONTENT_UPDATED | CONTENT_DELETED | ...
   section   String?
   details   String?
+  // FASE 27 (misión): auditoría real — contexto completo del evento
+  ip        String? // IP del actor (login/admin)
+  resource  String? // entidad afectada: "user" | "screen" | "promotion" | ...
+  resourceId String? // id de la entidad
+  success   Boolean  @default(true)
+  metadata  String? // JSON seguro (JAMÁS secrets — redact() del logger)
   createdAt DateTime @default(now())
 }

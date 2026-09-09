@@ -89,7 +89,7 @@ export async function PUT(req: NextRequest) {
   const item = await db.settings.update({ where: { id: "main" }, data: data as never }).catch(() => null)
   if (!item) return NextResponse.json({ error: "Error guardando" }, { status: 500 })
 
-  await logAction(auth as SessionPayload, "UPDATE", "transmisión", `rtmp: ${Object.keys(data).join(",")}`)
+  await logAction(auth, "STREAM_SETTINGS", "transmisión", `rtmp: ${Object.keys(data).join(",")}`, { resource: "settings", resourceId: "main", meta: { fields: Object.keys(data) } })
   await broadcast("content:update", { section: "settings", ts: Date.now() }, "screens")
 
   return NextResponse.json({ ok: true })
@@ -104,7 +104,7 @@ export async function POST(req: NextRequest) {
   const item = await db.settings.update({ where: { id: "main" }, data: { streamKey: newKey } }).catch(() => null)
   if (!item) return NextResponse.json({ error: "Error regenerando la clave" }, { status: 500 })
 
-  await logAction(auth as SessionPayload, "UPDATE", "transmisión", "clave de stream regenerada")
+  await logAction(auth, "STREAM_KEY_ROTATED", "transmisión", "clave de stream regenerada", { resource: "settings", resourceId: "main" })
   // El stream-service la recarga de SQLite en ≤2s (para NUEVAS conexiones OBS)
   await broadcast("stream:server", { keyRotated: true, ts: Date.now() }, "admins")
 

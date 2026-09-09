@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
   const v = validateData(promotionCreate, data)
   if (!v.ok) return NextResponse.json({ error: v.error, field: v.field }, { status: 400 })
   const item = await db.promotion.create({ data: data as never })
-  await logAction(auth, "CREATE", "promotions", String(data.title))
+  await logAction(auth, "CONTENT_CREATED", "promotions", String(data.title), { resource: "promotion", resourceId: item.id })
   await notifyContentUpdate("promotions")
   return NextResponse.json({ item })
 }

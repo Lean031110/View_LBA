@@ -4,6 +4,8 @@ import { mkdir, writeFile } from "fs/promises"
 import path from "path"
 import { requireAuth, isNextResponse } from "@/lib/auth"
 import { db } from "@/lib/db"
+import { logAction } from "@/lib/crud"
+import { logError } from "@/lib/logger"
 import {
   resolveMediaDir,
   validateUploadBuffer,
@@ -64,34 +66,23 @@ export async function POST(req: NextRequest) {
     await mkdir(mediaDir, { recursive: true })
     await writeFile(path.join(mediaDir, name), buf)
 
-    await db.log
-      .create({
-        data: {
-          userId: auth.uid,
-          userName: auth.name,
-          action: "UPLOAD_CREATED",
-          section: "media",
-          details: `${name} (${Math.round(buf.length / 1024)} KB, ${ext})`,
-        },
-      })
-      .catch(() => {})
+    await logAction(auth, "UPLOAD_CREATED", "media", `${name} (${Math.round(buf.length / 1024)} KB, ${ext})`, {
+      resource: "media",
+      resourceId: name,
+      meta: { bytes: buf.length, type: ext },
+    })
 
     return NextResponse.json({ ok: true, url: `/api/files/${name}`, name, type: ext === "svg" || ["png", "jpg", "jpeg", "webp", "gif"].includes(ext) ? "image" : "video" })
-  } catch {
+  } catch (e) {
+    logError("UPLOAD_FAILED", e, { resource: "media" })
     return NextResponse.json({ error: "Error subiendo archivo" }, { status: 500 })
   }
 }
 
 async function logRejected(auth: { uid: string; name: string }, filename: string, reason: string) {
-  await db.log
-    .create({
-      data: {
-        userId: auth.uid,
-        userName: auth.name,
-        action: "UPLOAD_REJECTED",
-        section: "media",
-        details: `${String(filename).slice(0, 60)} → ${reason}`.slice(0, 200),
-      },
-    })
-    .catch(() => {})
+  await logAction(auth, "UPLOAD_REJECTED", "media", `${String(filename).slice(0, 60)} → ${reason}`.slice(0, 200), {
+    resource: "media",
+    success: false,
+    meta: { reason },
+  })
 }

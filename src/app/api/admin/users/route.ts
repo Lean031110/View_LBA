@@ -4,6 +4,7 @@ import { db } from "@/lib/db"
 import { pickFields, readBody, logAction } from "@/lib/crud"
 import { hashPassword } from "@/lib/auth"
 import { validateData, userCreate } from "@/lib/validators"
+import { clientIp } from "@/lib/rate-limit"
 
 const SPEC = {
   email: "s",
@@ -36,6 +37,6 @@ export async function POST(req: NextRequest) {
   const item = await db.user.create({
     data: { email, name: String(data.name), role: String(data.role), passwordHash: hashPassword(String(body.password)) },
   })
-  await logAction(auth, "CREATE", "users", email)
+  await logAction(auth, "USER_CREATED", "users", email, { ip: clientIp(req), resource: "user", resourceId: item.id, meta: { role: item.role } })
   return NextResponse.json({ item: { id: item.id, email: item.email, name: item.name, role: item.role, active: item.active } })
 }

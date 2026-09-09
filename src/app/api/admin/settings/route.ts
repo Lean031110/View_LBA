@@ -94,7 +94,7 @@ export async function PUT(req: NextRequest) {
   if (!item) return NextResponse.json({ error: "Error guardando configuración" }, { status: 500 })
 
   const changed = Object.keys(data).join(",")
-  await logAction(auth, "UPDATE", "settings", changed)
+  await logAction(auth, "SETTINGS_CHANGED", "settings", changed, { resource: "settings", resourceId: "main", meta: { fields: Object.keys(data) } })
 
   // Notificar en tiempo real: contenido general + audio si cambió
   await broadcast("content:update", { section: "settings", ts: Date.now() }, "screens")

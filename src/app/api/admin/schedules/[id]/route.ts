@@ -24,7 +24,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!v.ok) return NextResponse.json({ error: v.error, field: v.field }, { status: 400 })
   const item = await db.schedule.update({ where: { id }, data: data as never }).catch(() => null)
   if (!item) return NextResponse.json({ error: "Horario no encontrado" }, { status: 404 })
-  await logAction(auth, "UPDATE", "schedules", item.name)
+  await logAction(auth, "CONTENT_UPDATED", "schedules", item.name, { resource: "schedule", resourceId: id })
   await notifyContentUpdate("schedules")
   return NextResponse.json({ item })
 }
@@ -35,7 +35,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const { id } = await params
   const item = await db.schedule.delete({ where: { id } }).catch(() => null)
   if (!item) return NextResponse.json({ error: "Horario no encontrado" }, { status: 404 })
-  await logAction(auth, "DELETE", "schedules", item.name)
+  await logAction(auth, "CONTENT_DELETED", "schedules", item.name, { resource: "schedule", resourceId: id })
   await notifyContentUpdate("schedules")
   return NextResponse.json({ ok: true })
 }

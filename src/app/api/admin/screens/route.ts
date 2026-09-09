@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
   const exists = await db.screen.findUnique({ where: { code: String(data.code) } })
   if (exists) return NextResponse.json({ error: "Ya existe una pantalla con ese código" }, { status: 409 })
   const item = await db.screen.create({ data: data as never })
-  await logAction(auth, "CREATE", "screens", String(data.code))
+  await logAction(auth, "SCREEN_CREATED", "screens", String(data.code), { resource: "screen", resourceId: item.id })
   return NextResponse.json({ item })
 }
 
@@ -102,6 +102,6 @@ export async function PATCH(req: NextRequest) {
   }
 
   await broadcast("screen:command", { type: command, payload }, "screens", screenCode)
-  await logAction(auth, "COMMAND", "screens", `${command}${screenCode ? ` → ${screenCode}` : " → todas"}`)
+  await logAction(auth, "SCREEN_COMMAND", "screens", `${command}${screenCode ? ` → ${screenCode}` : " → todas"}`, { resource: "screen", resourceId: screenCode ?? "all" })
   return NextResponse.json({ ok: true })
 }

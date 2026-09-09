@@ -6,12 +6,36 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { getJSON } from "../api"
 
-interface LogRow { id: string; userName: string | null; action: string; section: string | null; details: string | null; createdAt: string }
+interface LogRow { id: string; userName: string | null; action: string; section: string | null; details: string | null; ip: string | null; success: boolean | null; createdAt: string }
 
 const ACTION_COLORS: Record<string, string> = {
   LOGIN: "text-emerald-300 bg-emerald-400/10",
   LOGIN_FAILED: "text-red-400 bg-red-400/10",
   LOGOUT: "text-white/50 bg-white/5",
+  // FASE 26: vocabulario de eventos de la misión
+  USER_CREATED: "text-amber-300 bg-amber-400/10",
+  USER_UPDATED: "text-sky-300 bg-sky-400/10",
+  USER_DELETED: "text-red-400 bg-red-400/10",
+  USER_DISABLED: "text-red-400 bg-red-400/10",
+  USER_ENABLED: "text-emerald-300 bg-emerald-400/10",
+  PASSWORD_CHANGED: "text-orange-300 bg-orange-400/10",
+  ROLE_CHANGED: "text-orange-300 bg-orange-400/10",
+  CONTENT_CREATED: "text-amber-300 bg-amber-400/10",
+  CONTENT_UPDATED: "text-sky-300 bg-sky-400/10",
+  CONTENT_DELETED: "text-red-400 bg-red-400/10",
+  SETTINGS_CHANGED: "text-violet-300 bg-violet-400/10",
+  STREAM_SETTINGS: "text-violet-300 bg-violet-400/10",
+  STREAM_KEY_ROTATED: "text-orange-300 bg-orange-400/10",
+  SCREEN_PAIRED: "text-cyan-300 bg-cyan-400/10",
+  SCREEN_CREATED: "text-amber-300 bg-amber-400/10",
+  SCREEN_UPDATED: "text-sky-300 bg-sky-400/10",
+  SCREEN_DELETED: "text-red-400 bg-red-400/10",
+  SCREEN_COMMAND: "text-pink-300 bg-pink-400/10",
+  UPLOAD_CREATED: "text-purple-300 bg-purple-400/10",
+  UPLOAD_REJECTED: "text-red-400 bg-red-400/10",
+  UPLOAD_FAILED: "text-red-400 bg-red-400/10",
+  AUDIT_WRITE_FAILED: "text-red-400 bg-red-400/10",
+  // compatibilidad con filas históricas (pre-FASE 26)
   CREATE: "text-amber-300 bg-amber-400/10",
   UPDATE: "text-sky-300 bg-sky-400/10",
   DELETE: "text-red-400 bg-red-400/10",
@@ -71,6 +95,8 @@ export default function LogsSection(props: Record<string, unknown>) {
                       <td className="py-2 px-2 text-white/60 text-xs w-28 align-top">{l.section ?? "—"}</td>
                       <td className="py-2 px-2 text-white/70 text-xs align-top">
                         {l.userName ? <span className="text-white/85 font-medium">{l.userName}</span> : <span className="text-white/35">sistema</span>}
+                        {l.ip && <span className="text-white/25 font-mono"> ({l.ip})</span>}
+                        {l.success === false && <span className="text-red-400/80 font-bold"> ✗</span>}
                         {l.details && <span className="text-white/35"> · {l.details.slice(0, 90)}</span>}
                       </td>
                     </tr>

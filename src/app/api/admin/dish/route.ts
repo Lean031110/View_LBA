@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
   const v = validateData(dishCreate, data)
   if (!v.ok) return NextResponse.json({ error: v.error, field: v.field }, { status: 400 })
   const item = await db.dish.create({ data: data as never })
-  await logAction(auth, "CREATE", "dish", String(data.name))
+  await logAction(auth, "CONTENT_CREATED", "dish", String(data.name), { resource: "dish", resourceId: item.id })
   await notifyContentUpdate("dish")
   return NextResponse.json({ item })
 }

@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Nombre, hora inicio y fin requeridos" }, { status: 400 })
   }
   const item = await db.schedule.create({ data: data as never })
-  await logAction(auth, "CREATE", "schedules", String(data.name))
+  await logAction(auth, "CONTENT_CREATED", "schedules", String(data.name), { resource: "schedule", resourceId: item.id })
   await notifyContentUpdate("schedules")
   return NextResponse.json({ item })
 }

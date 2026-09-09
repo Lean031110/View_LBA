@@ -25,7 +25,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
   const item = await db.screen.update({ where: { id }, data: data as never }).catch(() => null)
   if (!item) return NextResponse.json({ error: "Pantalla no encontrada" }, { status: 404 })
-  await logAction(auth, "UPDATE", "screens", item.code)
+  await logAction(auth, "SCREEN_UPDATED", "screens", item.code, { resource: "screen", resourceId: item.id })
 
   // FASE 7: si cambió la salida de audio de esta pantalla, aplicarla EN VIVO
   // (el TV valida que el deviceId pertenezca a sus propios dispositivos)
@@ -47,6 +47,6 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const { id } = await params
   const item = await db.screen.delete({ where: { id } }).catch(() => null)
   if (!item) return NextResponse.json({ error: "Pantalla no encontrada" }, { status: 404 })
-  await logAction(auth, "DELETE", "screens", item.code)
+  await logAction(auth, "SCREEN_DELETED", "screens", item.code, { resource: "screen", resourceId: item.id })
   return NextResponse.json({ ok: true })
 }

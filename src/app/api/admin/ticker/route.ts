@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
   if (!v.ok) return NextResponse.json({ error: v.error, field: v.field }, { status: 400 })
   if (!data.text) return NextResponse.json({ error: "Texto requerido" }, { status: 400 })
   const item = await db.tickerMessage.create({ data: data as never })
-  await logAction(auth, "CREATE", "ticker", String(data.text).slice(0, 80))
+  await logAction(auth, "CONTENT_CREATED", "ticker", String(data.text).slice(0, 80), { resource: "ticker", resourceId: item.id })
   await notifyContentUpdate("ticker")
   return NextResponse.json({ item })
 }

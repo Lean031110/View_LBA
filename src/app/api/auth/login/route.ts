@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { db } from "@/lib/db"
 import { verifyPassword, signSession, SESSION_COOKIE, SESSION_TTL_HOURS } from "@/lib/auth"
 import { loginRateLimiter, clientIp } from "@/lib/rate-limit"
+import { logAction } from "@/lib/crud"
 
 export async function POST(req: NextRequest) {
   try {
@@ -24,15 +25,13 @@ export async function POST(req: NextRequest) {
     const user = await db.user.findUnique({ where: { email: normalizedEmail } })
     if (!user || !user.active || !verifyPassword(String(password), user.passwordHash)) {
       loginRateLimiter.recordFailure(ip, normalizedEmail)
-      await db.log
-        .create({
-          data: {
-            action: "LOGIN_FAILED",
-            section: "auth",
-            details: `email=${normalizedEmail.slice(0, 60)} ip=${ip}`,
-          },
-        })
-        .catch(() => {})
+      // FASE 26: auditoría estructurada (sin password JAMÁS)
+      await logAction(null, "LOGIN_FAILED", "auth", `email=${normalizedEmail.slice(0, 60)}`, {
+        ip,
+        resource: "user",
+        success: false,
+        meta: { reason: "credenciales inválidas" },
+      })
       // 401 genérico idéntico para usuario inexistente / password errónea / inactivo
       // (no revela cuál es la causa)
       return NextResponse.json({ error: "Credenciales inválidas" }, { status: 401 })
@@ -40,9 +39,11 @@ export async function POST(req: NextRequest) {
 
     loginRateLimiter.recordSuccess(ip, normalizedEmail)
     await db.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } })
-    await db.log
-      .create({ data: { userId: user.id, userName: user.name, action: "LOGIN", section: "auth", details: `ip=${ip}` } })
-      .catch(() => {})
+    await logAction({ uid: user.id, name: user.name }, "LOGIN", "auth", undefined, {
+      ip,
+      resource: "user",
+      resourceId: user.id,
+    })
 
     const token = signSession({
       uid: user.id,

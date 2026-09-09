@@ -3,6 +3,7 @@ import { requireAuth, isNextResponse, hashPassword, invalidateSessionCache } fro
 import { db } from "@/lib/db"
 import { pickFields, readBody, logAction } from "@/lib/crud"
 import { validateData, userUpdate } from "@/lib/validators"
+import { clientIp } from "@/lib/rate-limit"
 
 const SPEC = {
   email: "s",
@@ -46,7 +47,19 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   // Invalidar cache de sesión inmediatamente (efecto instantáneo, sin esperar TTL 30s)
   if (touchesAuth) invalidateSessionCache(id)
 
-  await logAction(auth, "UPDATE", "users", `${item.email}${touchesAuth ? " (sesiones invalidadas)" : ""}`)
+  // FASE 26: vocabulario de eventos de la misión (eventos ESPECÍFICOS por cambio)
+  const audit = { ip: clientIp(req), resource: "user", resourceId: item.id }
+  if (body.password) {
+    await logAction(auth, "PASSWORD_CHANGED", "users", `${item.email} (sesiones invalidadas)`, audit)
+  } else if (data.role !== undefined) {
+    await logAction(auth, "ROLE_CHANGED", "users", `${item.email} → ${item.role} (sesiones invalidadas)`, audit)
+  } else if (data.active === false) {
+    await logAction(auth, "USER_DISABLED", "users", `${item.email} (sesiones invalidadas)`, audit)
+  } else if (data.active === true) {
+    await logAction(auth, "USER_ENABLED", "users", item.email, audit)
+  } else {
+    await logAction(auth, "USER_UPDATED", "users", item.email, audit)
+  }
   return NextResponse.json({ item: { id: item.id, email: item.email, name: item.name, role: item.role, active: item.active } })
 }
 
@@ -63,6 +76,6 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const item = await db.user.delete({ where: { id } }).catch(() => null)
   if (!item) return NextResponse.json({ error: "Usuario no encontrado" }, { status: 404 })
   invalidateSessionCache(id) // el usuario ya no existe → sesiones mueren al instante
-  await logAction(auth, "DELETE", "users", item.email)
+  await logAction(auth, "USER_DELETED", "users", item.email, { ip: clientIp(_req), resource: "user", resourceId: item.id })
   return NextResponse.json({ ok: true })
 }

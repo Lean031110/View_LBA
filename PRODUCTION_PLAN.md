@@ -172,15 +172,19 @@
 - [x] Supervisor realtime actualizado a /health (antes /status)
 - [x] Tests: integración (degraded sin servicios + DB viva + sin secretos) y E2E (ok con stack completo) — suite 210/210 estable ×2
 
-## FASE 26 — Logging [ ]
-- [ ] `src/lib/logger.ts`: JSON estructurado (ts, level, event, actor, ip) a stdout + archivo rotativo en LOG_DIR
-- [ ] Eventos de la misión (LOGIN, STREAM_KEY_ROTATED, UPLOAD_*) en todas las rutas; JAMÁS secrets/keys/JWT
-- [ ] Quitar `.catch(()=>{})` silenciosos en rutas (log real de fallos)
+## FASE 26 — Logging [x]
+- [x] `src/lib/logger.ts`: JSON estructurado {ts, level, event, actor, ip, resource, resourceId, success, meta} → stdout (journald-ready) + archivo rotativo por tamaño en LOG_DIR (5 MB × 5)
+- [x] Vocabulario de la misión en TODAS las rutas: LOGIN, LOGIN_FAILED, LOGOUT, USER_CREATED/UPDATED/DELETED/DISABLED/ENABLED, PASSWORD_CHANGED, ROLE_CHANGED, SCREEN_CREATED/UPDATED/DELETED/COMMAND/PAIRED, STREAM_SETTINGS, STREAM_KEY_ROTATED, UPLOAD_CREATED/REJECTED/FAILED, SETTINGS_CHANGED, CONTENT_CREATED/UPDATED/DELETED (promos/platos/horarios/redes/ticker)
+- [x] JAMÁS secrets: `redact()` elimina password/secret/token/JWT/cookies y TRUNCA claves de stream a 4 chars (defensa en profundidad); strings >512 truncados
+- [x] `.catch(()=>{})` silenciosos ELIMINADOS de las rutas (login/logout/upload ahora registran fallos reales por logError; AUDIT_WRITE_FAILED si la auditoría misma falla); los dos restantes del proxy FLV son clean-up best-effort documentado
+- [x] Tests: tests/logger.test.ts (8: redact anidado, truncado de stream key, JSON válido, meta sanitizado, logError, rotación real por tamaño)
 
-## FASE 27 — Audit log [ ]
-- [ ] Log model: + ip, resource, resourceId, success, metadata JSON segura (migración)
-- [ ] Restringir /api/admin/logs a OPERATOR; VIEWER sin acceso
-- [ ] Retención configurable + purga
+## FASE 27 — Audit log [x]
+- [x] Migración `20260909023931_audit_log_fields`: Log + ip, resource, resourceId, success, metadata (JSON seguro) — preserva filas existentes
+- [x] `logAction` única vía: escribe fila DB (campos nuevos) + evento estructurado stdout/archivo; fallo de auditoría → AUDIT_WRITE_FAILED (nunca rompe la petición)
+- [x] /api/admin/logs sigue restringido a OPERATOR+ (VIEWER fuera, FASE 4); UI muestra ip + indicador ✗ en fallos + colores por acción del vocabulario
+- [x] Retención: `scripts/logs-purge.ts` (LOG_RETENTION_DAYS default 90, --dry-run) — systemd timer en FASE 28
+- [x] Evidencia: 218 tests/0 fail · E2E 26/26 · lint ✓ · typecheck ✓
 
 ## FASE 28 — Linux deployment [ ]
 - [ ] `deploy/linux/`: systemd units (app, realtime, stream) con Restart=always, EnvironmentFile, usuario no-root, límites; install.sh (instala, migra, primer arranque, health wait); scripts start/stop/restart/status/logs/backup/restore/upgrade
