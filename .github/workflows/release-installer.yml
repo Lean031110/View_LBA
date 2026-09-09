@@ -26,7 +26,7 @@ jobs:
   linux:
     name: Linux (AppImage GUI + CLI + deb)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -57,24 +57,28 @@ jobs:
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Sidecar → src-tauri/binaries (sufijo target de Tauri)
+      - name: "Sidecar → src-tauri/binaries (sufijo target de Tauri)"
         run: |
           mkdir -p installer/gui/src-tauri/binaries
           cp dist/release/linux/ViewLBA-Server/viewlba-installer \
              installer/gui/src-tauri/binaries/viewlba-installer-x86_64-unknown-linux-gnu
 
-      - name: Payload → src-tauri/resources
+      # OJO: los globs de tauri.conf (resources/server/**, resources/runtime/**)
+      # se resuelven relativos a src-tauri — se copia la MISMA estructura que
+      # el payload (resources/server, resources/runtime) para que coincida.
+      - name: "Payload → src-tauri/resources"
         run: |
           mkdir -p installer/gui/src-tauri/resources
-          cp -a dist/release/linux/ViewLBA-Server/resources installer/gui/src-tauri/resources/
-          cp -a dist/release/linux/ViewLBA-Server/runtime installer/gui/src-tauri/resources/
+          cp -a dist/release/linux/ViewLBA-Server/resources/server installer/gui/src-tauri/resources/server
+          cp -a dist/release/linux/ViewLBA-Server/runtime installer/gui/src-tauri/resources/runtime
           cp dist/release/linux/ViewLBA-Server/manifest.json installer/gui/src-tauri/resources/
+          test -f installer/gui/src-tauri/resources/resources/server/package.json
 
-      - name: Construir la GUI (AppImage + deb con sidecar y payload)
+      - name: "Construir la GUI (AppImage + deb con sidecar y payload)"
         working-directory: installer/gui/src-tauri
         run: |
           cargo install tauri-cli --version "^2" --locked
-          cargo tauri build
+          cargo tauri build --bundles appimage,deb
         env:
           # información de versión para el bundle
           TAURI_BUNDLER_TOOLS_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -122,7 +126,7 @@ jobs:
   windows:
     name: Windows (Setup.exe — NOT VERIFIED en sandbox, construido en CI real)
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -144,22 +148,24 @@ jobs:
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Sidecar → src-tauri/binaries (sufijo target de Tauri)
+      - name: "Sidecar → src-tauri/binaries (sufijo target de Tauri)"
         shell: bash
         run: |
           mkdir -p installer/gui/src-tauri/binaries
           cp dist/release/windows/ViewLBA-Server/viewlba-installer.exe \
              installer/gui/src-tauri/binaries/viewlba-installer-x86_64-pc-windows-msvc.exe
 
-      - name: Payload → src-tauri/resources
+      # Misma estructura que los globs de tauri.conf (relativos a src-tauri).
+      - name: "Payload → src-tauri/resources"
         shell: bash
         run: |
           mkdir -p installer/gui/src-tauri/resources
-          cp -a dist/release/windows/ViewLBA-Server/resources installer/gui/src-tauri/resources/
-          cp -a dist/release/windows/ViewLBA-Server/runtime installer/gui/src-tauri/resources/
+          cp -a dist/release/windows/ViewLBA-Server/resources/server installer/gui/src-tauri/resources/server
+          cp -a dist/release/windows/ViewLBA-Server/runtime installer/gui/src-tauri/resources/runtime
           cp dist/release/windows/ViewLBA-Server/manifest.json installer/gui/src-tauri/resources/
+          test -f installer/gui/src-tauri/resources/resources/server/package.json
 
-      - name: Construir el instalador (NSIS: ViewLBA-Server-Setup.exe)
+      - name: "Construir el instalador (NSIS: ViewLBA-Server-Setup.exe)"
         working-directory: installer/gui/src-tauri
         run: |
           cargo install tauri-cli --version "^2" --locked

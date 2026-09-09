@@ -15,7 +15,7 @@
  *  - .env existente → config del wizard NO lo sobrescribe (update).
  */
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs"
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, chmodSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { runInstall } from "../../installer/core/install"
@@ -53,6 +53,7 @@ class FakeAdapter implements ServiceAdapter {
   failInstall = false
   rollbackCalls: string[][] = []
   removed = 0
+  capturedCtx?: InstallContext
 
   checkPlatform(): CheckResult[] {
     return [{ id: "fake-systemd", label: "systemd (fake)", status: "pass" }]
@@ -62,6 +63,7 @@ class FakeAdapter implements ServiceAdapter {
   }
   async installServices(ctx: InstallContext): Promise<void> {
     this.installed++
+    this.capturedCtx = ctx
     for (const u of ["a.service", "b.service"]) ctx.registry.markUnitCreated(u)
     if (this.failInstall) throw new Error("systemctl restart pantalla-restaurante.target falló: Port 1935 unavailable")
   }
@@ -201,6 +203,51 @@ describe("runInstall — happy path (FS real, comandos grabados)", () => {
     expect(report.ok).toBe(true)
     // solo la llamada de DB (sin admin)
     expect(init.calls.length).toBe(1)
+  })
+
+  test("RUNTIME PERMANENTE: bun incluido se instala en appDir/runtime y los servicios lo usan", async () => {
+    // Bug real corregido: las unidades systemd/NSSM apuntaban al bun del
+    // PAQUETE (montaje transitorio de AppImage) → tras reinicio, caída.
+    const { config } = makeEnv("runtime")
+    // paquete con runtime/bun (stub ejecutable: preflight lo EJECUTA de verdad)
+    const pkgRoot = join(tmp, "runtime")
+    mkdirSync(join(pkgRoot, "runtime"), { recursive: true })
+    writeFileSync(join(pkgRoot, "runtime", "bun"), "#!/bin/sh\necho 1.3.14\n", { mode: 0o755 })
+    chmodSync(join(pkgRoot, "runtime", "bun"), 0o755)
+    const adapter = new FakeAdapter()
+    const runner = new RecordingRunner()
+    const report = await runInstall(config, {
+      adapter,
+      runner,
+      initProd: fakeInitProd().fn,
+      waitHealth: fakeWaitHealth(),
+      packageRoot: pkgRoot,
+    })
+    expect(report.ok).toBe(true)
+    // runtime copiado DENTRO de la instalación (autosuficiente)
+    expect(existsSync(join(config.installDir!, "runtime", "bun"))).toBe(true)
+    // bunx como alias (contrato de bundle-server.ts)
+    expect(existsSync(join(config.installDir!, "runtime", "bunx"))).toBe(true)
+    // los servicios se configuran con el bun INSTALADO, no el del paquete
+    expect(adapter.capturedCtx?.bunPath).toBe(join(config.installDir!, "runtime", "bun"))
+    // los comandos de la fase deploy (install/generate) usan el instalado
+    const cmds = runner.rendered().join("\n")
+    expect(cmds).toContain(join(config.installDir!, "runtime", "bun"))
+  })
+
+  test("sin runtime incluido → sin appDir/runtime y bunPath del PATH (comportamiento original)", async () => {
+    const { config } = makeEnv("norbuntime")
+    const adapter = new FakeAdapter()
+    const report = await runInstall(config, {
+      adapter,
+      runner: new RecordingRunner(),
+      initProd: fakeInitProd().fn,
+      waitHealth: fakeWaitHealth(),
+      packageRoot: join(tmp, "norbuntime"),
+    })
+    expect(report.ok).toBe(true)
+    expect(existsSync(join(config.installDir!, "runtime"))).toBe(false)
+    expect(adapter.capturedCtx?.bunPath).toBe("bun")
   })
 })
 

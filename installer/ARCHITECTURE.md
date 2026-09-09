@@ -220,14 +220,23 @@ permisos, bun ausente, nssm ausente, health timeout…).
 
 ## 7. Dependencias y offline
 
-- **Bun**: el paquete final INCLUYE el binario (`runtime/bun`) — MIT; las
-  unidades systemd se renderizan apuntando a ese binario (el `__BUN_BIN__`
-  existente lo permite). No se pide al usuario instalarlo.
+- **Bun**: el paquete final INCLUYE el binario (`runtime/bun`) — MIT. En la
+  fase `deploy` el runtime se copia a `<appDir>/runtime` (PERMANENTE: los
+  montajes de AppImage son transitorios y desinstalar el paquete no debe
+  tumbar el servidor) y las unidades systemd / servicios NSSM se renderizan
+  apuntando a ese binario instalado (el `__BUN_BIN__` existente lo permite).
+  No se pide al usuario instalarlo.
 - **ffmpeg**: opcional en el servidor (OBS codifica en el cliente; NMS no lo
   exige). Se ofrece incluirlo en el paquete; si falta → WARNING con explicación.
 - **systemd** (linux) / **NSSM** (windows): requeridos para 24/7. NSSM se
-  incluye en el payload windows; systemd viene con la distro (FAIL claro si
-  no existe: no se puede instalar automáticamente de forma segura).
+  incluye en el payload windows (`resources/runtime/nssm.exe` en los bundles
+  de Tauri; `resolveNssm` lo localiza en modo multi-root: instalación →
+  paquete → PATH); systemd viene con la distro (FAIL claro si no existe: no
+  se puede instalar automáticamente de forma segura).
+- **Localización del payload (modo binario)**: junto al binario (AppImage
+  CLI / NSIS) o escaneando `../lib|share/*` (deb/AppImage GUI de Tauri, cuyo
+  nombre de producto varía). La GUI inyecta `VIEWLBA_PAYLOAD_DIR` desde su
+  `resource_dir()` autoritativo; el sidecar lo honra como override.
 - **Modo completamente offline**: el payload lleva código + `node_modules`
   (production) + Prisma engines del SO + build standalone precompilado +
   bun → la instalación no toca la red. El flag `--offline` lo exige y falla

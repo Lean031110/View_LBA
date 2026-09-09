@@ -192,8 +192,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout
+      # Historia COMPLETA: gitleaks escanea el rango del push (before..after)
+      # y con clon superficial el commit base no existe → git falla y el job
+      # se rompe (visto en el push de 16 commits de cf09174).
+      - name: Checkout (historia completa para gitleaks)
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Instalar Bun (con cache)
         uses: oven-sh/setup-bun@v2

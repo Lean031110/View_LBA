@@ -48,6 +48,14 @@ export function findInstallation(platform: "linux" | "windows", installDir?: str
   return { layout, found }
 }
 
+/** Bun instalado por el installer (appDir/runtime), si existe. */
+function installedBun(layout: Layout): string | undefined {
+  for (const p of [join(layout.appDir, "runtime", "bun"), join(layout.appDir, "runtime", "bun.exe")]) {
+    if (existsSync(p)) return p
+  }
+  return undefined
+}
+
 /** Contexto de gestión sobre una instalación detectada. */
 export function managerContext(
   platform: "linux" | "windows",
@@ -70,7 +78,9 @@ export function managerContext(
     emit: () => {},
     registry: new RollbackRegistry(),
     env: { ...process.env, ...fileEnv, NODE_ENV: "production" },
-    bunPath: process.env.VIEWLBA_BUN ?? "bun",
+    // Bun instalado (appDir/runtime) → el sistema instalado es autosuficiente;
+    // sin instalación del runtime, cae al PATH (VIEWLBA_BUN o "bun").
+    bunPath: installedBun(layout) ?? process.env.VIEWLBA_BUN ?? "bun",
   }
 }
 

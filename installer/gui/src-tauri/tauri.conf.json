@@ -34,7 +34,7 @@
       "icons/icon.ico"
     ],
     "externalBin": ["binaries/viewlba-installer"],
-    "resources": ["resources/server/**", "resources/runtime/**"],
+    "resources": ["resources/server/**", "resources/runtime/**", "resources/manifest.json"],
     "windows": {
       "nsis": {
         "installerIcon": "icons/icon.ico",
@@ -43,11 +43,6 @@
         "displayLanguageSelector": true
       },
       "webviewInstall": { "mode": "downloadBootstrapper" }
-    },
-    "linux": {
-      "deb": {
-        "depends": []
-      }
     }
   }
 }

@@ -31,10 +31,18 @@ const FIREWALL_RULES = [
   { name: "PantallaRestaurante-RTMP", portKey: "rtmpPort" as const },
 ]
 
-/** NSSM a usar: incluido en el payload (resources/runtime/nssm.exe) o del PATH. */
-export function resolveNssm(packageRoot?: string): string {
-  if (packageRoot) {
-    for (const p of [join(packageRoot, "runtime", "nssm.exe"), join(packageRoot, "resources", "runtime", "nssm.exe")]) {
+/**
+ * NSSM a usar. Raíces probadas en orden (multi-root):
+ *   1. <installed appDir>  → app/runtime/nssm.exe (instalación autosuficiente)
+ *   2. packageRoot          → runtime/nssm.exe (AppImage CLI) o
+ *                             resources/runtime/nssm.exe (NSIS/deb de Tauri)
+ *   3. "nssm" del PATH (instalación manual del usuario)
+ */
+export function resolveNssm(...roots: Array<string | undefined>): string {
+  for (const root of roots) {
+    if (!root) continue
+    for (const sub of [join(root, "app", "runtime"), join(root, "runtime"), join(root, "resources", "runtime")]) {
+      const p = join(sub, "nssm.exe")
       if (existsSync(p)) return p
     }
   }
@@ -46,7 +54,7 @@ export class WindowsServiceAdapter implements ServiceAdapter {
   private nssmPath: string
 
   constructor(nssmPath?: string) {
-    this.nssmPath = nssmPath ?? "nssm"
+    this.nssmPath = nssmPath ?? resolveNssm()
   }
 
   checkPlatform(): CheckResult[] {

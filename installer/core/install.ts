@@ -13,9 +13,9 @@
  * Rollback NO destructivo (rollback.ts) ante cualquier fallo de fase.
  * Sin stdin, sin process.exit: la UI (CLI/GUI) decide cómo terminar.
  */
-import { existsSync } from "node:fs"
+import { copyFileSync, existsSync, readdirSync } from "node:fs"
 import { networkInterfaces } from "node:os"
-import { dirname, join, resolve } from "node:path"
+import { basename, dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { initializeProduction } from "../../scripts/lib/production-init"
 import { readEnvFile, detectEnvContamination } from "../../scripts/lib/env-file"
@@ -80,6 +80,14 @@ export function resolvePayloadDir(config: InstallConfig, packageRoot: string): s
 /**
  * Raíz del paquete: si el installer corre desde el repo → raíz del repo;
  * si corre como binario empaquetado → carpeta con resources/ y runtime/.
+ *
+ * Layouts soportados en modo binario:
+ *   · exótico juntos al binario (AppImage CLI de appimage.sh)
+ *   · NSIS (Windows): recursos en <install>\resources\ junto al exe
+ *   · deb/AppImage GUI (Tauri Linux): bin en usr/bin, recursos en
+ *     usr/lib/<producto>/ — el nombre varía → se ESCANEA ../lib/*
+ *   · override explícito: VIEWLBA_PAYLOAD_DIR (la GUI Tauri lo inyecta
+ *     desde su resource_dir() autoritativo)
  */
 export function resolvePackageRoot(): string {
   const here = dirname(fileURLToPath(import.meta.url)) // installer/core
@@ -87,7 +95,51 @@ export function resolvePackageRoot(): string {
   if (existsSync(join(repoRoot, "package.json")) && existsSync(join(repoRoot, "src", "app"))) {
     return repoRoot // checkout del servidor
   }
-  return dirname(process.argv[1] ?? process.argv[0] ?? ".")
+  const exeDir = dirname(resolve(process.argv[1] ?? process.argv[0] ?? "."))
+  return resolvePackageRootFrom(exeDir)
+}
+
+/**
+ * Resolución de raíz del paquete en MODO BINARIO (testeable sin depender de
+ * argv): env → junto al exe → ../lib|share/<x> (Tauri Linux).
+ * La exportamos para tests; el orden es contrato.
+ */
+export function resolvePackageRootFrom(exeDir: string): string {
+  const candidates: string[] = []
+  const envRoot = process.env.VIEWLBA_PAYLOAD_DIR
+  if (envRoot) candidates.push(resolve(envRoot))
+  candidates.push(exeDir)
+  for (const c of candidates) {
+    if (packageRootHasPayload(c)) return c
+  }
+  // Tauri (Linux): bin en usr/bin y recursos en usr/lib/<nombre>
+  if (process.platform !== "win32") {
+    for (const base of ["lib", "share"]) {
+      const baseDir = join(exeDir, "..", base)
+      try {
+        for (const e of readdirSync(baseDir, { withFileTypes: true })) {
+          if (!e.isDirectory()) continue
+          const cand = join(baseDir, e.name)
+          if (packageRootHasPayload(cand)) return cand
+        }
+      } catch {
+        // sin ../lib (AppImage CLI, NSIS, ejecución suelta) → seguir
+      }
+    }
+  }
+  return exeDir
+}
+
+/** ¿`root` contiene un payload instalable (resources/server o runtime)? */
+function packageRootHasPayload(root: string): boolean {
+  return (
+    existsSync(join(root, "resources", "server", "package.json")) ||
+    existsSync(join(root, "server", "package.json")) ||
+    existsSync(join(root, "runtime", "bun")) ||
+    existsSync(join(root, "runtime", "bun.exe")) ||
+    existsSync(join(root, "resources", "runtime", "bun")) ||
+    existsSync(join(root, "resources", "runtime", "bun.exe"))
+  )
 }
 
 /** Binario bun incluido en el paquete (runtime/bun), si existe. */
@@ -96,6 +148,7 @@ export function findBundledBun(packageRoot: string): string | undefined {
     join(packageRoot, "runtime", "bun"),
     join(packageRoot, "runtime", "bun.exe"),
     join(packageRoot, "resources", "runtime", "bun"),
+    join(packageRoot, "resources", "runtime", "bun.exe"),
   ]) {
     if (existsSync(p)) return p
   }
@@ -245,6 +298,30 @@ export async function runInstall(config: InstallConfig, deps: InstallDeps): Prom
           const ms = join(payloadDir, "mini-services", svc, "node_modules")
           if (existsSync(ms)) copyTree(ms, join(layout.appDir, "mini-services", svc, "node_modules"))
         }
+      }
+
+      // RUNTIME PERMANENTE: el bun (y nssm.exe) incluidos se instalan DENTRO
+      // de appDir/runtime. Los montajes de AppImage son TRANSITORIOS (/tmp/
+      // .mount_*) y desinstalar el paquete no debe tumbar el servidor: la
+      // instalación queda autosuficiente. Las unidades systemd / servicios
+      // NSSM se renderizan apuntando a este bun instalado (ctx.bunPath).
+      if (bundledBun) {
+        const runtimeSrc = dirname(bundledBun)
+        const runtimeDst = join(layout.appDir, "runtime")
+        copyTree(runtimeSrc, runtimeDst)
+        const installedBun = join(runtimeDst, basename(bundledBun))
+        if (!existsSync(installedBun)) {
+          throw new PhaseError("deploy", `El runtime incluido no se pudo instalar en ${runtimeDst}`, undefined, undefined, "runtime")
+        }
+        if (process.platform !== "win32") {
+          // bunx como alias (argv[0]) — igual que bundle-server.ts
+          const bunxBin = join(runtimeDst, "bunx")
+          if (!existsSync(bunxBin)) copyFileSync(installedBun, bunxBin)
+        }
+        ctx.bunPath = installedBun
+        ctx.env.PATH = `${runtimeDst}${ctx.env.PATH ? `:${ctx.env.PATH}` : ""}`
+        process.env.PATH = ctx.env.PATH
+        emit({ type: "info", message: `runtime instalado (permanente) en ${runtimeDst}` })
       }
 
       if (!payloadOffline) {

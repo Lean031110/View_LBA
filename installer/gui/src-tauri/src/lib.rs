@@ -22,7 +22,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -30,6 +30,52 @@ use tauri::{AppHandle, Emitter, Manager, State};
 struct SidecarState {
     child: Option<Child>,
     stdin: Option<ChildStdin>,
+}
+
+/// Directorio de recursos de Tauri (donde vive el payload del servidor).
+/// Se rellena en setup() y se pasa al sidecar como VIEWLBA_PAYLOAD_DIR:
+/// en los bundles Linux (deb/AppImage) los recursos NO están junto al bin
+/// (usr/bin vs usr/lib/<producto>), así el sidecar no tiene que adivinar.
+static RESOURCE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Fallback de localización del payload para el modo --cli (antes de que
+/// exista el AppHandle): junto al exe, o ../lib/* y ../share/* (Tauri).
+fn fallback_payload_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let exe_dir = exe.parent()?.to_path_buf();
+    let has_payload = |root: &PathBuf| {
+        root.join("resources").join("server").join("package.json").exists()
+            || root.join("runtime").join("bun").exists()
+            || root.join("resources").join("runtime").join("bun").exists()
+    };
+    if has_payload(&exe_dir) {
+        return Some(exe_dir);
+    }
+    for base in ["lib", "share"] {
+        let dir = exe_dir.join("..").join(base);
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for e in entries.flatten() {
+                let cand = e.path();
+                if cand.is_dir() && has_payload(&cand) {
+                    return Some(cand);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// VIEWLBA_PAYLOAD_DIR efectivo para los procesos hijos (sidecar).
+fn payload_dir() -> Option<PathBuf> {
+    if let Some(rd) = RESOURCE_DIR.get() {
+        return Some(rd.clone());
+    }
+    if let Ok(env) = std::env::var("VIEWLBA_PAYLOAD_DIR") {
+        if !env.is_empty() {
+            return Some(PathBuf::from(env));
+        }
+    }
+    fallback_payload_dir()
 }
 
 /// Ruta del sidecar: junto al ejecutable (bundle) o variable de entorno
@@ -67,6 +113,9 @@ fn spawn_sidecar(args: &[&str]) -> Result<Child, String> {
     let mut cmd = Command::new(&bin);
     cmd.args(&prefix);
     cmd.args(args);
+    if let Some(dir) = payload_dir() {
+        cmd.env("VIEWLBA_PAYLOAD_DIR", &dir);
+    }
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -77,11 +126,13 @@ fn spawn_sidecar(args: &[&str]) -> Result<Child, String> {
 #[tauri::command]
 fn sidecar_ok() -> Result<String, String> {
     let (bin, prefix) = sidecar_command()?;
-    let out = Command::new(&bin)
-        .args(&prefix)
-        .arg("--version")
-        .output()
-        .map_err(|e| e.to_string())?;
+    let mut cmd = Command::new(&bin);
+    cmd.args(&prefix);
+    cmd.arg("--version");
+    if let Some(dir) = payload_dir() {
+        cmd.env("VIEWLBA_PAYLOAD_DIR", &dir);
+    }
+    let out = cmd.output().map_err(|e| e.to_string())?;
     Ok(format!("{} {:?}", bin, out.status.code()))
 }
 
@@ -262,6 +313,13 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(Mutex::new(SidecarState { child: None, stdin: None }))
+        .setup(|app| {
+            // Directorio de recursos autoritativo de Tauri → sidecar.
+            if let Ok(rd) = app.path().resource_dir() {
+                let _ = RESOURCE_DIR.set(rd);
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             sidecar_ok,
             detect,
@@ -282,6 +340,9 @@ fn cli_passthrough(args: &[String]) -> Result<i32, String> {
     let mut cmd = Command::new(&bin);
     cmd.args(&prefix);
     cmd.args(args);
+    if let Some(dir) = payload_dir() {
+        cmd.env("VIEWLBA_PAYLOAD_DIR", &dir);
+    }
     cmd.stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());

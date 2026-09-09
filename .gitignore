@@ -63,3 +63,4 @@ dist/
 installer/gui/src-tauri/binaries/
 installer/gui/src-tauri/resources/
 installer/gui/src-tauri/gen/
+installer/gui/src-tauri/target/
