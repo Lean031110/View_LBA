@@ -186,9 +186,15 @@
 - [x] Retención: `scripts/logs-purge.ts` (LOG_RETENTION_DAYS default 90, --dry-run) — systemd timer en FASE 28
 - [x] Evidencia: 218 tests/0 fail · E2E 26/26 · lint ✓ · typecheck ✓
 
-## FASE 28 — Linux deployment [ ]
-- [ ] `deploy/linux/`: systemd units (app, realtime, stream) con Restart=always, EnvironmentFile, usuario no-root, límites; install.sh (instala, migra, primer arranque, health wait); scripts start/stop/restart/status/logs/backup/restore/upgrade
-- [ ] Documentar OPERATIONS (runbook)
+## FASE 28 — Linux deployment [x]
+- [x] `deploy/linux/`: 8 unidades systemd VERIFICADAS con `systemd-analyze verify` (0 warnings)
+  - app (standalone production: `bun .next/standalone/server.js`), realtime, stream — todas: Restart=always + RestartSec=5, StartLimit en [Unit], EnvironmentFile=/etc/pantalla-restaurante.env, WorkingDirectory, usuario de sistema `pantalla` (sin login, sin root), límites (MemoryMax/CPUQuota/NOFILE) y endurecimiento (ProtectSystem=strict + ReadWritePaths solo var/lib+var/log, NoNewPrivileges, ProtectHome, PrivateTmp)
+  - target de grupo + backup.timer (diario 03:00, Persistent) + logs-purge.timer (diario 04:00)
+- [x] `install.sh` idempotente: deps check → usuario → layout estándar (/opt código · /var/lib datos · /var/log logs · /etc entorno root:600) → secretos openssl → install root+mini-servicios → prisma generate → **migrate deploy** → build standalone → unidades (sustituye __BUN_BIN__) → enable+start → health wait real
+- [x] `manage.sh`: start/stop/restart/status/logs/health/backup/restore/upgrade (documentados y con ejemplos en docs/OPERATIONS.md)
+- [x] docs/OPERATIONS.md (runbook): arquitectura, puertos, instalación, primer admin (init-production), comandos diarios, interpretación de health, backups, auditoría, upgrade, tabla de recuperación ante fallos, firewall
+- [x] Verificación del runtime REAL: build standalone + arranque con NODE_ENV=production + DATABASE_URL absoluta + PORT → health 200 (degraded sin mini-servicios, database/storage ok) — mismo binario que ejecuta el servicio systemd
+- NOT VERIFIED (hardware): arranque de systemd en máquina real — este entorno no tiene systemd; unidades validadas sintácticamente y runtime del binario verificado. Marcar para FASE 42/43 (test matrix) en hardware destino
 
 ## FASE 29 — Windows deployment [ ]
 - [ ] Scripts multiplataforma: build sin `cp -r` (node script), start portable

@@ -1,0 +1,10 @@
+[Unit]
+Description=Pantalla Restaurante - Backup diario (03:00, con catch-up si estuvo apagado)
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

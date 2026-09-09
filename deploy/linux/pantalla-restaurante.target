@@ -1,0 +1,6 @@
+[Unit]
+Description=Pantalla Restaurante - Grupo de servicios (app + realtime + stream)
+Documentation=file:/opt/pantalla-restaurante/docs/OPERATIONS.md
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,41 @@
+[Unit]
+Description=Pantalla Restaurante - Servicio realtime (Socket.io: pantallas + admins)
+Documentation=file:/opt/pantalla-restaurante/docs/OPERATIONS.md
+After=network-online.target pantalla-restaurante.service
+Wants=network-online.target
+PartOf=pantalla-restaurante.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=pantalla
+Group=pantalla
+WorkingDirectory=/opt/pantalla-restaurante/mini-services/realtime-service
+EnvironmentFile=/etc/pantalla-restaurante.env
+ExecStart=__BUN_BIN__ /opt/pantalla-restaurante/mini-services/realtime-service/index.ts
+
+Restart=always
+RestartSec=5
+
+MemoryMax=512M
+CPUQuota=100%
+LimitNOFILE=16384
+
+# Endurecimiento
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+# DB en modo lectura (validacion de sesiones) + salud del propio proceso
+ReadWritePaths=/var/log/pantalla-restaurante
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pantalla-realtime
+
+[Install]
+WantedBy=multi-user.target

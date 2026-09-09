@@ -1,0 +1,16 @@
+[Unit]
+Description=Pantalla Restaurante - Backup diario de SQLite (verificado)
+Documentation=file:/opt/pantalla-restaurante/docs/OPERATIONS.md
+After=pantalla-restaurante.service
+
+[Service]
+Type=oneshot
+User=pantalla
+Group=pantalla
+WorkingDirectory=/opt/pantalla-restaurante
+EnvironmentFile=/etc/pantalla-restaurante.env
+# VACUUM INTO (online, sin bloquear la operacion) + verificacion de integridad
+ExecStart=__BUN_BIN__ /opt/pantalla-restaurante/scripts/backup.ts
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pantalla-backup
