@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createHash } from "crypto"
 import { db } from "@/lib/db"
 import type { ContentBundle, PublicSettings } from "@/lib/types"
+import { getLicenseSystemState } from "@/lib/licensing"
 
 /**
  * GET /api/content — bundle público para las pantallas TV (sin datos sensibles).
@@ -15,6 +16,14 @@ import type { ContentBundle, PublicSettings } from "@/lib/types"
  * vez del bundle completo. El SW offline ya filtra los 304 (res.ok=false).
  */
 async function contentVersionStamp(): Promise<string> {
+  // FASE 37: sello de versión + sello de LICENCIA (el estado de licencia
+  // cambia el bundle — watermark en TV — y el ETag debe invalidarse con él).
+  // Sello de licencia de granularidad DIARIA (status+días+watermark): no
+  // rompe el 304 barato con el high-water de lastSeenAt (por minuto).
+  const licenseState = await getLicenseSystemState().catch(() => null)
+  const licenseStamp = licenseState
+    ? `${licenseState.status}|${licenseState.daysLeft}|${licenseState.features.watermark ? 1 : 0}`
+    : "unknown"
   const row = (await db.$queryRawUnsafe(
     `SELECT
       (SELECT COUNT(*) FROM Settings) AS c0, (SELECT MAX(updatedAt) FROM Settings) AS m0,
@@ -29,7 +38,7 @@ async function contentVersionStamp(): Promise<string> {
   // NOTA: Prisma mapea COUNT(*) a BigInt → replacer stringify-safe
   return createHash("sha256")
     .update(
-      JSON.stringify([r.c0, r.m0, r.c1, r.m1, r.c2, r.m2, r.c3, r.m3, r.c4, r.m4, r.c5, r.m5, r.c6, r.m6], (_k, v) =>
+      JSON.stringify([licenseStamp, r.c0, r.m0, r.c1, r.m1, r.c2, r.m2, r.c3, r.m3, r.c4, r.m4, r.c5, r.m5, r.c6, r.m6], (_k, v) =>
         typeof v === "bigint" ? v.toString() : v
       )
     )
@@ -100,6 +109,10 @@ export async function GET(req: NextRequest) {
       showTicker: settings?.showTicker ?? true,
     }
 
+    // Licencia pública para la TV (watermark) — se reevalúa en cada cambio
+    // de ETag (arriba), no en cada poll barato 304.
+    const licenseState = await getLicenseSystemState().catch(() => null)
+
     const bundle: ContentBundle = {
       settings: publicSettings,
       promotions: promotions.map((p) => ({ ...p, startDate: p.startDate?.toISOString() ?? null, endDate: p.endDate?.toISOString() ?? null })),
@@ -108,6 +121,11 @@ export async function GET(req: NextRequest) {
       socials,
       ticker,
       screens,
+      license: {
+        status: licenseState?.status ?? "trial",
+        watermark: licenseState?.features.watermark ?? true,
+        watermarkLines: licenseState?.features.watermarkLines ?? null,
+      },
       serverTime: new Date().toISOString(),
     }
 

@@ -97,11 +97,18 @@ jobs:
         run: bun scripts/e2e-setup.ts
 
       - name: Arrancar servidor (dev) con la DB de integración
+        # LICENSING: overrides de identidad + clave pública DUMMY de test para
+        # que la licencia importada por e2e-setup valide como ACTIVA (mismos
+        # valores que playwright.config.ts; claves de e2e/fixtures/licensing).
         run: |
           DATABASE_URL="file:../db/e2e.db" \
           AUTH_SECRET="${{ env.AUTH_SECRET }}" \
           REALTIME_TOKEN="${{ env.REALTIME_TOKEN }}" \
           LOGIN_RATE_LIMIT_IP_MAX=500 \
+          VIEWLBA_TEST_DEVICE_FINGERPRINT="00946114a3a48905be6f60d95f945a1b29f3f2b261e32f30521afed84407f8e7" \
+          VIEWLBA_TEST_DISK_ID_HASH="a5ed432a37dde11ef146fcc98049c07d06e0db193cc1cf69dc2214d7b2cc8b02" \
+          VIEWLBA_TEST_INSTALL_PATH="/srv/viewlba-e2e" \
+          VIEWLBA_LICENSE_PUBLIC_KEY="DEYlcmsRR7oWGjm7E72KhO2G5BzgirmO5w0mmsVtz6w" \
             nohup bunx next dev -p 3000 > dev-server.log 2>&1 &
           echo $! > /tmp/dev-server.pid
 
@@ -118,11 +125,20 @@ jobs:
       - name: Tests de integración (rutas API reales)
         run: DATABASE_URL="file:../db/e2e.db" APP_URL=http://127.0.0.1:3000 bun test tests/integration/api.test.ts
 
-      - name: Parar servidor
-        if: always()
+      - name: Parar servidor (:3000) antes de la suite de licencias
+        # OBLIGATORIO: Next 16 impide dos `next dev` en el mismo directorio
+        # ("⨯ Another next dev server is already running"). La suite de
+        # licencias levanta el SUYO en :3300 una vez libre este.
         run: |
           kill $(cat /tmp/dev-server.pid) 2>/dev/null || true
           pkill -f "next dev" 2>/dev/null || true
+          sleep 2
+
+      - name: Tests de integración de licencias (spawn propio :3300)
+        # Suite autocontenida: DB temporal + migraciones + admin + anclas de
+        # trial frescas + identidad de test. Cubre import ZIP (válido/tamper/
+        # mismatch), trial + watermark público, gating 403 y renovación.
+        run: DATABASE_URL="file:./db/lic-int.db" bun test tests/integration/license-api.test.ts
 
       - name: Logs del servidor (solo en fallo)
         if: failure()
@@ -194,6 +210,13 @@ jobs:
     name: Seguridad (dependencias)
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # gitleaks-action en eventos pull_request lista los commits del PR vía
+    # API (ScanPullRequest) → sin pull-requests:read responde 403
+    # "Resource not accessible by integration" y el job falla (visto en el
+    # run #34520256044 del PR #1). Permisos mínimos, solo lectura.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       # Historia COMPLETA: gitleaks escanea el rango del push (before..after)
       # y con clon superficial el commit base no existe → git falla y el job

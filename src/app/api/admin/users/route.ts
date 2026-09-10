@@ -5,6 +5,7 @@ import { pickFields, readBody, logAction } from "@/lib/crud"
 import { hashPassword } from "@/lib/auth"
 import { validateData, userCreate } from "@/lib/validators"
 import { clientIp } from "@/lib/rate-limit"
+import { requireLicenseFeature } from "@/lib/licensing/guard"
 
 const SPEC = {
   email: "s",
@@ -26,6 +27,10 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const auth = await requireAuth("ADMIN")
   if (isNextResponse(auth)) return auth
+  // LICENSING: crear usuarios es premium (users.management) — la UI también
+  // bloquea la sección Usuarios durante trial/limitado.
+  const denied = await requireLicenseFeature("users.management")
+  if (denied) return denied
   const body = await readBody(req)
   const data = pickFields(body, SPEC)
   // FASE 9/17: validación con política de contraseña y formato de email

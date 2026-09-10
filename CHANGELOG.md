@@ -5,6 +5,55 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato está basado en [Keep a Changelog](https://keepachangelog.com/es/1.1.0/),
 y este proyecto adhiere a [SemVer](https://semver.org/lang/es/).
 
+## [1.2.0] — 2026-09-11 — Licenciamiento offline + generador + GitHub Actions
+
+### Añadido
+
+- **Sistema de licencias 100% offline** (Ed25519, cero dependencias nuevas):
+  vinculación a instalación (`INSTALLATION_ID VWLB-…`) + disco (`DISK-…`),
+  firma sobre payload canónico, importación ZIP validada en su totalidad
+  (firma → esquema → producto → fechas → equipo → disco → anti-downgrade),
+  renovaciones con historial (`LicenseState`/`LicenseHistory`), y estados
+  `trial · active · expired · invalid · mismatch · grace · unlicensed`.
+- **Trial de 7 días** por instalación con anclas dobles fuera de la DB
+  (resistente a borrado casual y reinstalación superficial), marca de agua
+  discreta en la pantalla TV y banner en el panel.
+- **Detección de retroceso de reloj** (high-water `lastSeenAt` + congelado
+  del estado): volver el reloj atrás no alarga el trial ni revive licencias.
+- **Feature gating premium real**: Pantallas (2ª en adelante), Logotipo,
+  Apariencia, Usuarios, backup del Dashboard — bloqueado en UI (candado +
+  panel) y en backend (403 en las rutas admin correspondientes).
+- **API de licencias**: `GET /api/license` (público sin secretos, enriquecido
+  para admin), `GET /api/license/identity`, `POST /api/license/import`;
+  watermark de la TV integrado en `/api/content` (ETag invalidado al importar).
+- **Auditoría de licencias** (sección "license"): `license_imported`,
+  `license_rejected`, `license_expired`, `license_mismatch`, `trial_started`,
+  `trial_expired`, `clock_tampering_detected`.
+- **Generador de licencias separado** (`tools/license-generator/`):
+  `generate · renew · verify · keys · history`, ZIP con `license.json` +
+  `README.txt`, validaciones previas y auto-verificación de firma. La clave
+  PRIVADA vive fuera del repo (docs/LICENSE-SECURITY.md).
+- **Backup/restore consciente de licencias**: tablas incluidas en el backup
+  verificado; binding SIEMPRE recalculado contra el hardware actual.
+- **Tests**: 122 unitarios de licensing + 14 de integración (servidor real
+  aislado) + 6 E2E del flujo completo del administrador.
+- **Documentación**: `docs/LICENSE-SYSTEM.md`, `docs/LICENSE-GENERATOR.md`,
+  `docs/LICENSE-SECURITY.md`.
+- **Web demo del generador** (`license-demo/`, rama demo fusionada): backend
+  Bun con MODO DEMO (clave efímera por sesión, jamás válida contra producción)
+  y MODO ADMIN (clave real vía env + token de administración, sin token solo
+  escucha localhost); la UI jamás recibe la clave privada (invariante testeada).
+- **GitHub Actions para emitir licencias**
+  (`.github/workflows/license-generator.yml`, `workflow_dispatch`): firma con
+  el secret `VIEWLBA_LICENSE_PRIVATE_KEY` (enmascarado, nunca impreso), valida
+  inputs, genera el ZIP, verifica la firma antes de publicar el artifact y
+  falla de forma segura si falta el secret.
+- **CI endurecido**: permisos `pull-requests:read` para gitleaks en PRs, suite
+  de integración de licencias en el job de integración, y runtime sin archivos
+  de DB/backups en el índice git (solo quedan como datos demo en el historial).
+- **Repo**: versión 1.2.0 coherente en `package.json`, `Cargo.toml` y
+  `tauri.conf.json`.
+
 ## [1.1.0] — 2026-09-09
 
 ### Añadido

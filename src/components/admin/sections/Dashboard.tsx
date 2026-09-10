@@ -24,6 +24,7 @@ export default function Dashboard({
   realtimeConnected,
   streamServer,
   user,
+  license,
 }: {
   user: { name: string; role: string }
   screensStatus: ScreenStatus[]
@@ -32,6 +33,7 @@ export default function Dashboard({
   section: string
   setSection: (s: string) => void
   streamServer?: StreamServerStatus | null
+  license?: { status: string; daysLeft: number; features: Record<string, boolean>; contact: string } | null
 }) {
   const [content, setContent] = useState<ContentBundle | null>(null)
   const [backingUp, setBackingUp] = useState(false)
@@ -43,21 +45,26 @@ export default function Dashboard({
       .catch(() => {})
   }, [])
 
-  // FASE 16: backup manual verificado (solo ADMIN)
-  const runBackup = async () => {
-    setBackingUp(true)
-    try {
-      const r = await postJSON<{ ok: boolean; file: string; sizeBytes: number; integrity: string; tables: Record<string, number> }>("/api/admin/backup", {})
-      toast({
-        title: "Copia de seguridad creada",
-        description: `${(r.sizeBytes / 1024).toFixed(0)} KB · integridad ${r.integrity} · ${Object.keys(r.tables).length} tablas. Guardada en el servidor (BACKUP_DIR).`,
-      })
-    } catch (e) {
-      toast({ title: "Error en el backup", description: (e as Error).message, variant: "destructive" })
-    } finally {
-      setBackingUp(false)
-    }
-  }
+  // FASE 16 + LICENSING: backup manual verificado (solo ADMIN y con feature
+  // backup.selfService activa — premium; el backend también lo exige).
+  // license===null (cargando) → permitido: el backend es quien decide.
+  const backupAllowed = user?.role === "ADMIN" && (license === null || license === undefined || license.features["backup.selfService"] === true)
+  const runBackup = backupAllowed
+    ? async () => {
+        setBackingUp(true)
+        try {
+          const r = await postJSON<{ ok: boolean; file: string; sizeBytes: number; integrity: string; tables: Record<string, number> }>("/api/admin/backup", {})
+          toast({
+            title: "Copia de seguridad creada",
+            description: `${(r.sizeBytes / 1024).toFixed(0)} KB · integridad ${r.integrity} · ${Object.keys(r.tables).length} tablas. Guardada en el servidor (BACKUP_DIR).`,
+          })
+        } catch (e) {
+          toast({ title: "Error en el backup", description: (e as Error).message, variant: "destructive" })
+        } finally {
+          setBackingUp(false)
+        }
+      }
+    : null
 
   const streamUrl = content?.settings.streamUrl
   const isLocal = (content?.settings.streamSource ?? "local") === "local"
@@ -210,7 +217,7 @@ export default function Dashboard({
       </Card>
 
       {/* Actividad reciente */}
-      <RecentActivity backup={{ running: backingUp }} onBackup={user?.role === "ADMIN" ? runBackup : null} />
+      <RecentActivity backup={{ running: backingUp }} onBackup={runBackup} />
     </div>
   )
 }

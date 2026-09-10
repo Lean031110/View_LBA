@@ -57,3 +57,19 @@ El restaurador:
 | DB corrupta | restore del último backup + `prisma migrate deploy` |
 | Servidor muerto | instalar en máquina nueva (`docs/INSTALLATION.md`) + restore del backup + re-vincular TVs (tecla S → Vincular) |
 | Borrase accidental de contenido | restore (o regenerar desde el panel) |
+
+## Licencias y backups (offline licensing)
+
+Desde el sistema de licenciamiento offline (`docs/LICENSE-SYSTEM.md`):
+
+- Las tablas `LicenseState` y `LicenseHistory` **están incluidas** en el backup
+  verificado y en la verificación de integridad del restore.
+- Tras restaurar, la licencia se **revalida automáticamente** contra el
+  hardware/disco ACTUAL en la siguiente evaluación: restaurar la DB de otra
+  instalación produce estado `MISMATCH` (no una licencia clonada).
+- El **trial no se resetea** con un restore de DB: vive en anclas de archivo
+  FUERA de la base de datos (`<DATA_DIR>/licensing/state.json` y
+  `~/.viewlba-license.json`), con detección de reloj hacia atrás.
+- Escenario "servidor muerto" (cambio de máquina): reinstala + restore del
+  backup de datos y solicita una **licencia nueva** para el equipo/disco nuevo
+  (contacto 52973387); el sistema mostrará el detalle de IDs para agilizarla.

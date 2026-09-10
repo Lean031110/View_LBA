@@ -65,3 +65,15 @@ installer/gui/src-tauri/binaries/
 installer/gui/src-tauri/resources/
 installer/gui/src-tauri/gen/
 installer/gui/src-tauri/target/
+
+# Licenciamiento — artefactos del generador (NUNCA commitear claves ni
+# licencias emitidas: la clave privada vive FUERA del repo)
+tools/license-generator/out/
+tools/license-generator/history/
+tools/license-generator/*.key
+tools/license-generator/keys/
+data/licensing/
+
+# Tests de integración de licencias (sandbox: TMPDIR relativo crea ./tmp)
+/tmp/
+backups/*.db

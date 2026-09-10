@@ -6,6 +6,7 @@ import { pickFields, readBody, logAction } from "@/lib/crud"
 import { validateData, screenCreate } from "@/lib/validators"
 import { broadcast, broadcastToPairingRoom } from "@/lib/realtime"
 import type { ScreenStatus } from "@/lib/types"
+import { requireLicenseFeatureIf } from "@/lib/licensing/guard"
 
 const SPEC = {
   code: "s",
@@ -62,6 +63,13 @@ export async function POST(req: NextRequest) {
   const auth = await requireAuth("OPERATOR")
   if (isNextResponse(auth)) return auth
   const body = await readBody(req)
+
+  // LICENSING: multi-pantalla es premium. En trial se permite la PRIMERA
+  // pantalla (prueba real del producto); a partir de la segunda se exige
+  // licencia comercial. La UI oculta "Nueva pantalla" cuando está bloqueado.
+  const screenCount = await db.screen.count()
+  const denied = await requireLicenseFeatureIf(screenCount >= 1, "screens.multiDisplay")
+  if (denied) return denied
 
   // ---------- FASE 32: flujo de vinculación por código temporal ----------
   // La TV no emparejada muestra un código de 6 dígitos y espera en el room

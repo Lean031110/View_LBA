@@ -16,6 +16,7 @@ import StreamPlayer, { type StreamMetrics } from "./StreamPlayer"
 import SocialLinks from "./SocialLinks"
 import NewsTicker from "./NewsTicker"
 import ScreenPicker from "./ScreenPicker"
+import TrialWatermark from "./TrialWatermark"
 import { WifiOff } from "lucide-react"
 
 const SCREEN_KEY = "signage.screenCode"
@@ -533,6 +534,9 @@ export default function TvDisplay() {
           restaurantName={s!.restaurantName}
         />
       )}
+
+      {/* ====== WATERMARK DE LICENCIA (trial / estados limitados) ====== */}
+      <TrialWatermark visible={content.license?.watermark ?? false} lines={content.license?.watermarkLines ?? null} />
 
       {/* ====== OVERLAYS ====== */}
       {showPicker && (

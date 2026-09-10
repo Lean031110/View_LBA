@@ -4,6 +4,7 @@ import { db } from "@/lib/db"
 import { pickFields, readBody, logAction } from "@/lib/crud"
 import { validateData, userUpdate } from "@/lib/validators"
 import { clientIp } from "@/lib/rate-limit"
+import { requireLicenseFeature } from "@/lib/licensing/guard"
 
 const SPEC = {
   email: "s",
@@ -16,6 +17,13 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   const auth = await requireAuth("ADMIN")
   if (isNextResponse(auth)) return auth
   const { id } = await params
+  // LICENSING: gestionar OTROS usuarios es premium; editar la PROPIA cuenta
+  // (nombre/contraseña) siempre se permite — la seguridad personal no se
+  // encarece (no se puede cambiar rol/active propio de todos modos).
+  if (id !== auth.uid) {
+    const denied = await requireLicenseFeature("users.management")
+    if (denied) return denied
+  }
   const body = await readBody(req)
   const data = pickFields(body, SPEC)
   if (data.email) data.email = String(data.email).toLowerCase().trim()
@@ -68,6 +76,9 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   if (isNextResponse(auth)) return auth
   const { id } = await params
   if (id === auth.uid) return NextResponse.json({ error: "No puedes eliminar tu propio usuario" }, { status: 400 })
+  // LICENSING: eliminar usuarios es premium (users.management)
+  const denied = await requireLicenseFeature("users.management")
+  if (denied) return denied
   const adminsLeft = await db.user.count({ where: { role: "ADMIN", active: true, NOT: { id } } })
   const target = await db.user.findUnique({ where: { id } })
   if (target?.role === "ADMIN" && adminsLeft === 0) {

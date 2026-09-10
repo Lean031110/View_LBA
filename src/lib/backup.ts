@@ -34,7 +34,8 @@ export interface BackupResult {
   error?: string
 }
 
-const TRACKED_TABLES = ["User", "Screen", "Promotion", "Dish", "Schedule", "SocialLink", "TickerMessage", "Settings", "Log"] as const
+/** Tablas verificadas en backups/restores (exportadas para tests y docs). */
+export const TRACKED_TABLES = ["User", "Screen", "Promotion", "Dish", "Schedule", "SocialLink", "TickerMessage", "Settings", "Log", "LicenseState", "LicenseHistory"] as const
 
 /** Ejecuta un backup verificado y aplica la retención. */
 export async function createBackup(): Promise<BackupResult> {
@@ -152,6 +153,11 @@ export async function restoreBackup(backupFile: string): Promise<RestoreResult> 
 
   // 3) Restaurar (reemplazo de archivo)
   await copyFile(source, target)
+
+  // NOTA LICENSING (sección 20): la licencia restaurada se REVALIDA contra
+  // el hardware/disco ACTUAL en la próxima evaluación (src/lib/licensing) —
+  // restaurar la DB de otra instalación resultará en MISMATCH, no en una
+  // licencia clonada. El trial vive en anclas FUERA de la DB y no se resetea.
 
   return { ok: true, restoredFrom: source, safetyCopy, integrity, tables }
 }

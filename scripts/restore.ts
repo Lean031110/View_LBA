@@ -27,6 +27,7 @@ if (r.ok) {
   const tablas = Object.entries(r.tables).map(([t, n]) => `${t}=${n}`).join(" ")
   console.log(`  Tablas: ${tablas}`)
   console.log("\n▶ REINICIA ahora la app y los mini-servicios (realtime/stream) para que recarguen la DB.")
+  console.log("▶ LICENCIA: al reiniciar, la licencia restaurada se revalida contra el hardware/disco actual (MISMATCH si proviene de otra instalación).")
 } else {
   console.error("✗ NO se restauró:", r.error)
   process.exit(1)

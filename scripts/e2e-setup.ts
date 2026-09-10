@@ -7,6 +7,11 @@
  *  · Seed demo + `--with-demo-users` (credenciales DEV-only, nunca producción).
  *  · Usuario VIEWER adicional (matriz de permisos E2E).
  *  · Settings.streamKey FIJA → publicador RTMP ffmpeg de prueba (escenario 14/FASE 23).
+ *  · LICENCIA E2E: importa una licencia firmada con la clave DUMMY de test
+ *    (e2e/fixtures/licensing) — así los specs existentes (crear pantallas,
+ *    usuarios, settings) corren como ACTIVO sin verse afectados por el
+ *    gating premium del trial. El trial/gating se prueba en tests unitarios
+ *    e de integración dedicados (tests/licensing, tests/integration).
  *
  * Uso: bun scripts/e2e-setup.ts && bunx playwright test
  */
@@ -15,6 +20,7 @@ import { existsSync, rmSync } from "fs"
 import { resolve } from "path"
 import { randomBytes, scryptSync } from "crypto"
 import { PrismaClient } from "@prisma/client"
+import { E2E_DEVICE_FINGERPRINT, E2E_DISK_ID_HASH, E2E_INSTALL_PATH, E2E_LICENSE_PUBLIC_KEY } from "../e2e/fixtures/licensing/keys"
 
 const ROOT = resolve(import.meta.dir, "..")
 export const E2E_DB_URL = "file:../db/e2e.db" // relativa a prisma/schema.prisma (semántica Prisma)
@@ -82,4 +88,28 @@ try {
   await db.$disconnect()
 }
 
-console.log("✅ Entorno E2E listo (DB: db/e2e.db · usuarios demo admin/operador/viewer)")
+// 5) LICENCIA E2E: importar licencia firmada con clave DUMMY de test.
+// La identidad de instalación se fija con overrides de test (solo efectivos
+// con NODE_ENV != production — el playwright.config los exporta al server).
+process.env.VIEWLBA_TEST_DEVICE_FINGERPRINT = E2E_DEVICE_FINGERPRINT
+process.env.VIEWLBA_TEST_DISK_ID_HASH = E2E_DISK_ID_HASH
+process.env.VIEWLBA_TEST_INSTALL_PATH = E2E_INSTALL_PATH
+const { importLicenseZip } = await import("../src/lib/licensing/index")
+const { buildE2eLicense, buildE2eLicenseZip } = await import("../e2e/fixtures/licensing/license-builder")
+const license = buildE2eLicense({
+  customerName: "Restaurante E2E",
+  plan: "annual",
+  days: 365,
+  licenseId: "VLBA-e2e000000001",
+})
+const importResult = await importLicenseZip(buildE2eLicenseZip(license), {
+  actor: { uid: "e2e-setup", name: "E2E Setup" },
+  publicKey: E2E_LICENSE_PUBLIC_KEY,
+})
+if (!importResult.ok) {
+  console.error("✗ No se pudo importar la licencia E2E:", importResult.reasons)
+  process.exit(1)
+}
+console.log(`✓ Licencia E2E importada (${license.licenseId} · vence ${license.expiresAt.slice(0, 10)})`)
+
+console.log("✅ Entorno E2E listo (DB: db/e2e.db · usuarios demo admin/operador/viewer · licencia ACTIVA)")
