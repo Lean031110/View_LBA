@@ -208,6 +208,34 @@ model Settings {
   updatedAt DateTime @updatedAt
 }
 
+// ============ LICENSING (offline) ============
+// Licencia comercial importada (autoridad del SERVIDOR — fila única "main").
+// licenseJson = SignedLicense completa (JSON). Se REVALIDA contra el
+// hardware/disco actual en cada evaluación → restore/clone a otra máquina
+// = MISMATCH (docs/LICENSE-SYSTEM.md).
+model LicenseState {
+  id          String    @id @default("main")
+  licenseJson String?
+  importedAt  DateTime?
+  importedBy  String?
+  updatedAt   DateTime  @updatedAt
+}
+
+// Historial de licencias importadas (renovaciones, sección 18/25).
+model LicenseHistory {
+  id           String   @id @default(cuid())
+  licenseId    String
+  customerName String
+  plan         String // monthly | annual
+  issuedAt     DateTime
+  startsAt     DateTime
+  expiresAt    DateTime
+  deviceId     String // VWLB-XXXX-XXXX-XXXX-XXXX
+  diskId       String // DSK-XXXX-XXXX-XXXX
+  importedAt   DateTime @default(now())
+  current      Boolean  @default(false)
+}
+
 // ============ AUDIT LOG ============
 model Log {
   id        String   @id @default(cuid())

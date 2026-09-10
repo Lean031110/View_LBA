@@ -6,7 +6,7 @@ import { type Socket } from "socket.io-client"
 import { connectSocket } from "@/lib/client-socket"
 import {
   LayoutDashboard, Radio, Tag, ChefHat, Clock, Share2, Newspaper, Image as ImageIcon,
-  Volume2, MonitorPlay, Palette, Users, ScrollText, LogOut, ExternalLink,
+  Volume2, MonitorPlay, Palette, Users, ScrollText, LogOut, ExternalLink, ShieldCheck, Lock, AlertTriangle,
 } from "lucide-react"
 import LoginScreen from "./LoginScreen"
 import Dashboard from "./sections/Dashboard"
@@ -22,6 +22,7 @@ import ScreensSection from "./sections/ScreensSection"
 import AppearanceSection from "./sections/AppearanceSection"
 import UsersSection from "./sections/UsersSection"
 import LogsSection from "./sections/LogsSection"
+import LicenseSection from "./sections/LicenseSection"
 import type { ScreenStatus } from "@/lib/types"
 import { APP_NAME, APP_LOGO_MARK } from "@/lib/brand"
 
@@ -58,7 +59,24 @@ const SECTIONS = [
   { id: "users", label: "Usuarios", icon: Users, roles: ["ADMIN"] },
   // FASE 4: auditoría sin VIEWER (el backend también exige OPERATOR+)
   { id: "logs", label: "Registros", icon: ScrollText, roles: ["ADMIN", "OPERATOR"] },
+  // LICENSING: estado + importación (importar solo ADMIN dentro de la sección)
+  { id: "license", label: "Licencia", icon: ShieldCheck, roles: ["ADMIN", "OPERATOR"] },
 ] as const
+
+/** Secciones bloqueadas durante trial/limitado (mapeadas a flags REALES). */
+const PREMIUM_SECTIONS: Record<string, string> = {
+  branding: "branding.customLogo",
+  appearance: "themes.custom",
+  users: "users.management",
+}
+
+/** Estado de licencia para el panel (banner + gating de premium). */
+interface LicensePanelInfo {
+  status: "trial" | "active" | "expired" | "invalid" | "mismatch" | "grace" | "unlicensed"
+  daysLeft: number
+  features: Record<string, boolean>
+  contact: string
+}
 
 export default function AdminApp() {
   const [user, setUser] = useState<AdminUser | null>(null)
@@ -67,6 +85,7 @@ export default function AdminApp() {
   const [screensStatus, setScreensStatus] = useState<ScreenStatus[]>([])
   const [realtimeConnected, setRealtimeConnected] = useState(false)
   const [streamServer, setStreamServer] = useState<StreamServerStatus | null>(null)
+  const [license, setLicense] = useState<LicensePanelInfo | null>(null)
   const socketRef = useRef<Socket | null>(null)
 
   // Verificar sesión existente
@@ -77,6 +96,28 @@ export default function AdminApp() {
       .catch(() => setUser(null))
       .finally(() => setChecking(false))
   }, [])
+
+  // LICENSING: estado para banner de trial + gating premium (refresco al
+  // volver a la sección Licencia y cada 60s — barato: cache 3s en backend)
+  const loadLicense = useCallback(() => {
+    fetch("/api/license")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) =>
+        setLicense(
+          d && d.status
+          ? { status: d.status, daysLeft: d.daysLeft ?? 0, features: d.features ?? {}, contact: d.contact ?? "52973387" }
+          : null
+        )
+      )
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (!user) return
+    loadLicense()
+    const t = setInterval(loadLicense, 60_000)
+    return () => clearInterval(t)
+  }, [user, loadLicense, section])
 
   // Conexión realtime del panel (estado de pantallas + stream)
   useEffect(() => {
@@ -129,7 +170,7 @@ export default function AdminApp() {
   }
 
   const visibleSections = SECTIONS.filter((s) => s.roles.includes(user.role as never))
-  const props = { user, screensStatus, realtimeConnected, sendCommand, section, setSection, streamServer }
+  const props = { user, screensStatus, realtimeConnected, sendCommand, section, setSection, streamServer, license }
 
   const SECTION_COMPONENTS = {
     dashboard: Dashboard,
@@ -145,8 +186,15 @@ export default function AdminApp() {
     appearance: AppearanceSection,
     users: UsersSection,
     logs: LogsSection,
+    license: LicenseSection,
   } as unknown as Record<string, React.ComponentType<typeof props>>
   const CurrentSection = SECTION_COMPONENTS[section] ?? Dashboard
+
+  // Gating premium (secciones reales bloqueadas en trial/limitado)
+  const lockedFeature = PREMIUM_SECTIONS[section]
+  const sectionLocked = !!lockedFeature && license !== null && license.features[lockedFeature] !== true
+
+  const banner = licenseBanner(license)
 
   return (
     <div className="min-h-screen flex" style={{ background: "#0c0c10" }}>
@@ -167,6 +215,8 @@ export default function AdminApp() {
           {visibleSections.map((s) => {
             const Icon = s.icon
             const active = section === s.id
+            const featureKey = PREMIUM_SECTIONS[s.id]
+            const locked = !!featureKey && license !== null && license.features[featureKey] !== true
             return (
               <button
                 key={s.id}
@@ -176,7 +226,8 @@ export default function AdminApp() {
                 }`}
               >
                 <Icon size={17} className={active ? "text-amber-400" : ""} />
-                {s.label}
+                <span className="flex-1 text-left">{s.label}</span>
+                {locked && <Lock size={12} className="text-amber-400/50 shrink-0" aria-label="Requiere licencia" />}
               </button>
             )
           })}
@@ -207,8 +258,72 @@ export default function AdminApp() {
 
       {/* Contenido */}
       <main className="flex-1 min-w-0 overflow-x-hidden">
-        <CurrentSection {...props} />
+        {/* Banner de licencia (trial / limitado) — nunca con licencia activa */}
+        {banner && (
+          <div className={`flex items-center gap-3 px-5 py-2.5 text-sm border-b ${banner.tone}`}>
+            <AlertTriangle size={15} className="shrink-0" />
+            <span className="flex-1">{banner.text}</span>
+            <button onClick={() => setSection("license")} className="shrink-0 rounded-md bg-white/10 hover:bg-white/20 px-3 py-1 text-xs font-semibold text-white transition-colors">
+              Ir a Licencia
+            </button>
+          </div>
+        )}
+        {sectionLocked ? <PremiumLocked notice={license!.status === "trial" ? "función premium" : "licencia requerida"} /> : <CurrentSection {...props} />}
       </main>
+    </div>
+  )
+}
+
+/** Texto del banner según el estado de licencia. */
+function licenseBanner(license: LicensePanelInfo | null): { text: string; tone: string } | null {
+  if (!license) return null
+  switch (license.status) {
+    case "active":
+    case "grace":
+      return null
+    case "trial":
+      return {
+        text: `Versión de prueba — ${license.daysLeft > 1 ? `quedan ${license.daysLeft} días` : license.daysLeft === 1 ? "queda 1 día" : "último día"}. Las funciones premium se activan con tu licencia.`,
+        tone: "bg-amber-500/10 text-amber-200 border-amber-500/25",
+      }
+    case "unlicensed":
+      return {
+        text: `Período de prueba finalizado — para continuar, activa tu licencia. Contacto: ${license.contact}.`,
+        tone: "bg-red-500/10 text-red-300 border-red-500/25",
+      }
+    case "expired":
+      return {
+        text: `Licencia vencida — renueva para recuperar todas las funciones. Contacto: ${license.contact}.`,
+        tone: "bg-orange-500/10 text-orange-300 border-orange-500/25",
+      }
+    case "mismatch":
+      return {
+        text: `La licencia está vinculada a otro equipo/disco. Contacto: ${license.contact}.`,
+        tone: "bg-red-500/10 text-red-300 border-red-500/25",
+      }
+    default:
+      return {
+        text: `Licencia no válida. Importa una licencia emitida para este equipo. Contacto: ${license.contact}.`,
+        tone: "bg-red-500/10 text-red-300 border-red-500/25",
+      }
+  }
+}
+
+/** Panel de sección bloqueada por licencia (premium). */
+function PremiumLocked({ notice }: { notice: string }) {
+  return (
+    <div className="p-6 max-w-3xl">
+      <div className="rounded-2xl border border-amber-500/25 bg-amber-500/[0.06] p-10 text-center space-y-4">
+        <div className="w-14 h-14 rounded-2xl bg-amber-500/15 flex items-center justify-center mx-auto">
+          <Lock size={26} className="text-amber-400" />
+        </div>
+        <h2 className="text-xl font-bold text-white">{notice === "función premium" ? "Función disponible en el plan comercial" : "Requiere licencia comercial"}</h2>
+        <p className="text-sm text-white/50 max-w-md mx-auto leading-relaxed">
+          Esta sección se habilita con una licencia <span className="text-amber-300 font-semibold">Mensual (USD 10)</span> o{" "}
+          <span className="text-amber-300 font-semibold">Anual (USD 100)</span>. El resto del sistema — contenido, transmisión y pantalla TV — sigue funcionando con normalidad.
+        </p>
+        <p className="text-sm text-amber-300 font-semibold">52973387</p>
+      </div>
     </div>
   )
 }

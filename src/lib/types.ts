@@ -112,7 +112,16 @@ export interface ContentBundle {
   socials: SocialLinkDTO[]
   ticker: TickerMessageDTO[]
   screens: { code: string; name: string; location: string | null; audioDeviceId: string | null }[]
+  /** Estado público de licencia para la TV (watermark) — sin datos privados. */
+  license: PublicLicenseInfo
   serverTime: string
+}
+
+/** Resumen de licencia seguro para la pantalla TV (sección 13/16). */
+export interface PublicLicenseInfo {
+  status: "trial" | "active" | "expired" | "invalid" | "mismatch" | "grace" | "unlicensed"
+  watermark: boolean
+  watermarkLines: string[] | null
 }
 
 export type StreamState = "live" | "connecting" | "offline" | "fallback" | "disabled"

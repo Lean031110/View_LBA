@@ -5,6 +5,41 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato está basado en [Keep a Changelog](https://keepachangelog.com/es/1.1.0/),
 y este proyecto adhiere a [SemVer](https://semver.org/lang/es/).
 
+## [Sin publicar] — Licenciamiento offline
+
+### Añadido
+
+- **Sistema de licencias 100% offline** (Ed25519, cero dependencias nuevas):
+  vinculación a instalación (`INSTALLATION_ID VWLB-…`) + disco (`DISK-…`),
+  firma sobre payload canónico, importación ZIP validada en su totalidad
+  (firma → esquema → producto → fechas → equipo → disco → anti-downgrade),
+  renovaciones con historial (`LicenseState`/`LicenseHistory`), y estados
+  `trial · active · expired · invalid · mismatch · grace · unlicensed`.
+- **Trial de 7 días** por instalación con anclas dobles fuera de la DB
+  (resistente a borrado casual y reinstalación superficial), marca de agua
+  discreta en la pantalla TV y banner en el panel.
+- **Detección de retroceso de reloj** (high-water `lastSeenAt` + congelado
+  del estado): volver el reloj atrás no alarga el trial ni revive licencias.
+- **Feature gating premium real**: Pantallas (2ª en adelante), Logotipo,
+  Apariencia, Usuarios, backup del Dashboard — bloqueado en UI (candado +
+  panel) y en backend (403 en las rutas admin correspondientes).
+- **API de licencias**: `GET /api/license` (público sin secretos, enriquecido
+  para admin), `GET /api/license/identity`, `POST /api/license/import`;
+  watermark de la TV integrado en `/api/content` (ETag invalidado al importar).
+- **Auditoría de licencias** (sección "license"): `license_imported`,
+  `license_rejected`, `license_expired`, `license_mismatch`, `trial_started`,
+  `trial_expired`, `clock_tampering_detected`.
+- **Generador de licencias separado** (`tools/license-generator/`):
+  `generate · renew · verify · keys · history`, ZIP con `license.json` +
+  `README.txt`, validaciones previas y auto-verificación de firma. La clave
+  PRIVADA vive fuera del repo (docs/LICENSE-SECURITY.md).
+- **Backup/restore consciente de licencias**: tablas incluidas en el backup
+  verificado; binding SIEMPRE recalculado contra el hardware actual.
+- **Tests**: 122 unitarios de licensing + 14 de integración (servidor real
+  aislado) + 6 E2E del flujo completo del administrador.
+- **Documentación**: `docs/LICENSE-SYSTEM.md`, `docs/LICENSE-GENERATOR.md`,
+  `docs/LICENSE-SECURITY.md`.
+
 ## [1.1.0] — 2026-09-09
 
 ### Añadido

@@ -4,6 +4,11 @@
 # los "secretos" DUMMY de fixtures de tests (valores fijos, etiquetados como
 # tests, válidos solo en entornos efímeros de E2E/CI) y los placeholders
 # documentados de ejemplo.
+#
+# LICENSING: la clave de firma E2E (e2e/fixtures/licensing/) es DUMMY —
+# solo verifica contra VIEWLBA_LICENSE_PUBLIC_KEY del entorno E2E, jamás
+# contra la clave pública de PRODUCCIÓN del producto. La clave privada
+# REAL vive fuera del repo (docs/LICENSE-SECURITY.md).
 [allowlist]
   description = "Fixtures de tests con secretos DUMMY (no reales) y placeholders documentados"
   paths = [
@@ -15,4 +20,7 @@
     '''(^|/)\.env\.example$''',
     '''(^|/)scripts/publish-github\.sh$''',
     '''(^|/)\.github/workflows/ci\.yml$''',
+    '''(^|/)e2e/fixtures/licensing/.*$''',
+    '''(^|/)tests/licensing/crypto\.test\.ts$''',
+    '''(^|/)tools/license-generator/README\.md$''',
   ]
