@@ -36,7 +36,7 @@
     "externalBin": ["binaries/viewlba-installer"],
     "resources": ["resources/server/**/*", "resources/runtime/**/*", "resources/manifest.json"],
     "windows": {
-      "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
+      "webviewInstallMode": { "type": "offlineInstaller", "silent": true },
       "nsis": {
         "installerIcon": "icons/icon.ico",
         "installMode": "perMachine",

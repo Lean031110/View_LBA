@@ -4,40 +4,57 @@
 
 | Archivo | Plataforma | Fuente |
 |---|---|---|
-| `ViewLBA-Server.AppImage` | Linux (GUI + `--cli`) | Tauri (CI ubuntu) |
-| `ViewLBA-Server-CLI.AppImage` | Linux (headless) | `installer/package/appimage.sh` (CI y local) |
-| `viewlba-server_<ver>_amd64.deb` | Linux | Tauri deb (CI ubuntu) |
-| `ViewLBA-Server-Setup.exe` | Windows (GUI NSIS) | Tauri (CI windows) |
-| `SHA256SUMS.txt` | todos | CI (re-computado sobre los archivos subidos) |
+| `ViewLBA-Server-<ver>-x86_64.deb` | Linux (GUI Tauri, obligatorio) | `cargo tauri build --bundles deb --ci` |
+| `ViewLBA-Server-<ver>-x86_64.AppImage` | Linux (GUI, opcional) | `cargo tauri build --bundles appimage --ci` |
+| `ViewLBA-Server-CLI-<ver>-x86_64.AppImage` | Linux (headless) | `installer/package/appimage.sh` |
+| `ViewLBA-Server-Setup-<ver>.exe` | Windows (GUI NSIS, obligatorio) | `cargo tauri build --bundles nsis --ci` (desde `C:\v`) |
+| `SHA256SUMS.txt` | todos | release job (re-computado sobre los subidos) |
+| `manifest-{linux,windows}.json` | todos | `installer/package/build-manifest.ts` (commit ↔ binario) |
+
+Todos con `SHA256SUMS` verificable. El payload es **completamente offline**:
+la red se usa SOLO durante el build (deps, Bun, NSSM, herramientas de Tauri);
+el instalador final funciona sin Internet.
 
 ## Release automático (recomendado)
 
 ```bash
 # 1. Todo verde en CI (quality/integration/e2e/security + installer tests)
-# 2. Tag y push:
-git tag v1.0.0
-git push origin v1.0.0
+# 2. Tag de candidato (primero) y push:
+git tag v1.0.1-rc.1 && git push origin v1.0.1-rc.1
+# 3. Solo si TODO pasa (build+validación+packaging+smoke), tag estable:
+git tag v1.0.1 && git push origin v1.0.1
 ```
 
-El workflow `.github/workflows/release-installer.yml`:
+El workflow `.github/workflows/release-installer.yml` (3 jobs):
 
-1. **Linux (ubuntu-latest)**: tests del installer → `bundle-server.ts`
-   (payload offline: servidor + node_modules completos + build precompilado
-   + Bun + sidecar compilado) → GUI Tauri (AppImage + deb) → AppImage CLI →
-   **verificación real** (el AppImage arranca y responde `--json detect` y
-   preflight) → SHA256SUMS.
-2. **Windows (windows-latest)**: mismo payload (con `runtime/bun.exe` +
-   `runtime/nssm.exe`) → smoke del sidecar `.exe` (`--json detect`) →
-   `cargo tauri build --bundles nsis` → `ViewLBA-Server-Setup.exe` →
-   SHA256SUMS.
-3. **Release**: descarga artefactos, re-computa checksums y crea el GitHub
-   Release con notas automáticas.
+1. **build-linux**: deps (build env) → tests del installer → **payload de
+   producción** (`bundle-server.ts`, guards incluidos) → **smoke REAL**
+   (`smoke-payload.sh`: migrate deploy + arranque + `/api/health` +
+   mini-services + SIGTERM) → `.deb` **obligatorio** (validado con
+   `dpkg-deb --info/--contents` y con el payload dentro) → AppImage GUI
+   **opcional y aislado** (un fallo de linuxdeploy NO tumba el .deb) →
+   AppImage CLI (arranque verificado) → manifiest + SHA256SUMS + artefactos.
+2. **build-windows**: mismo payload (con `runtime/bun.exe` +
+   `runtime/nssm.exe`, engines de Windows) → smoke del contrato
+   (entrypoint/engines/sidecars/0 symlinks) + sidecar `--json detect` →
+   NSIS desde ruta corta `C:\v` → **exactamente 1 `.exe`** validado
+   (PE/MZ, >0 bytes) → manifiest + SHA256SUMS + artefactos.
+3. **release**: **NO recompila nada**. `needs: [build-linux, build-windows]`
+   → gitleaks → valida el conjunto completo (exe+deb+CLI AppImage) →
+   `SHA256SUMS.txt` consolidado → publica el GitHub Release.
+
+Versiones EXACTAS (reproducible — nunca `latest`): Bun build `1.4.2`
+(setup-bun, sin el input `cache` no soportado), Bun del payload `1.3.14`,
+tauri-cli `2.11.4` (`--locked`), NSSM `2.24`.
 
 ## Release manual (Linux, sin CI)
 
 ```bash
-bun install && bunx prisma generate          # repo listo
+bun install && bunx prisma generate          # repo listo (entorno de build)
+(cd mini-services/realtime-service && bun install --frozen-lockfile)
+(cd mini-services/stream-service && bun install --frozen-lockfile)
 bun installer/package/bundle-server.ts --platform=linux
+bash installer/package/smoke-payload.sh dist/release/linux/ViewLBA-Server  # validar ANTES de empaquetar
 bash installer/package/appimage.sh           # → dist/release/linux/ViewLBA-Server-CLI.AppImage
 sha256sum dist/release/linux/ViewLBA-Server-CLI.AppImage
 ```
@@ -47,47 +64,78 @@ La GUI requiere Rust + webkit2gtk (por eso vive en CI):
 ```bash
 sudo apt install libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev \
      libayatana-appindicator3-dev librsvg2-dev
-cargo install tauri-cli --version "^2" --locked
+cargo install tauri-cli --version 2.11.4 --locked      # versión EXACTA
 # sidecar con el sufijo de target de Tauri:
+mkdir -p installer/gui/src-tauri/binaries
 cp dist/release/linux/ViewLBA-Server/viewlba-installer \
    installer/gui/src-tauri/binaries/viewlba-installer-x86_64-unknown-linux-gnu
-# payload:
-cp -a dist/release/linux/ViewLBA-Server/{resources,runtime,manifest.json} \
-   installer/gui/src-tauri/resources/../ 2>/dev/null || true
-cd installer/gui/src-tauri && cargo tauri build
+# payload (misma estructura que los globs de tauri.conf):
+mkdir -p installer/gui/src-tauri/resources
+cp -a dist/release/linux/ViewLBA-Server/resources/server installer/gui/src-tauri/resources/server
+cp -a dist/release/linux/ViewLBA-Server/runtime installer/gui/src-tauri/resources/runtime
+cp dist/release/linux/ViewLBA-Server/manifest.json installer/gui/src-tauri/resources/
+cd installer/gui/src-tauri
+cargo tauri build --bundles deb --ci          # obligatorio
+cargo tauri build --bundles appimage --ci     # opcional (APPIMAGE_EXTRACT_AND_RUN=1)
 ```
 
-## Payload offline — qué incluye y por qué
+## Payload de producción — qué incluye y por qué
 
-`bundle-server.ts` ensambla (FUERA del repo — evita la inferencia de raíz
-de Turbopack por git-root que anidaba el standalone):
+**PRINCIPIO: BUILD DEPENDENCIES ≠ RUNTIME DEPENDENCIES.** El entorno de
+build (repo con node_modules completos, Turbopack, Tailwind, TypeScript)
+puede ser grande: vive en el runner y NO se distribuye. El payload V2 es
+EXPLÍCITO (`installer/package/payload.ts` → `createProductionPayload()`):
 
-- **Código**: repo con exclusiones estándar (nunca datos ni node_modules).
-- **node_modules COMPLETOS** (dev+prod): el payload debe poder compilar
-  (Tailwind/PostCSS son devDeps) y migrar (Prisma CLI + engines del SO).
-- **Build standalone precompilado** (`bun run build` en el staging).
-- **Bun** oficial (MIT) descargado del release exacto (`runtime/bun`+`bunx`).
+- **`.next/standalone/`**: server.js + node_modules **trazados por Next**
+  (next, react, sharp, @prisma/client, engines — autosuficiente) + static +
+  public. Copiado por **WHITELIST**: el standalone espeja el árbol del repo
+  (tracing root) y sin filtro metería `db/`, `.env`, `logs/`, `download/`
+  dentro del instalador (fuga real de datos, detectada en auditoría).
+- **node_modules PODADO** (raíces: `prisma`, `@prisma/client`, `zod`; walk
+  transitivo por `dependencies`+`optionalDependencies`, nunca devDeps):
+  - `prisma` CLI + `@prisma/engines` (103 MB): imprescindibles para
+    `prisma migrate deploy/status` **durante la instalación** (offline).
+  - `@prisma/client` + `.prisma/client` (generado): los importan
+    `scripts/backup.ts`, `scripts/logs-purge.ts` (timers systemd) y
+    `prisma/seed.ts`.
+  - `zod` (8 MB): lo importa `src/lib/env.ts` (reparaciones).
+  - **`next` (202 MB) EXCLUIDO a propósito**: el compilador/SWC es
+    dependencia de build. En runtime el servidor usa el standalone trazado;
+    la lógica de instalación va EMBEBIDA en el sidecar (`bun build
+    --compile`). Reparar DESDE FUENTE (`bun scripts/init-production.ts`)
+    requiere `bun install` con red — decisión documentada.
+- **Scripts de runtime**: `start.ts`, `backup.ts`, `restore.ts`,
+  `logs-purge.ts`, `media-gc.ts`, `init-production.ts`, `lib/{env-file,
+  production-init,prompt}.ts` + `src/lib/{auth,env,validators,backup,media}.ts`.
+- **`prisma/`**: `schema.prisma` + `migrations/` + `seed.ts`.
+- **mini-services**: realtime (socket.io) + stream (node-media-server) con
+  SUS node_modules — solo runtime deps (sus package.json no tienen devDeps).
+- **Configs mínimos** (KB): next.config.ts, tsconfig.json, postcss/tailwind
+  (reparación con red reproducible: `bun.lock` incluido).
+
+Tamaño resultante: **~450 MB** (frente a los **1284 MB** de la V1, que
+rompía NSIS con rutas >260 por cadenas `node_modules` anidadas de devDeps/UI
+compilada — `cmdk/node_modules/@radix-ui/react-dialog/…` — y ahogaba
+linuxdeploy con 1.28 GB). `bunx` es un symlink (−88 MB en deb/AppImage).
+
+**Guards** (`validatePayload`): el build **FALLA ANTES de Tauri/NSIS** si el
+payload supera 700 MB / 150k archivos / ruta relativa >200 chars /
+profundidad >16, contiene paquetes prohibidos (typescript, eslint,
+playwright, tailwind, cmdk, radix…), datos (`db/`, `.env`, `logs/`,
+`download/`, `tests/`, `docs/`, `skills/`), symlinks fuera de
+`node_modules/.bin` (en Windows: NINGUNO), o duplicados accidentales.
+
+## Smoke del payload (antes de empaquetar)
+
+`installer/package/smoke-payload.sh` arranca producción DESDE el payload
+(no desde el repo): migrate deploy con el node_modules podado (cero red) →
+seed → arranque (`runtime/bun scripts/start.ts`) → `GET /api/health` 200
+(database ok + storage ok) → `GET /` 200 → realtime + stream vivos →
+SIGTERM limpio. En Windows el job valida el contrato estructural (entrypoint,
+engines, sidecars, 0 symlinks) y ejecuta el sidecar `--json detect`.
+
+## Runtime incluido
+
+- **Bun 1.3.14** (MIT) del release oficial exacto: `runtime/bun` +
+  `runtime/bunx` (symlink en Linux; copia en Windows la crea el installer).
 - **NSSM 2.24** (Windows, public domain de nssm.cc) en `runtime/nssm.exe`.
-- **Sidecar** `viewlba-installer` compilado (`bun build --compile`).
-- `manifest.json`: versión, commit, plataforma, fecha.
-
-Verificación de payload realizada localmente (evidencia en
-`docs/INSTALLER-LINUX.md`): migrate offline ✓, arranque con runtime incluido ✓,
-health real ✓.
-
-## Checksums
-
-- CI genera `SHA256SUMS.txt` re-computado sobre los artefactos finales.
-- Verificación del usuario: `sha256sum -c SHA256SUMS.txt` (Linux) /
-  `Get-FileHash` (Windows).
-- El AppImage CLI lleva además `*.AppImage.sha256` junto al archivo.
-
-## Reglas de verificación (no negociables)
-
-- **Nada de PASS sin evidencia.** Windows end-to-end sigue **NOT VERIFIED**
-  hasta el procedimiento de `docs/INSTALLER-WINDOWS.md` § verificación.
-- Cada release de CI incluye: tests del installer + smoke del sidecar +
-  arranque del AppImage (Linux) + smoke del exe (Windows) — si fallan, no
-  hay release.
-- Versionar con tags semver (`vX.Y.Z`); el número viaja al `.deb`/NSIS y al
-  `manifest.json` del payload.

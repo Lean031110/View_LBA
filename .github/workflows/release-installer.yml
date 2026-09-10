@@ -1,13 +1,29 @@
 name: Release Installers
 
-# Artefactos oficiales de instalación de ViewLBA Server:
-#   Linux:   ViewLBA-Server.AppImage (GUI Tauri + --cli) · ViewLBA-Server-CLI.AppImage · .deb
-#   Windows: ViewLBA-Server-Setup.exe (GUI Tauri + sidecar)
-# Todos con checksum SHA256. El paquete es OFFLINE (servidor+deps+build+bun+NSSM).
+# ============================================================================
+# Build + Release de los instaladores oficiales de ViewLBA Server.
 #
-# La GUI y los binarios de Windows SOLO se construyen aquí (el sandbox de
-# desarrollo no tiene Rust/Windows): la lógica común ya está testeada en CI
-# normal (tests/installer/*, incluida la lógica NSSM/netsh con RecordingRunner).
+# ARQUITECTURA (3 jobs — separación de responsabilidades):
+#   build-linux   → payload de producción (bundle-server, guards + smoke REAL)
+#                   → .deb (OBLIGATORIO) → AppImage GUI (opcional, aislado)
+#                   → AppImage CLI (verificado en ejecución) → artefactos
+#   build-windows → payload (mismos guards) → Setup.exe NSIS → validaciones
+#   release       → NO recompila NADA: descarga artefactos ya validados,
+#                   gitleaks, SHA256SUMS.txt y publica el GitHub Release.
+#
+# REPRODUCIBILIDAD (versiones EXACTAS — nunca "latest"):
+#   · Bun del build:        1.4.2     (oven-sh/setup-bun, input soportado)
+#   · Bun del payload:      1.3.14    (runtime DISTRIBUIDO dentro del paquete)
+#   · tauri-cli (cargo):    2.11.4    (--locked, versión exacta)
+#   · NSSM:                 2.24
+#
+# EL PAYLOAD ES DE PRODUCCIÓN (BUILD deps ≠ RUNTIME deps): ~450 MB frente a
+# los 1284 MB de la V1 (que rompían NSIS por rutas >260 y ahogaban linuxdeploy).
+# Los guards de installer/package/payload.ts fallan ANTES de empaquetar.
+#
+# Offline: la red se usa SOLO durante el build (deps, bun, nssm, herramientas
+# de Tauri). El instalador final funciona sin Internet.
+# ============================================================================
 
 on:
   push:
@@ -21,41 +37,73 @@ concurrency:
   group: release-installer-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Versiones EXACTAS (determinismo — ver cabecera).
+  BUILD_BUN: "1.4.2"
+  PAYLOAD_BUN: "1.3.14"
+  TAURI_CLI: "2.11.4"
+
 jobs:
   # ------------------------------------------------------------------ Linux
-  linux:
-    name: Linux (AppImage GUI + CLI + deb)
+  build-linux:
+    name: "Linux: payload + .deb + AppImages"
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: oven-sh/setup-bun@v2
+      - name: Instalar Bun (versión exacta)
+        uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
-          cache: true
+          bun-version: ${{ env.BUILD_BUN }}
+          # NOTA: el input `cache` NO está soportado por la versión actual de
+          # setup-bun@v2 (warning "Unexpected input(s) 'cache'") — no usarlo.
 
-      - name: Dependencias del repo (para compilar el sidecar y tests de humo)
+      - name: Dependencias del repo (entorno de build — completo aquí, PODADO en el payload)
         run: bun install --frozen-lockfile
 
-      - name: Prisma Client (repo)
+      - name: Dependencias de mini-services (entorno de build)
+        run: |
+          (cd mini-services/realtime-service && bun install --frozen-lockfile)
+          (cd mini-services/stream-service && bun install --frozen-lockfile)
+
+      - name: Prisma Client (entorno de build)
         run: bunx prisma generate
 
-      - name: Tests del installer (lógica verificada antes de empaquetar)
+      - name: Tests del installer (lógica verificada ANTES de empaquetar)
         run: bun test tests/installer/
 
-      - name: Ensamblar payload offline (servidor + deps + build + bun)
-        run: bun installer/package/bundle-server.ts --platform=linux
+      - name: Versión de release (del tag o del package.json)
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then V="${GITHUB_REF_NAME#v}"; else V=$(bun -e 'console.log(require("./package.json").version)'); fi
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+          echo "→ versión: $V"
 
-      # ---- GUI (Tauri) ----
+      - name: Inyectar versión en Tauri
+        run: |
+          bun -e 'const fs=require("fs");const f="installer/gui/src-tauri/tauri.conf.json";const j=JSON.parse(fs.readFileSync(f,"utf8"));j.version=process.argv[1];fs.writeFileSync(f,JSON.stringify(j,null,2)+"\n")' "$VERSION"
+
+      - name: "Payload de producción (bundle-server: createProductionPayload + guards)"
+        run: bun installer/package/bundle-server.ts --platform=linux --version="$VERSION" --bun-version="${PAYLOAD_BUN}"
+
+      # SMOKE REAL (§ contrato): el payload debe EJECUTARSE antes de empaquetar.
+      - name: Smoke del payload (migrate + arranque + health + mini-services + SIGTERM)
+        run: bash installer/package/smoke-payload.sh dist/release/linux/ViewLBA-Server
+
+      # ---- Tauri (GUI) ----
       - name: Dependencias de sistema para Tauri (Linux)
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq libwebkit2gtk-4.1-dev build-essential curl wget file \
             libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 
-      - name: Rust toolchain
+      - name: Rust toolchain (stable, exacta)
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: tauri-cli (versión EXACTA + lockfile)
+        run: cargo install tauri-cli --version "${TAURI_CLI}" --locked
 
       - name: "Sidecar → src-tauri/binaries (sufijo target de Tauri)"
         run: |
@@ -63,44 +111,47 @@ jobs:
           cp dist/release/linux/ViewLBA-Server/viewlba-installer \
              installer/gui/src-tauri/binaries/viewlba-installer-x86_64-unknown-linux-gnu
 
-      # OJO: los globs de tauri.conf (resources/server/**, resources/runtime/**)
-      # se resuelven relativos a src-tauri — se copia la MISMA estructura que
-      # el payload (resources/server, resources/runtime) para que coincida.
-      # cp -aL: desreferencia links (Git Bash de Windows no puede crearlos).
+      # Misma estructura que los globs de tauri.conf (relativos a src-tauri).
+      # cp -a (SIN -L): el staging ya está desreferenciado; preserva el symlink
+      # bunx→bun (88 MB menos en deb/AppImage).
       - name: "Payload → src-tauri/resources"
         run: |
           mkdir -p installer/gui/src-tauri/resources
-          cp -aL dist/release/linux/ViewLBA-Server/resources/server installer/gui/src-tauri/resources/server
-          cp -aL dist/release/linux/ViewLBA-Server/runtime installer/gui/src-tauri/resources/runtime
+          cp -a dist/release/linux/ViewLBA-Server/resources/server installer/gui/src-tauri/resources/server
+          cp -a dist/release/linux/ViewLBA-Server/runtime installer/gui/src-tauri/resources/runtime
           cp dist/release/linux/ViewLBA-Server/manifest.json installer/gui/src-tauri/resources/
+          # aserciones del contrato (fallan antes de compilar Tauri)
           test -f installer/gui/src-tauri/resources/server/package.json
+          test -f installer/gui/src-tauri/resources/server/.next/standalone/server.js
+          test -d installer/gui/src-tauri/resources/server/node_modules/prisma
+          test -d installer/gui/src-tauri/resources/server/node_modules/@prisma/engines
           test -x installer/gui/src-tauri/resources/runtime/bun
           test -f installer/gui/src-tauri/resources/manifest.json
 
-      - name: "Construir la GUI (AppImage + deb con sidecar y payload)"
+      # .deb y .AppImage SEPARADOS: un fallo de linuxdeploy/AppImage NO puede
+      # tumbar el .deb (prioridad de la misión). El deb es OBLIGATORIO.
+      - name: "Construir .deb (OBLIGATORIO — sin linuxdeploy)"
         working-directory: installer/gui/src-tauri
-        run: |
-          cargo install tauri-cli --version "^2" --locked
-          cargo tauri build --bundles appimage,deb
+        run: cargo tauri build --bundles deb --ci
         env:
-          # información de versión para el bundle
           TAURI_BUNDLER_TOOLS_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Los runners de GitHub NO tienen FUSE: linuxdeploy es un AppImage y
-          # sin esto el exec falla (spawn ENOENT → "failed to run linuxdeploy").
+
+      - name: "Construir AppImage GUI (opcional — aislado del .deb)"
+        working-directory: installer/gui/src-tauri
+        run: cargo tauri build --bundles appimage --ci
+        # AppImage usa linuxdeploy (FUSE-less) — históricamente frágil en CI.
+        # continue-on-error: el release NO depende de este artefacto.
+        continue-on-error: true
+        env:
+          TAURI_BUNDLER_TOOLS_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPIMAGE_EXTRACT_AND_RUN: "1"
           NO_STRIP: "1"
 
-      - name: Recoger artefactos GUI
-        run: |
-          mkdir -p dist/release/linux/gui
-          cp installer/gui/src-tauri/target/release/bundle/appimage/*.AppImage dist/release/linux/gui/ || true
-          cp installer/gui/src-tauri/target/release/bundle/deb/*.deb dist/release/linux/gui/ || true
-
-      # ---- CLI AppImage (headless, sin Rust — el mismo payload) ----
-      - name: AppImage CLI (headless)
+      # ---- CLI AppImage (headless — el mismo payload, sin linuxdeploy) ----
+      - name: AppImage CLI (headless, appimagetool directo)
         run: bash installer/package/appimage.sh dist/release/linux/ViewLBA-Server
 
-      - name: Verificación REAL del AppImage (arranque del installer)
+      - name: Verificación REAL del AppImage CLI (arranca el installer)
         run: |
           set -e
           IMG=dist/release/linux/ViewLBA-Server-CLI.AppImage
@@ -108,52 +159,147 @@ jobs:
           echo
           APPIMAGE_EXTRACT_AND_RUN=1 "$IMG" --cli preflight < /dev/null | tee /tmp/pre.txt
           grep -q "systemd" /tmp/pre.txt || echo "::warning::preflight sin menciones de systemd"
-          cat dist/release/linux/ViewLBA-Server-CLI.AppImage.sha256
 
-      - name: SHA256SUMS (Linux)
+      # ---- Validación de artefactos (§14: fallar si falta/corrupto) ----
+      - name: "Validar y renombrar artefactos (nombres públicos finales)"
         run: |
-          cd dist/release/linux
-          sha256sum ViewLBA-Server-CLI.AppImage gui/*.AppImage gui/*.deb > SHA256SUMS.txt 2>/dev/null || \
-            sha256sum ViewLBA-Server-CLI.AppImage > SHA256SUMS.txt
+          set -euo pipefail
+          mkdir -p dist/release/linux/out
+          DEB_SRC=$(ls installer/gui/src-tauri/target/release/bundle/deb/*.deb | head -1)
+          test -s "$DEB_SRC" || { echo "✗ .deb vacío o ausente"; exit 1; }
+          DEB_OUT="dist/release/linux/out/ViewLBA-Server-$VERSION-x86_64.deb"
+          cp "$DEB_SRC" "$DEB_OUT"
+
+          # Validación REAL del .deb: metadata + contenido + payload dentro
+          dpkg-deb --info "$DEB_OUT" > /tmp/deb-info.txt
+          dpkg-deb --contents "$DEB_OUT" > /tmp/deb-contents.txt
+          grep -q "Package: " /tmp/deb-info.txt
+          grep -q "usr/lib/" /tmp/deb-contents.txt
+          dpkg-deb --contents "$DEB_OUT" | grep -q "resources/server/package.json" \
+            || { echo "✗ el .deb NO contiene el payload del servidor"; exit 1; }
+          echo "✓ .deb validado (dpkg-deb --info/--contents): $(du -h "$DEB_OUT" | cut -f1)"
+
+          # AppImage GUI: SOLO si se construyó (opcional)
+          APPIMG_SRC=$(ls installer/gui/src-tauri/target/release/bundle/appimage/*.AppImage 2>/dev/null | head -1 || true)
+          APPIMG_OUT=""
+          if [[ -n "$APPIMG_SRC" && -s "$APPIMG_SRC" ]]; then
+            APPIMG_OUT="dist/release/linux/out/ViewLBA-Server-$VERSION-x86_64.AppImage"
+            cp "$APPIMG_SRC" "$APPIMG_OUT"
+            echo "✓ AppImage GUI incluido: $(du -h "$APPIMG_OUT" | cut -f1)"
+          else
+            echo "::warning::AppImage GUI no construido (opcional) — el .deb y el CLI siguen siendo válidos"
+          fi
+
+          # CLI AppImage con nombre versionado
+          CLI_OUT="dist/release/linux/out/ViewLBA-Server-CLI-$VERSION-x86_64.AppImage"
+          cp dist/release/linux/ViewLBA-Server-CLI.AppImage "$CLI_OUT"
+
+          echo "APPIMG_OUT=$APPIMG_OUT" >> "$GITHUB_ENV"
+          ls -la dist/release/linux/out/
+
+      - name: Manifiest del build (commit ↔ binario)
+        run: |
+          bun installer/package/build-manifest.ts \
+            --staging=dist/release/linux/ViewLBA-Server \
+            --artifact="dist/release/linux/out/ViewLBA-Server-$VERSION-x86_64.deb" \
+            --tauri="$TAURI_CLI" \
+            --out=dist/release/linux/out/manifest-linux.json
+
+      - name: SHA256SUMS (Linux — nombres públicos finales)
+        run: |
+          cd dist/release/linux/out
+          rm -f SHA256SUMS.txt && sha256sum -- *.deb *.AppImage manifest-linux.json > SHA256SUMS.txt
+          # sidecar .sha256 del CLI (compatibilidad con la V1)
+          sha256sum "ViewLBA-Server-CLI-$VERSION-x86_64.AppImage" > "ViewLBA-Server-CLI-$VERSION-x86_64.AppImage.sha256"
           cat SHA256SUMS.txt
 
       - name: Subir artefactos (Linux)
         uses: actions/upload-artifact@v4
         with:
           name: viewlba-linux-installer
-          path: |
-            dist/release/linux/ViewLBA-Server-CLI.AppImage
-            dist/release/linux/ViewLBA-Server-CLI.AppImage.sha256
-            dist/release/linux/gui/*
-            dist/release/linux/SHA256SUMS.txt
+          path: dist/release/linux/out/*
           retention-days: 14
-          if-no-files-found: warn
+          # §14: verde SOLO si hay instalador — nunca "warn" con la misión vacía
+          if-no-files-found: error
 
   # ---------------------------------------------------------------- Windows
-  windows:
-    name: Windows (Setup.exe — NOT VERIFIED en sandbox, construido en CI real)
+  build-windows:
+    name: "Windows: payload + Setup.exe (NSIS)"
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: oven-sh/setup-bun@v2
+      - name: Instalar Bun (versión exacta)
+        uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
-          cache: true
+          bun-version: ${{ env.BUILD_BUN }}
+          # NOTA: el input `cache` NO está soportado (warning) — no usarlo.
 
-      - name: Dependencias del repo
+      - name: Dependencias del repo (entorno de build)
         run: bun install --frozen-lockfile
 
-      - name: Prisma Client (repo)
+      - name: Dependencias de mini-services (entorno de build)
+        shell: bash
+        run: |
+          (cd mini-services/realtime-service && bun install --frozen-lockfile)
+          (cd mini-services/stream-service && bun install --frozen-lockfile)
+
+      - name: Prisma Client (entorno de build — engines de WINDOWS)
         run: bunx prisma generate
 
-      - name: Ensamblar payload offline (servidor + deps + build + bun + NSSM)
-        run: bun installer/package/bundle-server.ts --platform=windows
-        shell: bash
+      - name: Tests del installer (lógica verificada ANTES de empaquetar)
+        run: bun test tests/installer/
 
-      - name: Rust toolchain
+      - name: Versión de release (del tag o del package.json)
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then V="${GITHUB_REF_NAME#v}"; else V=$(bun -e 'console.log(require("./package.json").version)'); fi
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+
+      - name: Inyectar versión en Tauri
+        shell: bash
+        run: |
+          bun -e 'const fs=require("fs");const f="installer/gui/src-tauri/tauri.conf.json";const j=JSON.parse(fs.readFileSync(f,"utf8"));j.version=process.argv[1];fs.writeFileSync(f,JSON.stringify(j,null,2)+"\n")' "$VERSION"
+
+      - name: "Payload de producción (bundle-server: createProductionPayload + guards)"
+        shell: bash
+        run: bun installer/package/bundle-server.ts --platform=windows --version="$VERSION" --bun-version="${PAYLOAD_BUN}"
+
+      # Smoke estructural Windows (§17): el payload no puede ejecutarse aquí
+      # (bun .exe + service manager), pero el CONTRATO se verifica entero.
+      - name: "Smoke del payload (contrato Windows: entrypoint + engines + sidecars + 0 symlinks)"
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGE=dist/release/windows/ViewLBA-Server
+          SRV="$STAGE/resources/server"
+          test -f "$SRV/.next/standalone/server.js"      || { echo "✗ falta server.js"; exit 1; }
+          test -f "$SRV/scripts/start.ts"                || { echo "✗ falta scripts/start.ts"; exit 1; }
+          test -d "$SRV/node_modules/@prisma/engines"    || { echo "✗ faltan engines de Prisma"; exit 1; }
+          ls "$SRV/node_modules/@prisma/engines" | grep -qi "engine" || { echo "✗ sin binarios de engine"; exit 1; }
+          test -d "$SRV/node_modules/.prisma/client"     || { echo "✗ falta Prisma Client generado"; exit 1; }
+          test -x "$STAGE/runtime/bun.exe"               || { echo "✗ falta runtime/bun.exe"; exit 1; }
+          test -f "$STAGE/runtime/nssm.exe"              || { echo "✗ falta runtime/nssm.exe"; exit 1; }
+          test -x "$STAGE/viewlba-installer.exe"         || { echo "✗ falta el sidecar"; exit 1; }
+          LINKS=$(find "$SRV" -type l | wc -l)
+          [[ "$LINKS" -eq 0 ]] || { echo "✗ $LINKS symlink(s) en el payload (NSIS no puede empaquetarlos)"; find "$SRV" -type l; exit 1; }
+          echo "✓ contrato Windows OK: entrypoint + engines + sidecars + 0 symlinks"
+
+      # El sidecar .exe se ejecuta AQUÍ (Windows REAL) — detect estructurado.
+      - name: Smoke del sidecar (detect en Windows REAL)
+        shell: bash
+        run: |
+          ./dist/release/windows/ViewLBA-Server/viewlba-installer.exe --json detect | head -c 200
+          echo
+
+      - name: Rust toolchain (stable, exacta)
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: tauri-cli (versión EXACTA + lockfile)
+        run: cargo install tauri-cli --version "${TAURI_CLI}" --locked
 
       - name: "Sidecar → src-tauri/binaries (sufijo target de Tauri)"
         shell: bash
@@ -163,88 +309,133 @@ jobs:
              installer/gui/src-tauri/binaries/viewlba-installer-x86_64-pc-windows-msvc.exe
 
       # Misma estructura que los globs de tauri.conf (relativos a src-tauri).
-      # cp -aL: desreferencia links (Git Bash de Windows no puede crearlos).
       - name: "Payload → src-tauri/resources"
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p installer/gui/src-tauri/resources
           cp -aL dist/release/windows/ViewLBA-Server/resources/server installer/gui/src-tauri/resources/server
           cp -aL dist/release/windows/ViewLBA-Server/runtime installer/gui/src-tauri/resources/runtime
           cp dist/release/windows/ViewLBA-Server/manifest.json installer/gui/src-tauri/resources/
           test -f installer/gui/src-tauri/resources/server/package.json
+          test -f installer/gui/src-tauri/resources/server/.next/standalone/server.js
+          test -d installer/gui/src-tauri/resources/server/node_modules/prisma
           test -f installer/gui/src-tauri/resources/runtime/bun.exe
           test -f installer/gui/src-tauri/resources/runtime/nssm.exe
           test -f installer/gui/src-tauri/resources/manifest.json
 
-      - name: "Construir el instalador (NSIS: ViewLBA-Server-Setup.exe)"
+      # NSIS desde ruta CORTA (C:\v — 26 chars de prefijo): el payload V2 ya
+      # cabe con holgura en MAX_PATH (ruta máx 125), pero el margen adicional
+      # es gratis y aísla de regessler rutas del workspace (~96 chars).
+      - name: "Construir Setup.exe (NSIS desde C:\\v — ruta corta)"
         shell: bash
         run: |
-          # makensis (NSIS) respeta MAX_PATH=260. El workspace de GitHub
-          # (D:\a\repo\repo\installer\gui\src-tauri\resources\server\ = 96 chars
-          # de prefijo) + el node_modules anidado (hasta 176) = 272 > 260 →
-          # 'File: failed opening file'. Se construye desde una ruta CORTA
-          # (C:\v, prefijo 26) y los artefactos vuelven al repo.
           rm -rf /c/v
           cp -a installer/gui/src-tauri /c/v
           cd /c/v
-          cargo install tauri-cli --version "^2" --locked
-          cargo tauri build --bundles nsis
+          cargo tauri build --bundles nsis --ci
           mkdir -p "$GITHUB_WORKSPACE/installer/gui/src-tauri/target/release/bundle"
           cp -a /c/v/target/release/bundle/nsis "$GITHUB_WORKSPACE/installer/gui/src-tauri/target/release/bundle/"
         env:
           TAURI_BUNDLER_TOOLS_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Smoke del sidecar (detect en Windows REAL)
+      # ---- Validación de artefactos (§14) ----
+      - name: "Validar y renombrar artefacto (exactamente UN .exe, > 0 bytes, PE válido)"
         shell: bash
         run: |
-          ./dist/release/windows/ViewLBA-Server/viewlba-installer.exe --json detect | head -c 200
-          echo
+          set -euo pipefail
+          mkdir -p dist/release/windows/out
+          EXE_SRC=$(ls installer/gui/src-tauri/target/release/bundle/nsis/*-setup.exe | head -1)
+          test -s "$EXE_SRC" || { echo "✗ Setup.exe vacío o ausente"; exit 1; }
+          COUNT=$(ls installer/gui/src-tauri/target/release/bundle/nsis/*-setup.exe | wc -l)
+          [[ "$COUNT" -eq 1 ]] || { echo "✗ se esperaba exactamente 1 instalador, hay $COUNT"; exit 1; }
+          # cabecera PE (MZ) — no un archivo corrupto/vacío
+          head -c 2 "$EXE_SRC" | grep -q "MZ" || { echo "✗ no es un PE válido (falta MZ)"; exit 1; }
+          EXE_OUT="dist/release/windows/out/ViewLBA-Server-Setup-$VERSION.exe"
+          cp "$EXE_SRC" "$EXE_OUT"
+          echo "✓ Setup.exe validado (PE/MZ, >0 bytes): $(du -h "$EXE_OUT" | cut -f1)"
+
+      - name: Manifiest del build (commit ↔ binario)
+        shell: bash
+        run: |
+          bun installer/package/build-manifest.ts \
+            --staging=dist/release/windows/ViewLBA-Server \
+            --artifact="dist/release/windows/out/ViewLBA-Server-Setup-$VERSION.exe" \
+            --tauri="$TAURI_CLI" \
+            --out=dist/release/windows/out/manifest-windows.json
 
       - name: SHA256SUMS (Windows)
         shell: bash
         run: |
-          cd dist/release/windows
-          sha256sum installer/gui/src-tauri/target/release/bundle/nsis/*.exe > SHA256SUMS.txt
+          cd dist/release/windows/out
+          rm -f SHA256SUMS.txt && sha256sum -- *.exe manifest-windows.json > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Subir artefactos (Windows)
         uses: actions/upload-artifact@v4
         with:
           name: viewlba-windows-installer
-          path: |
-            dist/release/windows/SHA256SUMS.txt
-            installer/gui/src-tauri/target/release/bundle/nsis/*.exe
+          path: dist/release/windows/out/*
           retention-days: 14
-          if-no-files-found: warn
+          if-no-files-found: error
 
   # ---------------------------------------------------------------- Release
+  # NO recompila: consume ÚNICAMENTE artefactos ya validados por los builds.
   release:
-    name: GitHub Release (artefactos + checksums)
-    needs: [linux, windows]
+    name: "GitHub Release (gitleaks + SHA256SUMS + publicación)"
+    needs: [build-linux, build-windows]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Checkout (para gitleaks — historial completo)
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks (verificación de secretos ANTES de publicar)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Descargar artefactos validados
+        uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Consolidar SHA256SUMS
+      - name: "Validar el conjunto completo (§14: faltan piezas ⇒ NO publicar)"
         run: |
-          find artifacts -name "SHA256SUMS.txt" -exec cat {} \; > SHA256SUMS.txt
-          # re-computar sobre los archivos reales subidos
-          find artifacts -type f \( -name "*.AppImage" -o -name "*.exe" -o -name "*.deb" \) -exec sha256sum {} \; > SHA256SUMS.txt
-          cat SHA256SUMS.txt
+          set -euo pipefail
+          EXE=$(find artifacts -name "ViewLBA-Server-Setup-*.exe" | head -1)
+          DEB=$(find artifacts -name "ViewLBA-Server-*-x86_64.deb" | head -1)
+          CLI=$(find artifacts -name "ViewLBA-Server-CLI-*-x86_64.AppImage" | head -1)
+          [[ -n "$EXE" && -s "$EXE" ]] || { echo "✗ falta el Setup.exe"; exit 1; }
+          [[ -n "$DEB" && -s "$DEB" ]] || { echo "✗ falta el .deb"; exit 1; }
+          [[ -n "$CLI" && -s "$CLI" ]] || { echo "✗ falta el AppImage CLI"; exit 1; }
+          echo "✓ conjunto completo: exe + deb + CLI AppImage"
 
-      - name: Crear Release
+      - name: SHA256SUMS.txt consolidado (nombres públicos)
+        run: |
+          cd artifacts
+          # re-computar sobre los archivos REALES con sus nombres finales
+          find . -type f \( -name "*.exe" -o -name "*.deb" -o -name "*.AppImage" \) -print0 \
+            | while IFS= read -r -d '' f; do b=$(basename "$f"); sha256sum "$f" | sed "s| .*/ | $b |" ; done > ../SHA256SUMS.txt
+          # nota: sed conserva el hash; el nombre final es el basename público
+          cat ../SHA256SUMS.txt
+          # sanity: 3+ entradas (exe, deb, CLI appimage [+ GUI appimage])
+          LINES=$(wc -l < ../SHA256SUMS.txt)
+          [[ "$LINES" -ge 3 ]] || { echo "✗ menos de 3 instaladores en el release"; exit 1; }
+
+      - name: Crear Release (SOLO artefactos ya validados — cero recompilación)
         uses: softprops/action-gh-release@v2
         with:
           files: |
             SHA256SUMS.txt
-            artifacts/**/*.AppImage
-            artifacts/**/*.exe
-            artifacts/**/*.deb
+            artifacts/**/ViewLBA-Server-Setup-*.exe
+            artifacts/**/ViewLBA-Server-*-x86_64.deb
+            artifacts/**/ViewLBA-Server-*-x86_64.AppImage
             artifacts/**/*.sha256
+            artifacts/**/manifest-*.json
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

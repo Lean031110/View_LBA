@@ -31,11 +31,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Instalar Bun (con cache de dependencias)
+      - name: Instalar Bun (versión exacta)
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
-          cache: true
+          # versión EXACTA (reproducible). OJO: el input `cache` NO está
+          # soportado por la versión actual de setup-bun@v2 (warning) — no usarlo.
+          bun-version: "1.4.2"
 
       - name: Instalar dependencias (reproducible)
         run: bun install --frozen-lockfile
@@ -78,11 +79,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Instalar Bun (con cache)
+      - name: Instalar Bun (versión exacta)
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
-          cache: true
+          # versión EXACTA (reproducible). OJO: el input `cache` NO está
+          # soportado por la versión actual de setup-bun@v2 (warning) — no usarlo.
+          bun-version: "1.4.2"
 
       - name: Instalar dependencias (reproducible)
         run: bun install --frozen-lockfile
@@ -139,11 +141,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Instalar Bun (con cache)
+      - name: Instalar Bun (versión exacta)
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
-          cache: true
+          # versión EXACTA (reproducible). OJO: el input `cache` NO está
+          # soportado por la versión actual de setup-bun@v2 (warning) — no usarlo.
+          bun-version: "1.4.2"
 
       - name: Instalar dependencias (reproducible)
         run: bun install --frozen-lockfile
@@ -200,11 +203,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Instalar Bun (con cache)
+      - name: Instalar Bun (versión exacta)
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
-          cache: true
+          # versión EXACTA (reproducible). OJO: el input `cache` NO está
+          # soportado por la versión actual de setup-bun@v2 (warning) — no usarlo.
+          bun-version: "1.4.2"
 
       - name: Instalar dependencias (reproducible)
         run: bun install --frozen-lockfile

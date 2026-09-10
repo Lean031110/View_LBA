@@ -1,38 +1,74 @@
 /**
- * Empaqueta el SERVIDOR (payload) del installer oficial.
+ * Empaqueta el SERVIDOR (payload) del installer oficial — V2: PAYLOAD DE PRODUCCIÓN.
  *
  * El installer NO duplica el servidor: este script ENSAMBLA el servidor
- * existente (repo) + su build + deps + runtime en un payload autosuficiente
+ * existente (repo) + su build + runtime en un payload autosuficiente
  * → "instalación completamente offline".
+ *
+ * DIFERENCIA con la V1 (que rompía NSIS/linuxdeploy):
+ *   V1: copiaba el repo → `bun install` COMPLETO (dev+prod) → build en el
+ *       staging → node_modules enteros en el payload = 1284 MB con cadenas
+ *       node_modules anidadas (cmdk/@radix-ui/…, 176+ de profundidad) y
+ *       rutas >260 que makensis no puede abrir.
+ *   V2: BUILD DEPENDENCIES ≠ RUNTIME DEPENDENCIES. El build ocurre en el
+ *       ENTORNO DE BUILD (repo con deps completas); el payload distribuido es
+ *       EXPLÍCITO (ver installer/package/payload.ts): standalone trazado por
+ *       Next + node_modules PODADO (prisma/@prisma/zod) + scripts de runtime.
+ *       ~400 MB, sin anidamiento, sin devDeps, sin datos.
  *
  * Salida (staging):
  *   dist/release/<platform>/ViewLBA-Server/
- *     viewlba-installer(.exe)   ← sidecar CLI compilado (bun build --compile)
+ *     viewlba-installer(.exe)   ← sidecar CLI compilado (bun build --compile:
+ *                                 la lógica de install va EMBEBIDA en el binario)
  *     runtime/bun               ← runtime incluido (MIT) — el usuario NO instala bun
- *     runtime/bunx              ← alias
- *     resources/server/         ← código + node_modules (prod+prisma) + build
+ *     runtime/bunx              ← alias (argv[0])
  *     (windows) runtime/nssm.exe
- *     manifest.json             ← versión, commit, plataforma, offline
+ *     resources/server/         ← PAYLOAD DE PRODUCCIÓN (payload.ts)
+ *     manifest.json             ← versión, commit, plataforma, tamaños, offline
  *
  * Uso:
  *   bun installer/package/bundle-server.ts [--platform=linux|windows]
- *        [--out=dist/release] [--no-build] [--bun-version=1.3.14]
+ *        [--out=dist/release] [--version=X.Y.Z] [--bun-version=1.3.14]
+ *        [--no-build] [--ignore-size-limits]
  *
- * REGLAS: sin comandos POSIX (fs APIs + spawn de bun/zip via bun).
- * El build de Next se hace EN el staging (producto real, no copia dev).
+ * REGLAS: sin comandos POSIX (fs APIs + spawn de bun/curl via bun).
+ * La red se usa SOLO durante el BUILD (bun/nssm descargados aquí);
+ * el instalador final funciona sin Internet.
  */
 import { spawnSync } from "node:child_process"
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, copyFileSync } from "node:fs"
-import { dirname, join, resolve } from "node:path"
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync, renameSync, cpSync } from "node:fs"
+import { dirname, join } from "node:path"
 import { tmpdir } from "node:os"
 import { fileURLToPath } from "node:url"
+import {
+  createProductionPayload,
+  ensurePrismaClient,
+  ensureStandaloneBuild,
+  buildManifest,
+  validatePayload,
+  treeStats,
+  type PayloadResult,
+} from "./payload"
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..")
+const ROOT = resolve_repo()
 const OUT_BASE = arg("out") ?? join(ROOT, "dist", "release")
-const PLATFORM = (arg("platform") ?? process.platform === "win32" ? (arg("platform") ?? "windows") : (arg("platform") ?? "linux")) as "linux" | "windows"
+const PLATFORM = (arg("platform") ?? (process.platform === "win32" ? "windows" : "linux")) as "linux" | "windows"
 const WITH_BUILD = !flags().has("--no-build")
-const BUN_VERSION = arg("bun-version") ?? cleanBunVersion() ?? "1.3.14"
+const IGNORE_SIZE = flags().has("--ignore-size-limits")
+// Runtime DISTRIBUIDO (versión exacta — reproducibilidad; no "latest").
+const BUN_VERSION = arg("bun-version") ?? "1.3.14"
 const NSSM_VERSION = "2.24"
+
+function resolve_repo(): string {
+  // src-tauri/resources puede clonar el repo dentro de sí (rounds previos);
+  // resolver siempre al repo raíz REAL (donde está package.json + .git).
+  let dir = dirname(fileURLToPath(import.meta.url))
+  for (let i = 0; i < 8; i++) {
+    if (existsSync(join(dir, "package.json")) && existsSync(join(dir, "prisma", "schema.prisma"))) return dir
+    dir = dirname(dir)
+  }
+  return dirname(fileURLToPath(import.meta.url))
+}
 
 function arg(name: string): string | undefined {
   return process.argv.find((a) => a.startsWith(`--${name}=`))?.split("=").slice(1).join("=")
@@ -40,21 +76,6 @@ function arg(name: string): string | undefined {
 function flags(): Set<string> {
   return new Set(process.argv.map((a) => a.split("=")[0]))
 }
-function cleanBunVersion(): string | undefined {
-  const v = spawnSync("bun", ["--version"], { encoding: "utf8" }).stdout?.trim()
-  return v || undefined
-}
-
-/**
- * ⚠ El staging se construye FUERA del repo (tmp): si se construye dentro,
- * Next/Turbopack infiere la raíz de tracing desde el git root y ANIDA
- * .next/standalone espejando rutas absolutas. Fuera del repo el standalone
- * sale plano (como en CI). Al final se mueve a OUT_BASE.
- */
-const stage = join(tmpdir(), "viewlba-bundle", PLATFORM, "ViewLBA-Server")
-const finalStage = join(OUT_BASE, PLATFORM, "ViewLBA-Server")
-const serverDir = join(stage, "resources", "server")
-const runtimeDir = join(stage, "runtime")
 
 const STEP = (s: string) => console.log(`\n→ ${s}`)
 const OK = (s: string) => console.log(`✓ ${s}`)
@@ -68,147 +89,81 @@ function run(cmd: string, args: string[], opts: { cwd?: string; env?: NodeJS.Pro
   return (r.stdout ?? "").toString()
 }
 
-// ---------------------------------------------------------------- 1. limpiar
-STEP("Preparando staging")
-rmSync(stage, { recursive: true, force: true })
-mkdirSync(serverDir, { recursive: true })
-mkdirSync(runtimeDir, { recursive: true })
-
-// ---------------------------------------------------------------- 2. código
-STEP("Copiando código del servidor (exclusiones estándar — nunca datos)")
-const { copyDirFiltered } = await import("../core/fsx")
-const copied = copyDirFiltered(ROOT, serverDir)
-OK(`${copied} archivos → ${serverDir}`)
-
-// ---------------------------------------------------------------- 3. deps (completas — build-capable)
-// FULL install (dev+prod): el payload debe poder COMPILAR (next build
-// necesita Tailwind/PostCSS de devDependencies) y migrar (prisma CLI).
-// Mismo entorno que el repo → build garantizado; payload autosuficiente
-// (offline) y repair-desde-código funcional en destino.
-STEP("Instalando dependencias COMPLETAS (offline-capable, build-capable)")
-try {
-  run("bun", ["install", "--frozen-lockfile"], { cwd: serverDir })
-  OK("node_modules completos instalados")
-} catch {
-  // frozen puede diferir; reintentar sin frozen
-  run("bun", ["install"], { cwd: serverDir })
-  OK("node_modules completos instalados (resolución normal)")
+// ---------------------------------------------------------------- 0. entorno
+STEP("Verificando entorno de build (deps completas = aquí SÍ, en el payload NO)")
+if (!existsSync(join(ROOT, "node_modules", "next"))) {
+  console.error("✗ falta node_modules del repo — ejecuta `bun install --frozen-lockfile` primero")
+  process.exit(1)
 }
-
-// Prisma CLI + engines: sanity (deben venir en el install completo —
-// migrate deploy / generate sin red en el destino).
-for (const pkg of ["prisma", "@prisma"]) {
-  if (!existsSync(join(serverDir, "node_modules", pkg))) {
-    console.error(`✗ falta node_modules/${pkg} tras bun install — payload incompleto`)
-    process.exit(1)
-  }
-}
-OK("Prisma CLI + engines presentes (migrate offline)")
-
-// mini-services: deps propias (pequeñas)
 for (const svc of ["realtime-service", "stream-service"]) {
-  const dir = join(serverDir, "mini-services", svc)
-  STEP(`Deps de ${svc}`)
-  try {
-    run("bun", ["install", "--frozen-lockfile"], { cwd: dir })
-  } catch {
-    run("bun", ["install"], { cwd: dir })
-  }
-}
-
-// ---------------------------------------------------------------- 4. prisma client
-STEP("Generando Prisma Client (en el staging)")
-run("bun", ["x", "prisma", "generate"], { cwd: serverDir })
-
-// ---------------------------------------------------------------- 5. build
-if (WITH_BUILD) {
-  STEP("Build standalone de producción (Next.js)")
-  run("bun", ["run", "build"], { cwd: serverDir, env: { ...process.env, NODE_ENV: "production", DATABASE_URL: "file:./db/bundle-placeholder.db", AUTH_SECRET: "bundle-placeholder-secret-not-real-0123456789", REALTIME_TOKEN: "bundle-placeholder-token-not-real-012345" } })
-  OK(".next/standalone precompilado incluido")
-
-  // PORTABILIDAD: next build crea symlinks/junctions relativos en TRES
-  // sitios (.next/dev/node_modules, .next/node_modules y .next/standalone/
-  // .next/node_modules — todos @prisma/client-<hash> → ../../../node_modules/
-  // @prisma/client). En Windows, Git Bash `cp -a` NO puede recrearlos (fallo
-  // real de CI: "cannot create symbolic link … No such file or directory")
-  // y al copiar árboles se rompen como junctions absolutos. Se DESREFERENCIAN
-  // en TODO .next → payload portable sin links.
-  STEP("Normalizando symlinks de .next (portabilidad Windows)")
-  const nextDir = join(serverDir, ".next")
-  let fixedLinks = 0
-  const resolveLinks = (dir: string): void => {
-    let entries
+  if (!existsSync(join(ROOT, "mini-services", svc, "node_modules"))) {
+    STEP(`Deps de mini-services/${svc} (entorno de build)`)
     try {
-      entries = readdirSync(dir, { withFileTypes: true })
+      run("bun", ["install", "--frozen-lockfile"], { cwd: join(ROOT, "mini-services", svc) })
     } catch {
-      return
-    }
-    for (const e of entries) {
-      const p = join(dir, e.name)
-      let st
-      try {
-        st = lstatSync(p)
-      } catch {
-        continue
-      }
-      if (st.isSymbolicLink()) {
-        // resolver ANTES de eliminar el link (realpath sigue el link vivo)
-        let real: string | null = null
-        let fileContent: Buffer | null = null
-        try {
-          if (statSync(p).isDirectory()) real = realpathSync(p)
-          else if (statSync(p).isFile()) fileContent = readFileSync(p)
-        } catch {
-          real = null // link roto
-        }
-        rmSync(p, { force: true, recursive: true })
-        if (real) {
-          mkdirSync(p, { recursive: true })
-          cpSync(real, p, { recursive: true, force: true })
-          fixedLinks++
-        } else if (fileContent) {
-          writeFileSync(p, fileContent)
-          fixedLinks++
-        }
-      } else if (st.isDirectory()) {
-        resolveLinks(p)
-      }
+      run("bun", ["install"], { cwd: join(ROOT, "mini-services", svc) })
     }
   }
-  if (existsSync(nextDir)) {
-    resolveLinks(nextDir)
-    OK(`${fixedLinks} symlink(s) desreferenciados; 0 links rotos`)
-  }
-} else {
-  console.log("· build omitido (--no-build): el installer compilará en destino")
+}
+ensureStandaloneBuild(ROOT, WITH_BUILD)
+ensurePrismaClient(ROOT)
+
+// ------------------------------------------------- 1. payload de producción
+STEP("Creando el payload de producción (createProductionPayload)")
+const stage = join(tmpdir(), "viewlba-bundle", PLATFORM, "ViewLBA-Server")
+const finalStage = join(OUT_BASE, PLATFORM, "ViewLBA-Server")
+const serverDir = join(stage, "resources", "server")
+const runtimeDir = join(stage, "runtime")
+
+rmSync(stage, { recursive: true, force: true })
+mkdirSync(join(stage), { recursive: true })
+
+let payload: PayloadResult
+try {
+  payload = createProductionPayload({
+    root: ROOT,
+    serverDir,
+    platform: PLATFORM,
+    versions: { bun: BUN_VERSION, prisma: "6.x" },
+    ensureBuild: false, // ya garantizado arriba (orden de pasos explícito)
+  })
+} catch (e) {
+  console.error(`✗ ${(e as Error).message}`)
+  process.exit(1)
 }
 
-// ---------------------------------------------------------------- 6. runtime bun
+// ---------------------------------------------------------------- 2. guards
+STEP("Guards del payload (fallan ANTES de Tauri/NSIS — nunca un instalador roto)")
+try {
+  validatePayload(serverDir, { ignoreSize: IGNORE_SIZE, platform: PLATFORM })
+} catch (e) {
+  console.error(`✗ ${(e as Error).message}`)
+  process.exit(1)
+}
+
+// ---------------------------------------------------------------- 3. runtime bun
 STEP(`Descargando Bun ${BUN_VERSION} (${PLATFORM}) — runtime incluido`)
-const bunUrl = PLATFORM === "linux" ? `https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip` : `https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-windows-x64.zip`
+const bunUrl =
+  PLATFORM === "linux"
+    ? `https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip`
+    : `https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-windows-x64.zip`
 const zipPath = join(stage, `.runtime-bun.zip`)
 download(bunUrl, zipPath)
-// unzip: usar el unzip de bun (Bun.zip? no) — usar python? No: `bun x extract-zip`?
-// Sin comandos POSIX: leer el ZIP con la API de Bun (Bun.file + ZipReader no existe).
-// Solución multiplataforma honesta: `tar -xf` NO lee zip en todas partes; en Linux
-// `unzip` puede no existir. Bun expone `Bun.spawnSync("bunx", ["dezip"])`… no.
-// → usamos el módulo interno de "node:zlib" no aplica a zip.
-// PRAGMÁTICO y legal: bunx sirve para UNZIP vía paquete "yauzl"? Añadir dep no.
-// Solución final: extraer con el comando del SO disponible (unzip/tar/powershell)
-// documentado como dependencia de EMPAQUETADO (no del usuario final).
 extractZip(zipPath, join(stage, ".runtime-bun"))
 const extracted = findFile(join(stage, ".runtime-bun"), PLATFORM === "linux" ? "bun" : "bun.exe")
 if (!extracted) throw new Error("bun no encontrado tras descomprimir")
+mkdirSync(runtimeDir, { recursive: true })
 copyFileSync(extracted, join(runtimeDir, PLATFORM === "linux" ? "bun" : "bun.exe"))
 if (PLATFORM === "linux") {
-  // bunx: copia (bun se comporta como bunx según argv[0])
-  copyFileSync(join(runtimeDir, "bun"), join(runtimeDir, "bunx"))
+  // bunx: symlink (bun decide el modo por argv[0]; -a preserva links y
+  // copyTree del installer también → 88 MB menos en el .deb/AppImage)
+  symlinkSync("bun", join(runtimeDir, "bunx"))
 }
 rmSync(join(stage, ".runtime-bun"), { recursive: true, force: true })
 rmSync(zipPath, { force: true })
 OK(`runtime/bun (${(statSync(join(runtimeDir, PLATFORM === "linux" ? "bun" : "bun.exe")).size / 1024 / 1024).toFixed(0)} MB)`)
 
-// ---------------------------------------------------------------- 7. nssm (windows)
+// ---------------------------------------------------------------- 4. nssm (windows)
 if (PLATFORM === "windows") {
   STEP(`Descargando NSSM ${NSSM_VERSION} (gestor de servicios de Windows)`)
   const nssmUrl = `https://nssm.cc/release/nssm-${NSSM_VERSION}.zip`
@@ -223,15 +178,21 @@ if (PLATFORM === "windows") {
   OK("runtime/nssm.exe incluido (licencia public domain de nssm.cc)")
 }
 
-// ---------------------------------------------------------------- 8. sidecar CLI
-STEP("Compilando el sidecar del installer (bun build --compile)")
+// ---------------------------------------------------------------- 5. sidecar CLI
+STEP("Compilando el sidecar del installer (bun build --compile — lógica embebida)")
 const target = PLATFORM === "windows" ? "bun-windows-x64" : undefined
-const sidecarArgs = ["build", "--compile", "installer/cli/main.ts", "--outfile", join(stage, PLATFORM === "windows" ? "viewlba-installer.exe" : "viewlba-installer")]
+const sidecarArgs = [
+  "build",
+  "--compile",
+  "installer/cli/main.ts",
+  "--outfile",
+  join(stage, PLATFORM === "windows" ? "viewlba-installer.exe" : "viewlba-installer"),
+]
 if (target) sidecarArgs.splice(2, 0, "--target", target)
 run("bun", sidecarArgs, { cwd: ROOT })
 OK(`sidecar: ${join(stage, PLATFORM === "windows" ? "viewlba-installer.exe" : "viewlba-installer")}`)
 
-// ---------------------------------------------------------------- 9. manifest
+// ---------------------------------------------------------------- 6. manifest
 const gitRev = (() => {
   try {
     return spawnSync("git", ["rev-parse", "--short", "HEAD"], { encoding: "utf8", cwd: ROOT }).stdout?.trim() ?? "unknown"
@@ -239,24 +200,20 @@ const gitRev = (() => {
     return "unknown"
   }
 })()
-const manifest = {
-  product: "ViewLBA-Server",
-  version: JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).version,
+const buildBun = spawnSync("bun", ["--version"], { encoding: "utf8" }).stdout?.trim() ?? "unknown"
+const versionOverride = arg("version")
+const manifest = buildManifest({
+  root: ROOT,
   platform: PLATFORM,
+  version: versionOverride ?? "",
   gitRev,
-  builtAt: new Date().toISOString(),
-  offline: true,
-  withPrebuilt: WITH_BUILD,
-  bunVersion: BUN_VERSION,
-  contents: {
-    installer: PLATFORM === "windows" ? "viewlba-installer.exe" : "viewlba-installer",
-    payload: "resources/server",
-    runtime: "runtime/",
-  },
-}
+  bunVersion: buildBun,
+  payloadBunVersion: BUN_VERSION,
+  payload,
+})
 writeFileSync(join(stage, "manifest.json"), JSON.stringify(manifest, null, 2))
 
-// ---------------------------------------------------------------- 10. mover al destino final
+// ---------------------------------------------------------------- 7. destino final
 STEP("Moviendo el staging al destino final")
 rmSync(finalStage, { recursive: true, force: true })
 mkdirSync(dirname(finalStage), { recursive: true })
@@ -264,44 +221,29 @@ try {
   renameSync(stage, finalStage)
 } catch {
   // tmp y el repo pueden estar en filesystems distintos: copiar y limpiar
-  cpSync(stage, finalStage, { recursive: true })
+  cpSync(stage, finalStage, { recursive: true, force: true, dereference: true })
   rmSync(stage, { recursive: true, force: true })
 }
 
-// resumen + tamaños
+// ---------------------------------------------------------------- resumen
 STEP("Resumen")
-function dirSize(p: string): number {
-  let total = 0
-  let st
-  try {
-    st = lstatSync(p)
-  } catch {
-    return 0 // entrada inaccesible (link roto/AV): no romper el empaquetado
-  }
-  if (!st.isDirectory()) return st.size
-  let entries
-  try {
-    entries = readdirSync(p)
-  } catch {
-    return 0
-  }
-  for (const e of entries) total += dirSize(join(p, e))
-  return total
-}
-const serverSize = dirSize(join(finalStage, "resources", "server"))
-console.log(`   payload:  ${(serverSize / 1024 / 1024).toFixed(0)} MB`)
-console.log(`   runtime:  ${(dirSize(join(finalStage, "runtime")) / 1024 / 1024).toFixed(0)} MB`)
+const serverSize = treeStats(join(finalStage, "resources", "server"))
+console.log(`   payload:  ${(serverSize.bytes / 1024 / 1024).toFixed(0)} MB (${serverSize.files.toLocaleString()} archivos)`)
+console.log(`   runtime:  ${(treeStats(join(finalStage, "runtime")).bytes / 1024 / 1024).toFixed(0)} MB`)
+const sidecarSize = statSync(join(finalStage, PLATFORM === "windows" ? "viewlba-installer.exe" : "viewlba-installer")).size
+console.log(`   sidecar:  ${(sidecarSize / 1024 / 1024).toFixed(0)} MB`)
 console.log(`   staging:  ${finalStage}`)
-console.log(`   manifest: ${JSON.stringify(manifest)}`)
-OK("PAYLOAD LISTO")
+console.log(`   manifest: ${JSON.stringify({ ...manifest, runtimePackages: `${manifest.runtimePackages.length} pkgs` })}`)
+OK("PAYLOAD DE PRODUCCIÓN LISTO (offline, explícito, validado)")
 
 // ---------------------------------------------------------------- helpers
 function download(url: string, dest: string): void {
   console.log(`   ↓ ${url}`)
-  const r = spawnSync("bun", ["-e", `await Bun.write(${JSON.stringify(dest)}, Bun.file(${JSON.stringify(url)}));`], {
-    encoding: "utf8",
-    timeout: 600_000,
-  })
+  const r = spawnSync(
+    "bun",
+    ["-e", `await Bun.write(${JSON.stringify(dest)}, Bun.file(${JSON.stringify(url)}));`],
+    { encoding: "utf8", timeout: 600_000 },
+  )
   if (r.status !== 0 || !existsSync(dest)) {
     // fallback curl (la red de empaquetado puede necesitar curl)
     const c = spawnSync("curl", ["-fsSL", "-o", dest, url], { encoding: "utf8", timeout: 600_000 })
@@ -334,7 +276,13 @@ function findFile(root: string, name: string, prefer?: RegExp): string | null {
   let found: string | null = null
   let preferred: string | null = null
   const walk = (dir: string) => {
-    for (const e of readdirSync(dir, { withFileTypes: true })) {
+    let entries
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of entries) {
       const p = join(dir, e.name)
       if (e.isDirectory()) walk(p)
       else if (e.name === name) {

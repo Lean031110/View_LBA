@@ -8,15 +8,22 @@
 
 | Artefacto | Contenido | Dónde se construye |
 |---|---|---|
-| `ViewLBA-Server.AppImage` | GUI (Tauri) + modo `--cli` + payload offline completo | CI (Linux) |
-| `ViewLBA-Server-CLI.AppImage` | Solo CLI + payload offline (headless, sin GUI) | CI y local (`installer/package/appimage.sh`) |
-| `viewlba-server_<ver>_amd64.deb` | Paquete Debian (bundle Tauri) | CI (Linux) |
-| `ViewLBA-Server-Setup.exe` | Instalador Windows (NSIS, GUI + sidecar) | CI (Windows) |
+| `ViewLBA-Server-<ver>-x86_64.deb` | Paquete Debian (bundle Tauri, obligatorio) | CI (Linux) |
+| `ViewLBA-Server-<ver>-x86_64.AppImage` | GUI (Tauri) + modo `--cli` + payload (opcional) | CI (Linux) |
+| `ViewLBA-Server-CLI-<ver>-x86_64.AppImage` | Solo CLI + payload (headless, sin GUI) | CI y local (`installer/package/appimage.sh`) |
+| `ViewLBA-Server-Setup-<ver>.exe` | Instalador Windows (NSIS, GUI + sidecar) | CI (Windows) |
 
-Todos con `SHA256SUMS` verificable. El payload es **completamente offline**:
-lleva el servidor, `node_modules`, build standalone precompilado, **Bun**
-(MIT) y, en Windows, **NSSM**. El usuario no instala dependencias a mano ni
-clona GitHub.
+Todos con `SHA256SUMS` verificable y `manifest-{linux,windows}.json`
+(commit ↔ binario). El payload es **completamente offline**: lleva el
+servidor (**payload de PRODUCCIÓN**: standalone trazado por Next +
+`node_modules` PODADO a runtime deps + scripts de runtime), build
+precompilado, **Bun** (MIT) y, en Windows, **NSSM**. El usuario no instala
+dependencias a mano ni clona GitHub.
+
+> **BUILD deps ≠ RUNTIME deps**: el entorno de build (repo completo) vive en
+> CI; el payload distribuido es EXPLÍCITO (~450 MB, guard-validado).
+> Decisiones detalladas (p.ej. por qué `next` queda fuera y `prisma` CLI
+> dentro): `docs/RELEASE.md` y `installer/package/payload.ts`.
 
 ## Arquitectura (resumen — ver `installer/ARCHITECTURE.md`)
 
@@ -35,8 +42,11 @@ CLI --config cfg.json ───────▶  core (misma ruta, sin prompts)
   `deploy/windows/install.ps1`: servicios, rotación 5MB, netsh).
 - `installer/cli/` — CLI único: interactivo / `--json` (GUI) / `--config`.
 - `installer/gui/` — Tauri v2: SOLO presentación; cero lógica de DB/secrets.
-- `installer/package/` — empaquetado: `bundle-server.ts` (payload),
-  `appimage.sh` (AppImage CLI), `generate-icons.ts`.
+- `installer/package/` — empaquetado: `payload.ts` (staging de producción:
+  `createProductionPayload()` + guards), `bundle-server.ts` (orquestador:
+  build env + payload + runtime + sidecar + manifest), `smoke-payload.sh`
+  (arranque REAL desde el payload antes de empaquetar), `build-manifest.ts`
+  (commit ↔ binario), `appimage.sh` (AppImage CLI), `generate-icons.ts`.
 
 **Reutilización real** (nada se reimplementa): `initializeProduction()` de
 `scripts/lib/production-init.ts` hace las fases *database* y *admin*
