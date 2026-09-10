@@ -30,7 +30,7 @@ import type {
 } from "./types"
 import { PHASE_TITLES } from "./types"
 import { resolveLayout, layoutDirs } from "./layout"
-import { ensureDir, copyDirFiltered, copyTree } from "./fsx"
+import { ensureDir, copyDirFiltered, copyTree, SERVER_COPY_EXCLUDES } from "./fsx"
 import { ensureEnvFile } from "./secrets"
 import { detectExisting } from "./existing"
 import { runPreflight, payloadHasDeps } from "./preflight"
@@ -285,9 +285,14 @@ export async function runInstall(config: InstallConfig, deps: InstallDeps): Prom
         emit({ type: "info", message: "Modo actualizar: el código se sincroniza; los DATOS no se tocan" })
       }
 
-      // Copia del servidor → appDir (exclusiones estándar; nunca datos).
-      const copied = copyDirFiltered(payloadDir, layout.appDir)
+      // Copia del servidor → appDir. Diferencia clave con el empaquetado
+      // (bundle-server excluye .next porque el staging RECONSTRUYE): aquí el
+      // payload puede llegar PRECOMPILADO (paquete oficial) y su .next DEBE
+      // viajar — start.ts exige .next/standalone/server.js. Nunca datos.
+      const INSTALL_EXCLUDES = SERVER_COPY_EXCLUDES.filter((e) => e !== ".next")
+      const copied = copyDirFiltered(payloadDir, layout.appDir, INSTALL_EXCLUDES)
       emit({ type: "progress", current: copied, total: copied, label: "archivos copiados" })
+      const prebuilt = existsSync(join(payloadDir, ".next", "standalone", "server.js"))
 
       // Payload offline (o con deps vendored): node_modules incluidos.
       const payloadOffline = payloadHasDeps(payloadDir)
@@ -366,7 +371,23 @@ export async function runInstall(config: InstallConfig, deps: InstallDeps): Prom
       if (gen.status !== 0) {
         throw new PhaseError("deploy", `prisma generate falló: ${(gen.stderr || gen.stdout).slice(0, 400)}`, gen.command, undefined, "prisma")
       }
-      return `${copied} archivos → ${layout.appDir}`
+
+      // BUILD: el paquete oficial viaja PRECOMPILADO (.next copiado arriba).
+      // Sin precompilado (repo/checkout), se compila en destino si runBuild;
+      // si no, se advierte — start.ts fallará con un error claro (health
+      // final NO declarará la instalación como correcta).
+      if (!prebuilt && config.runBuild) {
+        const b = runner.run(ctx.bunPath, ["run", "build"], { cwd: layout.appDir, timeoutMs: 900_000 })
+        if (b.status !== 0) {
+          throw new PhaseError("deploy", `next build falló: ${(b.stderr || b.stdout).slice(0, 400)}`, b.command, undefined, "build")
+        }
+        emit({ type: "info", message: "build standalone compilado en destino" })
+      } else if (!prebuilt && !config.runBuild) {
+        warnings.push("Sin build precompilado y runBuild desactivado: el servidor NO arrancará hasta compilar (bun run build)")
+        emit({ type: "warn", message: "Sin build precompilado (--no-build): ejecuta 'bun run build' en la app antes de arrancar" })
+      }
+
+      return `${copied} archivos → ${layout.appDir}${prebuilt ? " (con build precompilado)" : ""}`
     })
 
     // ============================================================ environment

@@ -22,7 +22,7 @@
  * El build de Next se hace EN el staging (producto real, no copia dev).
  */
 import { spawnSync } from "node:child_process"
-import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, copyFileSync, readdirSync } from "node:fs"
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, copyFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { tmpdir } from "node:os"
 import { fileURLToPath } from "node:url"
@@ -125,6 +125,58 @@ if (WITH_BUILD) {
   STEP("Build standalone de producción (Next.js)")
   run("bun", ["run", "build"], { cwd: serverDir, env: { ...process.env, NODE_ENV: "production", DATABASE_URL: "file:./db/bundle-placeholder.db", AUTH_SECRET: "bundle-placeholder-secret-not-real-0123456789", REALTIME_TOKEN: "bundle-placeholder-token-not-real-012345" } })
   OK(".next/standalone precompilado incluido")
+
+  // PORTABILIDAD: next build crea `.next/node_modules` con symlinks/junctions
+  // relativos (p. ej. @prisma/client-<hash> → ../../../node_modules/@prisma/
+  // client). En Windows se copian como junctions ABSOLUTOS/rotos (visto en CI:
+  // ENOENT al recorrer el árbol). Se DESREFERENCIAN → payload portable sin
+  // links; el runtime usa .next/standalone/node_modules (copia real).
+  STEP("Normalizando symlinks de .next/node_modules (portabilidad Windows)")
+  const nextNodeModules = join(serverDir, ".next", "node_modules")
+  let fixedLinks = 0
+  const resolveLinks = (dir: string): void => {
+    let entries
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of entries) {
+      const p = join(dir, e.name)
+      let st
+      try {
+        st = lstatSync(p)
+      } catch {
+        continue
+      }
+      if (st.isSymbolicLink()) {
+        // resolver ANTES de eliminar el link (realpath sigue el link vivo)
+        let real: string | null = null
+        let fileContent: Buffer | null = null
+        try {
+          if (statSync(p).isDirectory()) real = realpathSync(p)
+          else if (statSync(p).isFile()) fileContent = readFileSync(p)
+        } catch {
+          real = null // link roto
+        }
+        rmSync(p, { force: true, recursive: true })
+        if (real) {
+          mkdirSync(p, { recursive: true })
+          cpSync(real, p, { recursive: true, force: true })
+          fixedLinks++
+        } else if (fileContent) {
+          writeFileSync(p, fileContent)
+          fixedLinks++
+        }
+      } else if (st.isDirectory()) {
+        resolveLinks(p)
+      }
+    }
+  }
+  if (existsSync(nextNodeModules)) {
+    resolveLinks(nextNodeModules)
+    OK(`${fixedLinks} symlink(s) desreferenciados; 0 links rotos`)
+  }
 } else {
   console.log("· build omitido (--no-build): el installer compilará en destino")
 }
@@ -218,9 +270,20 @@ try {
 STEP("Resumen")
 function dirSize(p: string): number {
   let total = 0
-  const st = statSync(p)
-  if (st.isFile()) return st.size
-  for (const e of readdirSync(p)) total += dirSize(join(p, e))
+  let st
+  try {
+    st = lstatSync(p)
+  } catch {
+    return 0 // entrada inaccesible (link roto/AV): no romper el empaquetado
+  }
+  if (!st.isDirectory()) return st.size
+  let entries
+  try {
+    entries = readdirSync(p)
+  } catch {
+    return 0
+  }
+  for (const e of entries) total += dirSize(join(p, e))
   return total
 }
 const serverSize = dirSize(join(finalStage, "resources", "server"))

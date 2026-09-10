@@ -13,11 +13,15 @@
  * limpio porque el adapter nunca recibía el NSSM incluido.
  */
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs"
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync, existsSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { resolvePackageRootFrom, findBundledBun } from "../../installer/core/install"
+import { copyDirFiltered, SERVER_COPY_EXCLUDES } from "../../installer/core/fsx"
 import { resolveNssm } from "../../installer/windows/adapter"
+
+/** Mismas exclusiones que usa el deploy real del installer (con .next). */
+const INSTALL_EXCLUDES = SERVER_COPY_EXCLUDES.filter((e) => e !== ".next")
 
 let tmp: string
 let savedEnv: string | undefined
@@ -132,6 +136,46 @@ describe("findBundledBun (rutas de los 4 layouts)", () => {
 
   test("sin runtime → undefined", () => {
     expect(findBundledBun(join(tmp, "bun-none"))).toBeUndefined()
+  })
+})
+
+// ---------- copyDirFiltered: portabilidad de links ----------
+describe("copyDirFiltered — symlinks (portabilidad Windows)", () => {
+  test("symlink VÁLIDO a directorio se copia DESREFERENCIADO (contenido real)", () => {
+    // Reproduce el mecanismo real: links relativos a node_modules (el caso
+    // @prisma/client-<hash> de next build). Aquí en una ruta no excluida
+    // (`.next/node_modules` queda fuera por la exclusión de nombre).
+    const root = join(tmp, "links-ok")
+    const src = join(root, "src")
+    const real = join(src, "node_modules", "@prisma", "client")
+    mkdirSync(real, { recursive: true })
+    writeFileSync(join(real, "index.js"), "// runtime real")
+    mkdirSync(join(src, ".next"), { recursive: true })
+    symlinkSync("../node_modules/@prisma/client", join(src, ".next", "prisma-link"), "dir")
+    writeFileSync(join(src, "package.json"), "{}")
+
+    const dest = join(root, "dest")
+    const copied = copyDirFiltered(src, dest, INSTALL_EXCLUDES)
+    // node_modules excluido del copiado normal...
+    expect(existsSync(join(dest, "node_modules"))).toBe(false)
+    // ...pero el link se desreferencia: el CONTENIDO real viaja con .next
+    expect(existsSync(join(dest, ".next", "prisma-link", "index.js"))).toBe(true)
+    expect(readFileSync(join(dest, ".next", "prisma-link", "index.js"), "utf8")).toBe("// runtime real")
+    expect(copied).toBeGreaterThan(1)
+  })
+
+  test("link ROTO no rompe la copia (omitido en silencio)", () => {
+    const root = join(tmp, "links-broken")
+    const src = join(root, "src")
+    const linkParent = join(src, ".next", "node_modules", "@prisma")
+    mkdirSync(linkParent, { recursive: true })
+    symlinkSync("../../../no-existe-nunca", join(linkParent, "client-hash456"), "dir")
+    writeFileSync(join(src, "package.json"), "{}")
+
+    const dest = join(root, "dest")
+    expect(() => copyDirFiltered(src, dest, INSTALL_EXCLUDES)).not.toThrow()
+    expect(existsSync(join(dest, ".next"))).toBe(true) // el resto se copió
+    expect(existsSync(join(dest, "package.json"))).toBe(true)
   })
 })
 

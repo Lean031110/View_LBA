@@ -10,6 +10,7 @@ import {
   constants,
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   rmSync,
@@ -49,6 +50,11 @@ export function isExcluded(name: string, excludes: string[]): boolean {
 /**
  * Copia recursiva con exclusiones por NOMBRE de entrada (archivos y dirs).
  * `extra` permite unir exclusiones base + específicas del caller.
+ *
+ * TOLERANTE a links (portabilidad): los symlinks/junctions se copian
+ * DESREFERENCIADOS (contenido real) si su target existe; los links rotos
+ * se omiten sin romper la instalación (visto en CI: next build crea
+ * `.next/node_modules` con junctions que se rompen al copiar en Windows).
  */
 export function copyDirFiltered(
   src: string,
@@ -60,23 +66,43 @@ export function copyDirFiltered(
   mkdirSync(dest, { recursive: true })
   let count = 0
   const walk = (from: string, to: string) => {
-    for (const entry of readdirSync(from, { withFileTypes: true })) {
+    let entries
+    try {
+      entries = readdirSync(from, { withFileTypes: true })
+    } catch {
+      return // directorio ilegible (link roto): omitir sin romper
+    }
+    for (const entry of entries) {
       if (isExcluded(entry.name, excludes)) continue
       const fromPath = join(from, entry.name)
       const toPath = join(to, entry.name)
-      if (entry.isDirectory()) {
+      let st
+      try {
+        st = lstatSync(fromPath)
+      } catch {
+        continue
+      }
+      if (st.isSymbolicLink()) {
+        // ¿apunta a contenido existente? → copiar el CONTENIDO (portable)
+        try {
+          if (statSync(fromPath).isDirectory()) {
+            mkdirSync(toPath, { recursive: true })
+            walk(fromPath, toPath)
+            count++
+          } else if (statSync(fromPath).isFile()) {
+            cpSync(fromPath, toPath, { force: true })
+            count++
+          }
+        } catch {
+          /* link roto: omitir */
+        }
+      } else if (st.isDirectory()) {
         mkdirSync(toPath, { recursive: true })
         walk(fromPath, toPath)
-      } else if (entry.isFile()) {
+      } else if (st.isFile()) {
         cpSync(fromPath, toPath, { force: true })
         count++
         if (onFile && count % 200 === 0) onFile(count, basename(fromPath))
-      } else if (entry.isSymbolicLink()) {
-        // Symlinks de node_modules: preservarlos como links (cpSync los sigue
-        // con dereference por defecto — para el payload preferimos copiar el
-        // contenido real, así que NO manejamos links aquí de forma especial).
-        cpSync(fromPath, toPath, { force: true })
-        count++
       }
     }
   }

@@ -249,6 +249,40 @@ describe("runInstall — happy path (FS real, comandos grabados)", () => {
     expect(existsSync(join(config.installDir!, "runtime"))).toBe(false)
     expect(adapter.capturedCtx?.bunPath).toBe("bun")
   })
+
+  test("BUILD PRECOMPILADO: el .next del payload VIAJA al appDir (start.ts lo exige) y no se recompila", async () => {
+    // Bug real corregido: SERVER_COPY_EXCLUDES excluía .next → la instalación
+    // oficial perdía el build del paquete → start.ts no encontraba server.js.
+    const { payload, config } = makeEnv("prebuilt")
+    mkdirSync(join(payload, ".next", "standalone"), { recursive: true })
+    writeFileSync(join(payload, ".next", "standalone", "server.js"), "// standalone real")
+    const runner = new RecordingRunner()
+    const report = await runInstall(config, {
+      adapter: new FakeAdapter(),
+      runner,
+      initProd: fakeInitProd().fn,
+      waitHealth: fakeWaitHealth(),
+      packageRoot: join(tmp, "prebuilt"),
+    })
+    expect(report.ok).toBe(true)
+    expect(existsSync(join(config.installDir!, ".next", "standalone", "server.js"))).toBe(true)
+    // con precompilado NO se lanza 'run build' en destino
+    expect(runner.rendered().join("\n")).not.toContain("run build")
+  })
+
+  test("sin precompilado y runBuild → se compila EN destino ('bun run build')", async () => {
+    const { config } = makeEnv("buildinplace")
+    const runner = new RecordingRunner()
+    const report = await runInstall(config, {
+      adapter: new FakeAdapter(),
+      runner,
+      initProd: fakeInitProd().fn,
+      waitHealth: fakeWaitHealth(),
+      packageRoot: join(tmp, "buildinplace"),
+    })
+    expect(report.ok).toBe(true)
+    expect(runner.rendered().join("\n")).toContain("run build")
+  })
 })
 
 describe("runInstall — aborts y rollback", () => {
