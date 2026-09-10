@@ -66,11 +66,12 @@ jobs:
       # OJO: los globs de tauri.conf (resources/server/**, resources/runtime/**)
       # se resuelven relativos a src-tauri — se copia la MISMA estructura que
       # el payload (resources/server, resources/runtime) para que coincida.
+      # cp -aL: desreferencia links (Git Bash de Windows no puede crearlos).
       - name: "Payload → src-tauri/resources"
         run: |
           mkdir -p installer/gui/src-tauri/resources
-          cp -a dist/release/linux/ViewLBA-Server/resources/server installer/gui/src-tauri/resources/server
-          cp -a dist/release/linux/ViewLBA-Server/runtime installer/gui/src-tauri/resources/runtime
+          cp -aL dist/release/linux/ViewLBA-Server/resources/server installer/gui/src-tauri/resources/server
+          cp -aL dist/release/linux/ViewLBA-Server/runtime installer/gui/src-tauri/resources/runtime
           cp dist/release/linux/ViewLBA-Server/manifest.json installer/gui/src-tauri/resources/
           test -f installer/gui/src-tauri/resources/server/package.json
           test -x installer/gui/src-tauri/resources/runtime/bun
@@ -158,12 +159,13 @@ jobs:
              installer/gui/src-tauri/binaries/viewlba-installer-x86_64-pc-windows-msvc.exe
 
       # Misma estructura que los globs de tauri.conf (relativos a src-tauri).
+      # cp -aL: desreferencia links (Git Bash de Windows no puede crearlos).
       - name: "Payload → src-tauri/resources"
         shell: bash
         run: |
           mkdir -p installer/gui/src-tauri/resources
-          cp -a dist/release/windows/ViewLBA-Server/resources/server installer/gui/src-tauri/resources/server
-          cp -a dist/release/windows/ViewLBA-Server/runtime installer/gui/src-tauri/resources/runtime
+          cp -aL dist/release/windows/ViewLBA-Server/resources/server installer/gui/src-tauri/resources/server
+          cp -aL dist/release/windows/ViewLBA-Server/runtime installer/gui/src-tauri/resources/runtime
           cp dist/release/windows/ViewLBA-Server/manifest.json installer/gui/src-tauri/resources/
           test -f installer/gui/src-tauri/resources/server/package.json
           test -f installer/gui/src-tauri/resources/runtime/bun.exe

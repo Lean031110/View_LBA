@@ -126,13 +126,15 @@ if (WITH_BUILD) {
   run("bun", ["run", "build"], { cwd: serverDir, env: { ...process.env, NODE_ENV: "production", DATABASE_URL: "file:./db/bundle-placeholder.db", AUTH_SECRET: "bundle-placeholder-secret-not-real-0123456789", REALTIME_TOKEN: "bundle-placeholder-token-not-real-012345" } })
   OK(".next/standalone precompilado incluido")
 
-  // PORTABILIDAD: next build crea `.next/node_modules` con symlinks/junctions
-  // relativos (p. ej. @prisma/client-<hash> → ../../../node_modules/@prisma/
-  // client). En Windows se copian como junctions ABSOLUTOS/rotos (visto en CI:
-  // ENOENT al recorrer el árbol). Se DESREFERENCIAN → payload portable sin
-  // links; el runtime usa .next/standalone/node_modules (copia real).
-  STEP("Normalizando symlinks de .next/node_modules (portabilidad Windows)")
-  const nextNodeModules = join(serverDir, ".next", "node_modules")
+  // PORTABILIDAD: next build crea symlinks/junctions relativos en TRES
+  // sitios (.next/dev/node_modules, .next/node_modules y .next/standalone/
+  // .next/node_modules — todos @prisma/client-<hash> → ../../../node_modules/
+  // @prisma/client). En Windows, Git Bash `cp -a` NO puede recrearlos (fallo
+  // real de CI: "cannot create symbolic link … No such file or directory")
+  // y al copiar árboles se rompen como junctions absolutos. Se DESREFERENCIAN
+  // en TODO .next → payload portable sin links.
+  STEP("Normalizando symlinks de .next (portabilidad Windows)")
+  const nextDir = join(serverDir, ".next")
   let fixedLinks = 0
   const resolveLinks = (dir: string): void => {
     let entries
@@ -173,8 +175,8 @@ if (WITH_BUILD) {
       }
     }
   }
-  if (existsSync(nextNodeModules)) {
-    resolveLinks(nextNodeModules)
+  if (existsSync(nextDir)) {
+    resolveLinks(nextDir)
     OK(`${fixedLinks} symlink(s) desreferenciados; 0 links rotos`)
   }
 } else {
