@@ -85,7 +85,7 @@ jobs:
           fi
           echo "✓ Secret de firma presente (el valor NUNCA se imprime)"
 
-      - name: Validar fecha de inicio (default: hoy)
+      - name: "Validar fecha de inicio (default: hoy)"
         id: dates
         run: |
           START="${{ github.event.inputs.startDate }}"
