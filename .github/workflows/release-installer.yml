@@ -177,10 +177,20 @@ jobs:
           test -f installer/gui/src-tauri/resources/manifest.json
 
       - name: "Construir el instalador (NSIS: ViewLBA-Server-Setup.exe)"
-        working-directory: installer/gui/src-tauri
+        shell: bash
         run: |
+          # makensis (NSIS) respeta MAX_PATH=260. El workspace de GitHub
+          # (D:\a\repo\repo\installer\gui\src-tauri\resources\server\ = 96 chars
+          # de prefijo) + el node_modules anidado (hasta 176) = 272 > 260 →
+          # 'File: failed opening file'. Se construye desde una ruta CORTA
+          # (C:\v, prefijo 26) y los artefactos vuelven al repo.
+          rm -rf /c/v
+          cp -a installer/gui/src-tauri /c/v
+          cd /c/v
           cargo install tauri-cli --version "^2" --locked
           cargo tauri build --bundles nsis
+          mkdir -p "$GITHUB_WORKSPACE/installer/gui/src-tauri/target/release/bundle"
+          cp -a /c/v/target/release/bundle/nsis "$GITHUB_WORKSPACE/installer/gui/src-tauri/target/release/bundle/"
         env:
           TAURI_BUNDLER_TOOLS_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
