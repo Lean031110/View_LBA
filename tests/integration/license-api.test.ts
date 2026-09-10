@@ -144,6 +144,7 @@ if (!canRun) {
 let tmpDir = ""
 let app: ChildProcess | null = null
 
+// timeout amplio (arranca next dev, que compila bajo demanda — como recovery.test.ts)
 beforeAll(async () => {
   if (!canRun) return
 
@@ -199,7 +200,7 @@ beforeAll(async () => {
   const setCookie = loginRes.headers.get("set-cookie") ?? ""
   adminCookie = setCookie.split(";")[0]
   if (!adminCookie) throw new Error("sin cookie de sesión")
-})
+}, 240_000)
 
 afterAll(() => {
   if (app?.pid) {
@@ -214,7 +215,7 @@ afterAll(() => {
   if (tmpDir) rmSync(tmpDir, { recursive: true, force: true })
 })
 
-describe.skipIf(!canRun)("LICENSING integración — fase TRIAL (sin licencia)", () => {
+describe.skipIf(!canRun)("LICENSING integración — fase TRIAL (sin licencia)", { timeout: 240_000 }, () => {
   it("la primera petición a /api/content arranca el trial y expone watermark público (sin secretos)", async () => {
     const res = await fetch(`${APP}/api/content`, { cache: "no-store" })
     expect(res.status).toBe(200)
@@ -271,7 +272,7 @@ describe.skipIf(!canRun)("LICENSING integración — fase TRIAL (sin licencia)",
   })
 })
 
-describe.skipIf(!canRun)("LICENSING integración — importación (sección 15)", () => {
+describe.skipIf(!canRun)("LICENSING integración — importación (sección 15)", { timeout: 120_000 }, () => {
   it("ZIP manipulado (cliente cambiado tras la firma) → 422 rechazado, nada guardado", async () => {
     const { status, data } = await importZip(makeZip(makeLicense({ tamper: true })))
     expect(status).toBe(422)
@@ -346,7 +347,7 @@ describe.skipIf(!canRun)("LICENSING integración — importación (sección 15)"
   })
 })
 
-describe.skipIf(!canRun)("LICENSING integración — auditoría (sección 22)", () => {
+describe.skipIf(!canRun)("LICENSING integración — auditoría (sección 22)", { timeout: 60_000 }, () => {
   it("los eventos de licencia quedan en el Log (license_imported / license_rejected) sin secretos", async () => {
     const { data } = await api("GET", "/api/admin/logs?limit=100", undefined, adminCookie)
     const actions = (data.items as { action: string }[]).map((l) => l.action)
