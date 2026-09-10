@@ -90,6 +90,16 @@ jobs:
       - name: Smoke del payload (migrate + arranque + health + mini-services + SIGTERM)
         run: bash installer/package/smoke-payload.sh dist/release/linux/ViewLBA-Server
 
+      # HIGIENE DE DISCO (evidencia del run 34429251587: ENOSPC — "tar: stdout:
+      # write error" en dpkg-deb + linuxdeploy muriendo a mitad de AppDir).
+      # El entorno de build (node_modules 1.1GB + .next espejo ~800MB) YA NO
+      # se necesita: el payload lleva SU PROPIO runtime y node_modules podado.
+      - name: "Liberar disco: entorno de build fuera (node_modules + .next)"
+        run: |
+          rm -rf node_modules .next mini-services/realtime-service/node_modules mini-services/stream-service/node_modules
+          rm -rf /tmp/viewlba-bundle /tmp/viewlba-smoke-* /tmp/pre.txt
+          df -h / | tail -1
+
       # ---- Tauri (GUI) ----
       - name: Dependencias de sistema para Tauri (Linux)
         run: |
@@ -136,6 +146,16 @@ jobs:
         env:
           TAURI_BUNDLER_TOOLS_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # El .deb se copa a zona segura INMEDIATAMENTE (luego se libera target/)
+      - name: "Respaldar .deb a out/ (antes de liberar Rust)"
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release/linux/out
+          DEB_SRC=$(ls installer/gui/src-tauri/target/release/bundle/deb/*.deb | head -1)
+          test -s "$DEB_SRC" || { echo "✗ el build del .deb no produjo archivo"; exit 1; }
+          cp "$DEB_SRC" "dist/release/linux/out/ViewLBA-Server-$VERSION-x86_64.deb"
+          ls -la dist/release/linux/out/
+
       - name: "Construir AppImage GUI (opcional — aislado del .deb)"
         working-directory: installer/gui/src-tauri
         run: cargo tauri build --bundles appimage --ci
@@ -147,11 +167,29 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN: "1"
           NO_STRIP: "1"
 
+      # HIGIENE DE DISCO (2ª fase): Rust target (~2.5GB) + resources duplicados
+      # ya cumplieron su función — el .deb está respaldado en out/ y el AppImage
+      # GUI (si se construyó) se respalda aquí también.
+      - name: "Respaldar AppImage GUI (si existe) y liberar Rust + resources"
+        run: |
+          set -uo pipefail
+          APPIMG_SRC=$(ls installer/gui/src-tauri/target/release/bundle/appimage/*.AppImage 2>/dev/null | head -1 || true)
+          if [[ -n "${APPIMG_SRC:-}" && -s "$APPIMG_SRC" ]]; then
+            cp "$APPIMG_SRC" "dist/release/linux/out/ViewLBA-Server-$VERSION-x86_64.AppImage"
+            echo "✓ AppImage GUI respaldado"
+          else
+            echo "::warning::AppImage GUI no construido (opcional) — el .deb y el CLI siguen siendo válidos"
+          fi
+          rm -rf installer/gui/src-tauri/target installer/gui/src-tauri/resources installer/gui/src-tauri/binaries
+          rm -rf ~/.cargo/registry/cache ~/.cargo/registry/src
+          df -h / | tail -1
+
       # ---- CLI AppImage (headless — el mismo payload, sin linuxdeploy) ----
       - name: AppImage CLI (headless, appimagetool directo)
         run: bash installer/package/appimage.sh dist/release/linux/ViewLBA-Server
 
       - name: Verificación REAL del AppImage CLI (arranca el installer)
+        timeout-minutes: 5
         run: |
           set -e
           IMG=dist/release/linux/ViewLBA-Server-CLI.AppImage
@@ -161,41 +199,41 @@ jobs:
           grep -q "systemd" /tmp/pre.txt || echo "::warning::preflight sin menciones de systemd"
 
       # ---- Validación de artefactos (§14: fallar si falta/corrupto) ----
-      - name: "Validar y renombrar artefactos (nombres públicos finales)"
+      # El .deb (y el AppImage GUI si existe) YA están en out/ con su nombre
+      # público (respaldados antes de liberar Rust). Aquí se VALIDAN.
+      - name: "Validar artefactos (.deb con dpkg-deb + CLI AppImage + nombres)"
         run: |
           set -euo pipefail
-          mkdir -p dist/release/linux/out
-          DEB_SRC=$(ls installer/gui/src-tauri/target/release/bundle/deb/*.deb | head -1)
-          test -s "$DEB_SRC" || { echo "✗ .deb vacío o ausente"; exit 1; }
-          DEB_OUT="dist/release/linux/out/ViewLBA-Server-$VERSION-x86_64.deb"
-          cp "$DEB_SRC" "$DEB_OUT"
+          OUT=dist/release/linux/out
+          DEB_OUT="$OUT/ViewLBA-Server-$VERSION-x86_64.deb"
 
           # Validación REAL del .deb: metadata + contenido + payload dentro
+          test -s "$DEB_OUT" || { echo "✗ .deb vacío o ausente"; exit 1; }
           dpkg-deb --info "$DEB_OUT" > /tmp/deb-info.txt
           dpkg-deb --contents "$DEB_OUT" > /tmp/deb-contents.txt
           grep -q "Package: " /tmp/deb-info.txt
           grep -q "usr/lib/" /tmp/deb-contents.txt
-          dpkg-deb --contents "$DEB_OUT" | grep -q "resources/server/package.json" \
+          grep -q "resources/server/package.json" /tmp/deb-contents.txt \
             || { echo "✗ el .deb NO contiene el payload del servidor"; exit 1; }
+          grep -q "resources/server/node_modules/prisma" /tmp/deb-contents.txt \
+            || { echo "✗ el .deb NO contiene el node_modules de runtime"; exit 1; }
           echo "✓ .deb validado (dpkg-deb --info/--contents): $(du -h "$DEB_OUT" | cut -f1)"
 
-          # AppImage GUI: SOLO si se construyó (opcional)
-          APPIMG_SRC=$(ls installer/gui/src-tauri/target/release/bundle/appimage/*.AppImage 2>/dev/null | head -1 || true)
-          APPIMG_OUT=""
-          if [[ -n "$APPIMG_SRC" && -s "$APPIMG_SRC" ]]; then
-            APPIMG_OUT="dist/release/linux/out/ViewLBA-Server-$VERSION-x86_64.AppImage"
-            cp "$APPIMG_SRC" "$APPIMG_OUT"
+          # AppImage GUI: SOLO si se construyó (opcional — respaldado antes)
+          APPIMG_OUT="$OUT/ViewLBA-Server-$VERSION-x86_64.AppImage"
+          if [[ -s "$APPIMG_OUT" ]]; then
             echo "✓ AppImage GUI incluido: $(du -h "$APPIMG_OUT" | cut -f1)"
           else
+            rm -f "$APPIMG_OUT"
             echo "::warning::AppImage GUI no construido (opcional) — el .deb y el CLI siguen siendo válidos"
           fi
 
           # CLI AppImage con nombre versionado
-          CLI_OUT="dist/release/linux/out/ViewLBA-Server-CLI-$VERSION-x86_64.AppImage"
+          CLI_OUT="$OUT/ViewLBA-Server-CLI-$VERSION-x86_64.AppImage"
+          test -s dist/release/linux/ViewLBA-Server-CLI.AppImage || { echo "✗ falta el AppImage CLI"; exit 1; }
           cp dist/release/linux/ViewLBA-Server-CLI.AppImage "$CLI_OUT"
 
-          echo "APPIMG_OUT=$APPIMG_OUT" >> "$GITHUB_ENV"
-          ls -la dist/release/linux/out/
+          ls -la "$OUT/"
 
       - name: Manifiest del build (commit ↔ binario)
         run: |
@@ -248,8 +286,11 @@ jobs:
       - name: Prisma Client (entorno de build — engines de WINDOWS)
         run: bunx prisma generate
 
-      - name: Tests del installer (lógica verificada ANTES de empaquetar)
-        run: bun test tests/installer/
+      # NOTA: la suite tests/installer/ se ejecuta en el job de LINUX (donde
+      # está diseñada y verde: paths POSIX, chmod 600, protocolo de spawn).
+      # Windows valida AQUÍ con evidencia REAL del entregable: guards del
+      # payload, contrato estructural (entrypoint/engines/sidecars/0 symlinks)
+      # y el sidecar .exe EJECUTÁNDOSE (--json detect) antes de NSIS.
 
       - name: Versión de release (del tag o del package.json)
         shell: bash
@@ -287,8 +328,10 @@ jobs:
           echo "✓ contrato Windows OK: entrypoint + engines + sidecars + 0 symlinks"
 
       # El sidecar .exe se ejecuta AQUÍ (Windows REAL) — detect estructurado.
+      # timeout-minutes: si el binario se cuelga, evidencia rápida (no 60min).
       - name: Smoke del sidecar (detect en Windows REAL)
         shell: bash
+        timeout-minutes: 3
         run: |
           ./dist/release/windows/ViewLBA-Server/viewlba-installer.exe --json detect | head -c 200
           echo
@@ -326,16 +369,19 @@ jobs:
 
       # NSIS desde ruta CORTA (C:\v — 26 chars de prefijo): el payload V2 ya
       # cabe con holgura en MAX_PATH (ruta máx 125), pero el margen adicional
-      # es gratis y aísla de regessler rutas del workspace (~96 chars).
+      # es gratis. FIX del run 59d74c4: se copia el directorio gui COMPLETO
+      # (src-tauri + ui) — copiar solo src-tauri rompía frontendDist "../ui"
+      # (resolvía a C:\ui inexistente → "Unable to find your web assets").
       - name: "Construir Setup.exe (NSIS desde C:\\v — ruta corta)"
         shell: bash
         run: |
           rm -rf /c/v
-          cp -a installer/gui/src-tauri /c/v
-          cd /c/v
+          mkdir -p /c/v
+          cp -a installer/gui /c/v/gui
+          cd /c/v/gui/src-tauri
           cargo tauri build --bundles nsis --ci
           mkdir -p "$GITHUB_WORKSPACE/installer/gui/src-tauri/target/release/bundle"
-          cp -a /c/v/target/release/bundle/nsis "$GITHUB_WORKSPACE/installer/gui/src-tauri/target/release/bundle/"
+          cp -a /c/v/gui/src-tauri/target/release/bundle/nsis "$GITHUB_WORKSPACE/installer/gui/src-tauri/target/release/bundle/"
         env:
           TAURI_BUNDLER_TOOLS_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
