@@ -125,6 +125,11 @@ jobs:
       - name: Tests de integración (rutas API reales)
         run: DATABASE_URL="file:../db/e2e.db" APP_URL=http://127.0.0.1:3000 bun test tests/integration/api.test.ts
 
+      - name: Tests de integración de licencias (spawn propio :3300)
+        # Suite autocontenida: levanta su propio servidor con DB y anclas
+        # temporales — cubre import ZIP, trial, watermark y gating (14 tests).
+        run: DATABASE_URL="file:./db/lic-int.db" bun test tests/integration/license-api.test.ts
+
       - name: Parar servidor
         if: always()
         run: |
@@ -201,6 +206,13 @@ jobs:
     name: Seguridad (dependencias)
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # gitleaks-action en eventos pull_request lista los commits del PR vía
+    # API (ScanPullRequest) → sin pull-requests:read responde 403
+    # "Resource not accessible by integration" y el job falla (visto en el
+    # run #34520256044 del PR #1). Permisos mínimos, solo lectura.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       # Historia COMPLETA: gitleaks escanea el rango del push (before..after)
       # y con clon superficial el commit base no existe → git falla y el job
