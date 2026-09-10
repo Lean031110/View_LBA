@@ -125,16 +125,20 @@ jobs:
       - name: Tests de integración (rutas API reales)
         run: DATABASE_URL="file:../db/e2e.db" APP_URL=http://127.0.0.1:3000 bun test tests/integration/api.test.ts
 
-      - name: Tests de integración de licencias (spawn propio :3300)
-        # Suite autocontenida: levanta su propio servidor con DB y anclas
-        # temporales — cubre import ZIP, trial, watermark y gating (14 tests).
-        run: DATABASE_URL="file:./db/lic-int.db" bun test tests/integration/license-api.test.ts
-
-      - name: Parar servidor
-        if: always()
+      - name: Parar servidor (:3000) antes de la suite de licencias
+        # OBLIGATORIO: Next 16 impide dos `next dev` en el mismo directorio
+        # ("⨯ Another next dev server is already running"). La suite de
+        # licencias levanta el SUYO en :3300 una vez libre este.
         run: |
           kill $(cat /tmp/dev-server.pid) 2>/dev/null || true
           pkill -f "next dev" 2>/dev/null || true
+          sleep 2
+
+      - name: Tests de integración de licencias (spawn propio :3300)
+        # Suite autocontenida: DB temporal + migraciones + admin + anclas de
+        # trial frescas + identidad de test. Cubre import ZIP (válido/tamper/
+        # mismatch), trial + watermark público, gating 403 y renovación.
+        run: DATABASE_URL="file:./db/lic-int.db" bun test tests/integration/license-api.test.ts
 
       - name: Logs del servidor (solo en fallo)
         if: failure()
