@@ -443,6 +443,62 @@ describe("realtime-service: FASE 32 — pairing por código temporal", () => {
   }, 25000)
 })
 
+describe("realtime-service: reporte de estado de stream (stream:status)", () => {
+  it("stream:report de una pantalla → el admin recibe streamState (no «state»)", async () => {
+    // Regresión: el payload usaba «state» pero AdminApp (ScreenStatus) espera
+    // «streamState» → el pill de la pantalla quedaba congelado en CONECTANDO.
+    // Aislamiento: los tests de FASE 32 (anteriores) dejan TV-002 con tokenHash
+    // → se resetea a NULL para poder registrarla sin token (mismo patrón DB
+    // directo que usan esos tests).
+    const db = new Database(dbPath)
+    db.run("UPDATE Screen SET tokenHash = NULL WHERE code = 'TV-002'")
+    db.close()
+    let screen: Socket | null = null
+    let adminSock: Socket | null = null
+    const got = await new Promise<Record<string, unknown> | null>((res) => {
+      const a = connect({ cookie: `signage_session=${mintSession(0)}` })
+      adminSock = a
+      a.on("connect", () => {
+        a.emit("admin:register")
+        a.on("screens:snapshot", () => {
+          // pantalla conectada tras el admin para recibir el flujo completo
+          const s = connect()
+          screen = s
+          s.on("connect", () => {
+            s.emit("screen:register", { screenCode: "TV-002", resolution: "800x600", userAgent: "t" })
+            s.on("screen:registered", () => {
+              s.emit("stream:report", {
+                state: "live",
+                resolution: "1920×1080",
+                bitrate: 4500000,
+                uptime: 42,
+                reconnects: 0,
+              })
+            })
+          })
+        })
+        a.on("stream:status", (d: Record<string, unknown>) => {
+          if (d.screenCode === "TV-002") {
+            a.disconnect()
+            res(d)
+          }
+        })
+      })
+      setTimeout(() => { a.disconnect(); res(null) }, 8000)
+    })
+    try {
+      expect(got).not.toBeNull()
+      expect(got!.screenCode).toBe("TV-002")
+      expect(got!.streamState).toBe("live") // ← la clave que consume el panel
+      expect(got!).not.toHaveProperty("state") // ← la clave antigua (bug)
+      expect(got!.resolution).toBe("1920×1080")
+    } finally {
+      screen?.disconnect()
+      adminSock?.disconnect()
+    }
+  }, 15000)
+})
+
 describe("realtime-service: health", () => {
   it("GET /health responde ok con uptime", async () => {
     const res = await fetch(`http://127.0.0.1:${INTERNAL}/health`)

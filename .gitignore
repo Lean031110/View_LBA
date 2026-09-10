@@ -36,6 +36,7 @@ scripts/shot_*.png
 scripts/*_search.json
 scripts/tsc-check.log
 scripts/vlm-*.json
+scripts/.run/
 
 # Playwright (FASE 22): artefactos y reportes — nunca al repo
 test-results/
