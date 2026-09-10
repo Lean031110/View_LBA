@@ -85,6 +85,10 @@ jobs:
         env:
           # información de versión para el bundle
           TAURI_BUNDLER_TOOLS_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Los runners de GitHub NO tienen FUSE: linuxdeploy es un AppImage y
+          # sin esto el exec falla (spawn ENOENT → "failed to run linuxdeploy").
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          NO_STRIP: "1"
 
       - name: Recoger artefactos GUI
         run: |
