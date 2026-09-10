@@ -413,7 +413,10 @@ io.on("connection", (socket: Socket) => {
       }
       io.to("admins").emit("stream:status", {
         screenCode: s.screenCode,
-        state: s.streamState,
+        // FIX: el panel (AdminApp → ScreenStatus) espera «streamState», mismo
+        // nombre que usa screens:snapshot. Antes se emitía «state» y el pill
+        // de la pantalla quedaba congelado en CONECTANDO en el Dashboard.
+        streamState: s.streamState,
         ...s.streamInfo,
       })
     }
