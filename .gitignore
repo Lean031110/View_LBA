@@ -72,3 +72,7 @@ tools/license-generator/history/
 tools/license-generator/*.key
 tools/license-generator/keys/
 data/licensing/
+
+# Tests de integración de licencias (sandbox: TMPDIR relativo crea ./tmp)
+/tmp/
+backups/*.db
