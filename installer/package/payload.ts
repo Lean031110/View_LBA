@@ -506,6 +506,30 @@ export function createProductionPayload(opts: PayloadOptions): PayloadResult {
     if (!existsSync(src)) continue // p.ej. public podría no existir
     copyTreeDeref(src, join(serverDir, ".next", "standalone", entry))
   }
+  // Variantes musl de sharp/@img (Alpine): inútiles en glibc (Ubuntu/Debian,
+  // objetivo del instalador) y rompen linuxdeploy — "Could not find dependency:
+  // libc.musl-x86_64.so.1" al empaquetar el AppImage GUI (evidencia real).
+  // sharp resuelve la variante glibc (sharp-linux-x64) en runtime.
+  let removedMusl = 0
+  const stripMusl = (dir: string): void => {
+    let entries
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of entries) {
+      const p = join(dir, e.name)
+      if (e.name.includes("linuxmusl") || e.name.includes("musl-")) {
+        rmSync(p, { recursive: true, force: true })
+        removedMusl++
+      } else if (e.isDirectory()) {
+        stripMusl(p)
+      }
+    }
+  }
+  stripMusl(join(serverDir, ".next", "standalone", "node_modules"))
+  if (removedMusl > 0) ok(`${removedMusl} variante(s) musl de sharp eliminadas (glibc = objetivo)`)
   // los manifests de .next viven en .next/standalone/.next (ya copiado vía ".next")
   ok("standalone copiado (sin espejo del repo, sin datos)")
 

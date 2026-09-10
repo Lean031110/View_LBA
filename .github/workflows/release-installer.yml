@@ -105,7 +105,9 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq libwebkit2gtk-4.1-dev build-essential curl wget file \
-            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
+            libgdk-pixbuf-2.0-dev shared-mime-info \
+            gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav
 
       - name: Rust toolchain (stable, exacta)
         uses: dtolnay/rust-toolchain@stable
@@ -156,28 +158,23 @@ jobs:
           cp "$DEB_SRC" "dist/release/linux/out/ViewLBA-Server-$VERSION-x86_64.deb"
           ls -la dist/release/linux/out/
 
-      - name: "Construir AppImage GUI (opcional — aislado del .deb)"
-        working-directory: installer/gui/src-tauri
-        run: cargo tauri build --bundles appimage --ci
-        # AppImage usa linuxdeploy (FUSE-less) — históricamente frágil en CI.
-        # continue-on-error: el release NO depende de este artefacto.
+      # AppImage GUI — MANUAL y determinista (installer/package/appimage-gui.sh):
+      # tauri-bundler mete el sidecar en usr/bin y linuxdeploy muere con
+      # "Failed to run ldd" (binarios standalone de bun). El script arma el
+      # AppDir propio (sidecar en usr/lib/…/bin — reproducido y verificado)
+      # y llama linuxdeploy DIRECTO con los mismos plugins. Aislado del .deb
+      # (continue-on-error: el AppImage GUI es opcional según la misión).
+      - name: "Construir AppImage GUI (manual — linuxdeploy directo, aislado)"
         continue-on-error: true
-        env:
-          TAURI_BUNDLER_TOOLS_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPIMAGE_EXTRACT_AND_RUN: "1"
-          NO_STRIP: "1"
+        run: bash installer/package/appimage-gui.sh dist/release/linux/ViewLBA-Server installer/gui/src-tauri/target/release/viewlba-installer-gui "$VERSION"
 
       # HIGIENE DE DISCO (2ª fase): Rust target (~2.5GB) + resources duplicados
       # ya cumplieron su función — el .deb está respaldado en out/ y el AppImage
-      # GUI (si se construyó) se respalda aquí también.
-      - name: "Respaldar AppImage GUI (si existe) y liberar Rust + resources"
+      # GUI (si se construyó) ya quedó en out/ con su nombre público.
+      - name: "Liberar Rust + resources (los bundles ya están en out/)"
         run: |
           set -uo pipefail
-          APPIMG_SRC=$(ls installer/gui/src-tauri/target/release/bundle/appimage/*.AppImage 2>/dev/null | head -1 || true)
-          if [[ -n "${APPIMG_SRC:-}" && -s "$APPIMG_SRC" ]]; then
-            cp "$APPIMG_SRC" "dist/release/linux/out/ViewLBA-Server-$VERSION-x86_64.AppImage"
-            echo "✓ AppImage GUI respaldado"
-          else
+          if [[ ! -s "dist/release/linux/out/ViewLBA-Server-$VERSION-x86_64.AppImage" ]]; then
             echo "::warning::AppImage GUI no construido (opcional) — el .deb y el CLI siguen siendo válidos"
           fi
           rm -rf installer/gui/src-tauri/target installer/gui/src-tauri/resources installer/gui/src-tauri/binaries
@@ -342,6 +339,7 @@ jobs:
           toolchain: stable
 
       - name: tauri-cli (versión EXACTA + lockfile)
+        shell: bash   # pwsh NO expande ${TAURI_CLI} (bug real del run 34430975096: versión vacía)
         run: cargo install tauri-cli --version "${TAURI_CLI}" --locked
 
       - name: "Sidecar → src-tauri/binaries (sufijo target de Tauri)"

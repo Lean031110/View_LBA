@@ -63,7 +63,8 @@ La GUI requiere Rust + webkit2gtk (por eso vive en CI):
 
 ```bash
 sudo apt install libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev \
-     libayatana-appindicator3-dev librsvg2-dev
+     libayatana-appindicator3-dev librsvg2-dev libgdk-pixbuf-2.0-dev \
+     gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav
 cargo install tauri-cli --version 2.11.4 --locked      # versión EXACTA
 # sidecar con el sufijo de target de Tauri:
 mkdir -p installer/gui/src-tauri/binaries
@@ -76,8 +77,17 @@ cp -a dist/release/linux/ViewLBA-Server/runtime installer/gui/src-tauri/resource
 cp dist/release/linux/ViewLBA-Server/manifest.json installer/gui/src-tauri/resources/
 cd installer/gui/src-tauri
 cargo tauri build --bundles deb --ci          # obligatorio
-cargo tauri build --bundles appimage --ci     # opcional (APPIMAGE_EXTRACT_AND_RUN=1)
 ```
+
+El AppImage de la GUI se construye con `installer/package/appimage-gui.sh`
+(linuxdeploy DIRECTO, no vía tauri-bundler): tauri-bundler coloca el sidecar
+en `usr/bin` y linuxdeploy rompe al hacer `ldd` sobre binarios standalone de
+bun ("Failed to run ldd: exited with code 1" — reproducido y documentado). El
+script arma un AppDir propio (sidecar en `usr/lib/viewlba-server/bin/`, que
+SÍ pasa el escaneo) y el `AppRun` exporta `VIEWLBA_INSTALLER_BIN` +
+`VIEWLBA_PAYLOAD_DIR`, que la GUI honra primero. El payload V2 además
+elimina las variantes musl de sharp (`@img/sharp-libvips-linuxmusl-*`) —
+rompían mksquashfs ("Could not find dependency: libc.musl-x86_64.so.1").
 
 ## Payload de producción — qué incluye y por qué
 
