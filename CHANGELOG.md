@@ -5,7 +5,7 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato está basado en [Keep a Changelog](https://keepachangelog.com/es/1.1.0/),
 y este proyecto adhiere a [SemVer](https://semver.org/lang/es/).
 
-## [Sin publicar] — Licenciamiento offline
+## [1.2.0] — 2026-09-11 — Licenciamiento offline + generador + GitHub Actions
 
 ### Añadido
 
@@ -39,6 +39,20 @@ y este proyecto adhiere a [SemVer](https://semver.org/lang/es/).
   aislado) + 6 E2E del flujo completo del administrador.
 - **Documentación**: `docs/LICENSE-SYSTEM.md`, `docs/LICENSE-GENERATOR.md`,
   `docs/LICENSE-SECURITY.md`.
+- **Web demo del generador** (`license-demo/`, rama demo fusionada): backend
+  Bun con MODO DEMO (clave efímera por sesión, jamás válida contra producción)
+  y MODO ADMIN (clave real vía env + token de administración, sin token solo
+  escucha localhost); la UI jamás recibe la clave privada (invariante testeada).
+- **GitHub Actions para emitir licencias**
+  (`.github/workflows/license-generator.yml`, `workflow_dispatch`): firma con
+  el secret `VIEWLBA_LICENSE_PRIVATE_KEY` (enmascarado, nunca impreso), valida
+  inputs, genera el ZIP, verifica la firma antes de publicar el artifact y
+  falla de forma segura si falta el secret.
+- **CI endurecido**: permisos `pull-requests:read` para gitleaks en PRs, suite
+  de integración de licencias en el job de integración, y runtime sin archivos
+  de DB/backups en el índice git (solo quedan como datos demo en el historial).
+- **Repo**: versión 1.2.0 coherente en `package.json`, `Cargo.toml` y
+  `tauri.conf.json`.
 
 ## [1.1.0] — 2026-09-09
 

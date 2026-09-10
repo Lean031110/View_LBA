@@ -149,3 +149,29 @@ engines, sidecars, 0 symlinks) y ejecuta el sidecar `--json detect`.
 - **Bun 1.3.14** (MIT) del release oficial exacto: `runtime/bun` +
   `runtime/bunx` (symlink en Linux; copia en Windows la crea el installer).
 - **NSSM 2.24** (Windows, public domain de nssm.cc) en `runtime/nssm.exe`.
+
+---
+
+## Historial de releases
+
+### v1.2.0 (2026-09-11) — Licenciamiento offline + generador + GitHub Actions
+
+- **Alcance**: sistema de licencias 100% offline (Ed25519, binding equipo +
+  disco, trial 7 días, watermark TV, planes mensual/anual), generador CLI,
+  web demo del generador y workflow de GitHub Actions para emitir licencias.
+- **Tag**: `v1.2.0` → `release-installer.yml` compila `.deb`, AppImages,
+  `Setup.exe` y publica el GitHub Release con `SHA256SUMS` (nada de archivos
+  de desarrollo: solo instaladores + manifiestos).
+- **Versiones**: `package.json`, `Cargo.toml` y `tauri.conf.json` en 1.2.0.
+
+### Nota de seguridad del historial git (auditoría v1.2.0)
+
+La auditoría de release detectó que **4 backups SQLite y 2 archivos WAL/SHM
+de la DB de e2e fueron commiteados accidentalmente** en el commit `b538eef`
+(FASE 15/16). Contenido verificado: usuarios **demo del seed**
+(`admin@restaurante.com` / `operador@restaurante.com` — credenciales públicas
+documentadas en `prisma/seed.ts`) y contenido de prueba. **No hay secretos de
+producción ni datos de clientes reales en el historial.** Desde v1.2.0 los
+archivos están **des-trackeados** (`git rm --cached`) y cubiertos por `.gitignore`.
+El repo es privado, el riesgo residual es nulo en la práctica; si se hiciera
+público, se recomienda purgar el historial (git filter-repo) antes.

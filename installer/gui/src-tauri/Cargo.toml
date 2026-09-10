@@ -1,6 +1,6 @@
 [package]
 name = "viewlba-installer-gui"
-version = "1.0.0"
+version = "1.2.0"
 description = "ViewLBA Server — Instalador oficial y gestor (GUI Tauri)"
 authors = ["Lean031110"]
 license = "MIT"
