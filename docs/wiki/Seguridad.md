@@ -58,10 +58,10 @@ El objetivo real es **impedir la copia casual y la manipulación trivial**, con 
 - Un atacante con control total de su equipo puede, en el peor caso, degradar la experiencia localmente.
 - Falsificar el estado del trial exige localizar AMBAS anclas, entender el formato HMAC y conocer el `AUTH_SECRET` local — esfuerzo deliberado, respuesta comercial/legal.
 - VMs clonadas de la misma imagen pueden colisionar en machine-id (caso raro; el Disk ID diferencia).
-- La rotación de claves invalida las licencias anteriores (ver [[Mantenimiento-y-Rotación]]).
+- La rotación de claves invalida las licencias anteriores (ver [Mantenimiento-y-Rotación](Mantenimiento-y-Rotación.md)).
 
 ## Contacto
 
 Cualquier incidente de seguridad, sospecha de licencia falsificada o fuga de material: **52973387**.
 
-Siguiente: [[Mantenimiento-y-Rotación]].
+Siguiente: [Mantenimiento-y-Rotación](Mantenimiento-y-Rotación.md).

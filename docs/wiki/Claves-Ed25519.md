@@ -34,10 +34,10 @@ Internamente usa `generateLicenseKeyPair()` de `src/lib/licensing/crypto.ts`: `g
 ## Después de generar: los 3 pasos obligatorios
 
 1. **Actualizar la clave pública en el código**: `src/lib/licensing/public-key.ts` → `PRODUCTION_LICENSE_PUBLIC_KEY = "<nueva pública>"`.
-2. **Crear/actualizar el secret de GitHub Actions** `VIEWLBA_LICENSE_PRIVATE_KEY` con la nueva privada (ver [[Secret-de-GitHub-Actions]] — cómo hacerlo por UI o por API).
+2. **Crear/actualizar el secret de GitHub Actions** `VIEWLBA_LICENSE_PRIVATE_KEY` con la nueva privada (ver [Secret-de-GitHub-Actions](Secret-de-GitHub-Actions.md) — cómo hacerlo por UI o por API).
 3. **Publicar release** con el cambio (tag `v*` → el workflow `release-installer.yml` re-compila los instaladores, que llevan la pública nueva incrustada).
 
-⚠️ **Regla de rotación:** al rotar el par, las licencias firmadas con la clave anterior dejan de validar. Rotar ANTES de emitir licencias reales (o re-emitir a todos los clientes activos tras rotar). Procedimiento completo: `docs/LICENSE-SECURITY.md` §9 y [[Mantenimiento-y-Rotación]].
+⚠️ **Regla de rotación:** al rotar el par, las licencias firmadas con la clave anterior dejan de validar. Rotar ANTES de emitir licencias reales (o re-emitir a todos los clientes activos tras rotar). Procedimiento completo: `docs/LICENSE-SECURITY.md` §9 y [Mantenimiento-y-Rotación](Mantenimiento-y-Rotación.md).
 
 ## Dónde vive cada clave (tabla de custodia)
 
@@ -64,4 +64,4 @@ Internamente usa `generateLicenseKeyPair()` de `src/lib/licensing/crypto.ts`: `g
 - Los tests usan **claves DUMMY de test** (env `VIEWLBA_LICENSE_PUBLIC_KEY` con clave de prueba), nunca la de producción.
 - La app no tiene **ninguna ruta de código** que lea una clave privada del entorno por defecto: `signLicense()` solo se invoca desde el generador y tests con la clave como argumento explícito.
 
-Siguiente: [[Secret-de-GitHub-Actions]].
+Siguiente: [Secret-de-GitHub-Actions](Secret-de-GitHub-Actions.md).

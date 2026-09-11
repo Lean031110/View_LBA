@@ -14,7 +14,7 @@ Disk ID: DSK-XXXX-XXXX-XXXX
 Ruta: C:\PantallaRestaurante   (o /opt/viewlba en Linux)
 ```
 
-Estos 3 identificadores son los que vinculan la licencia a ese equipo y ese disco (ver [[Binding-Hardware-y-Disco]]). Sin ellos no se puede emitir una licencia válida para esa instalación.
+Estos 3 identificadores son los que vinculan la licencia a ese equipo y ese disco (ver [Binding-Hardware-y-Disco](Binding-Hardware-y-Disco.md)). Sin ellos no se puede emitir una licencia válida para esa instalación.
 
 ---
 
@@ -96,7 +96,7 @@ Reglas de seguridad: sin `DEMO_ADMIN_TOKEN` el modo ADMIN solo escucha `127.0.0.
 - **`license.json`** — payload firmado (`schemaVersion`, `licenseId`, `customerName`, `plan`, `issuedAt`, `startsAt`, `expiresAt`, `deviceId`, `diskId`, `installPath`, `product`, `features`) + `signature` Ed25519 (base64url, 64 bytes).
 - **`README.txt`** — instrucciones de importación y contacto de soporte (52973387).
 
-El cliente lo importa en **Administración → Licencia → IMPORTAR LICENCIA** — ver [[Importación-de-Licencia]].
+El cliente lo importa en **Administración → Licencia → IMPORTAR LICENCIA** — ver [Importación-de-Licencia](Importación-de-Licencia.md).
 
 ## Elección de plan y cálculo de vigencia (exacto)
 
@@ -104,4 +104,4 @@ El cliente lo importa en **Administración → Licencia → IMPORTAR LICENCIA** 
 - `annual`: **365 días exactos** desde `startDate` (USD 100) — **nunca** 30×12
 - `trial`: no se emite — es automático en la app (7 días)
 
-Siguiente: [[Planes-y-Precios]].
+Siguiente: [Planes-y-Precios](Planes-y-Precios.md).

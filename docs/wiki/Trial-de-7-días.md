@@ -35,7 +35,7 @@ Cada evaluación registra `lastSeenAt` (marca de agua temporal). Si el reloj del
 | Día 7 | `trial` | "Último día de prueba" |
 | Día 8+ | `unlicensed` | `trial_expired` — marca de agua final, features premium bloqueados |
 | Importa licencia válida | `active` | El trial deja de evaluarse; marca de agua desaparece |
-| Licencia vence | `expired` | Se puede renovar ([[Emisión-de-Licencias]]) |
+| Licencia vence | `expired` | Se puede renovar ([Emisión-de-Licencias](Emisión-de-Licencias.md)) |
 
 ## No-repetición del trial
 
@@ -51,6 +51,6 @@ Cada evaluación registra `lastSeenAt` (marca de agua temporal). Si el reloj del
 
 ## Relación con la ventana de gracia
 
-Paralelo al trial, las licencias **comerciales vencidas** tienen una ventana de gracia opcional (`LICENSE_GRACE_HOURS`, ver [[Importación-de-Licencia]]): dentro de ella el estado es `grace` (todo funciona, con aviso de renovación). El trial NO tiene ventana de gracia: el día 8 es `unlicensed`.
+Paralelo al trial, las licencias **comerciales vencidas** tienen una ventana de gracia opcional (`LICENSE_GRACE_HOURS`, ver [Importación-de-Licencia](Importación-de-Licencia.md)): dentro de ella el estado es `grace` (todo funciona, con aviso de renovación). El trial NO tiene ventana de gracia: el día 8 es `unlicensed`.
 
-Siguiente: [[Importación-de-Licencia]].
+Siguiente: [Importación-de-Licencia](Importación-de-Licencia.md).

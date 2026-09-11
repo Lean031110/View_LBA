@@ -64,7 +64,7 @@ El cliente solicita la licencia desde **Administración → Licencia**, donde la
 | `audit.ts` | Eventos de auditoría (vocabulario fijo) |
 | `guard.ts` | Guard de sesión para rutas de licencia |
 
-La API interna expuesta por el servidor: `GET /api/license` (público, sin secretos — solo estado/watermark/features), `GET /api/license/identity` (requiere sesión OPERATOR+), `POST /api/license/import` (requiere sesión ADMIN). Ver [[Importación-de-Licencia]].
+La API interna expuesta por el servidor: `GET /api/license` (público, sin secretos — solo estado/watermark/features), `GET /api/license/identity` (requiere sesión OPERATOR+), `POST /api/license/import` (requiere sesión ADMIN). Ver [Importación-de-Licencia](Importación-de-Licencia.md).
 
 ## Test suite
 
@@ -73,4 +73,4 @@ La API interna expuesta por el servidor: `GET /api/license` (público, sin secre
 - **6 tests E2E** del flujo completo del administrador (Playwright).
 - gitleaks en CI bloquea cualquier fuga de secretos en el historial.
 
-Siguiente: [[Claves-Ed25519]] — cómo se generan las claves.
+Siguiente: [Claves-Ed25519](Claves-Ed25519.md) — cómo se generan las claves.

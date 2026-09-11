@@ -12,7 +12,7 @@ Los planes están definidos en `src/lib/licensing/types.ts` como fuente única d
 
 ## Trial (detallado)
 
-- Una sola vez **por instalación** (binding a hardware + disco — ver [[Trial-de-7-días]] para la mecánica de anclas y anti-manipulación).
+- Una sola vez **por instalación** (binding a hardware + disco — ver [Trial-de-7-días](Trial-de-7-días.md) para la mecánica de anclas y anti-manipulación).
 - Funcional pero **limitado + marca de agua** en la pantalla TV (ver abajo) y banner en el panel de administración.
 - Al agotarse (`unlicensed`): la app sigue mostrando contenido básico, pero las funciones premium quedan bloqueadas y la marca de agua cambia a "PERÍODO DE PRUEBA FINALIZADO".
 
@@ -49,4 +49,4 @@ Ni el trial ni el plan cambian el precio de la licencia: `PLAN_PRICE_USD` es inf
 - La renovación (`renew`) puede cambiar de plan y siempre emite una licencia **nueva** con `licenseId` nuevo (la anterior queda en el historial; el `licenseId` es `VLBA-XXXXXXXXXXXX`, 12 hex aleatorios).
 - El validador acepta **cualquier** `plan` del enum en la firma; el vencimiento real lo marcan las fechas firmadas, no el nombre del plan.
 
-Siguiente: [[Binding-Hardware-y-Disco]].
+Siguiente: [Binding-Hardware-y-Disco](Binding-Hardware-y-Disco.md).

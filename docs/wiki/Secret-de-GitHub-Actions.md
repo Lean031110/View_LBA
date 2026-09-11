@@ -30,7 +30,7 @@ Respuesta esperada: `{"total_count":1,"secrets":[{"name":"VIEWLBA_LICENSE_PRIVAT
 
 ### Opción A — UI (la más simple)
 
-1. Consigue el valor de la clave privada (archivo custodiado por el dueño, o genera un par nuevo con `bun tools/license-generator/cli.ts keys` — ver [[Claves-Ed25519]]).
+1. Consigue el valor de la clave privada (archivo custodiado por el dueño, o genera un par nuevo con `bun tools/license-generator/cli.ts keys` — ver [Claves-Ed25519](Claves-Ed25519.md)).
 2. Repo → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**.
 3. Name: `VIEWLBA_LICENSE_PRIVATE_KEY` · Secret: el valor base64url exacto (43 caracteres, sin comillas, sin espacios ni saltos de línea).
 4. **Add secret**. Para rotar, usa el botón *Update* sobre el existente.
@@ -74,4 +74,4 @@ const body = {
 | `Clave privada Ed25519 mal formada` | El valor pegado tiene saltos de línea, comillas o padding `=` | Pegar el valor base64url exacto (43 chars) |
 | `Installation ID inválido…` | Input mal formado | Formato correcto: `VWLB-8F2A-91CD-2D31-77AA` |
 
-Siguiente: [[Emisión-de-Licencias]].
+Siguiente: [Emisión-de-Licencias](Emisión-de-Licencias.md).

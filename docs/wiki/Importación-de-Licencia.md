@@ -31,7 +31,7 @@ Solo si TODO pasa: se guarda en la tabla `LicenseState` (fila única `main`), se
 
 ## Renovación y coexistencia
 
-- La renovación se hace en el **emisor** (`renew` del CLI o re-emisión por Actions — ver [[Emisión-de-Licencias]]): produce una licencia NUEVA con el mismo binding. El cliente la importa igual; la anterior queda en `LicenseHistory` (`current: false`).
+- La renovación se hace en el **emisor** (`renew` del CLI o re-emisión por Actions — ver [Emisión-de-Licencias](Emisión-de-Licencias.md)): produce una licencia NUEVA con el mismo binding. El cliente la importa igual; la anterior queda en `LicenseHistory` (`current: false`).
 - El importador compara la vigencia para no aceptar downgrades accidentales (p. ej. importar un mensual cuando corre un anual).
 
 ## APIs internas (sección 21 del diseño)
@@ -51,4 +51,4 @@ Eventos registrados en tabla `Log` + logger JSON (stdout/archivo rotativo) con `
 
 Las tablas de licencias van incluidas en el backup verificado del sistema, pero tras un restore el binding se **recalcula siempre** contra el hardware actual → restaurar en otro equipo/disco da `mismatch` (deseado: la licencia no "viaja" con los backups).
 
-Siguiente: [[Seguridad]].
+Siguiente: [Seguridad](Seguridad.md).

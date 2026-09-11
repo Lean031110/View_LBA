@@ -47,6 +47,6 @@ Si un cliente cambia de disco o de equipo, su licencia deja de validar con estad
 
 ## Longitudes y modelo de amenaza
 
-- Installation ID público: 64 bits de binding. Disk ID público: 48 bits. Fabricar una segunda instalación con los mismos IDs exigiría ~2⁶⁴ intentos — suficiente para el modelo "anti-copia casual" (ver [[Seguridad]]). El objetivo NO es un DRM "militar": un atacante con control total de su máquina puede, en el peor caso, degradar la experiencia. La respuesta para ese perfil es comercial/legal.
+- Installation ID público: 64 bits de binding. Disk ID público: 48 bits. Fabricar una segunda instalación con los mismos IDs exigiría ~2⁶⁴ intentos — suficiente para el modelo "anti-copia casual" (ver [Seguridad](Seguridad.md)). El objetivo NO es un DRM "militar": un atacante con control total de su máquina puede, en el peor caso, degradar la experiencia. La respuesta para ese perfil es comercial/legal.
 
-Siguiente: [[Trial-de-7-días]].
+Siguiente: [Trial-de-7-días](Trial-de-7-días.md).

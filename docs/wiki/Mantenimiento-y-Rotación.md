@@ -6,12 +6,12 @@ Guía de operación continua del sistema de licencias: rotación de claves, chec
 
 Caso de uso: sospecha de compromiso de la clave privada, cambio de emisor, o simplemente higiene periódica. **Impacto**: todas las licencias firmadas con la clave anterior dejan de validar → re-emitir a los clientes activos.
 
-1. **Generar el par nuevo** (ver [[Claves-Ed25519]]):
+1. **Generar el par nuevo** (ver [Claves-Ed25519](Claves-Ed25519.md)):
    ```bash
    bun tools/license-generator/cli.ts keys --write-private /ruta/segura/nueva.key
    ```
 2. **Incrustar la pública nueva**: `src/lib/licensing/public-key.ts` → `PRODUCTION_LICENSE_PUBLIC_KEY`.
-3. **Actualizar el secret** `VIEWLBA_LICENSE_PRIVATE_KEY` con la privada nueva (UI o API — ver [[Secret-de-GitHub-Actions]]).
+3. **Actualizar el secret** `VIEWLBA_LICENSE_PRIVATE_KEY` con la privada nueva (UI o API — ver [Secret-de-GitHub-Actions](Secret-de-GitHub-Actions.md)).
 4. **Commit + push** → CI verde (tests + gitleaks).
 5. **Probar el workflow** License Generator con un cliente de prueba → run verde + artifact.
 6. **Bump de versión + tag `v*`** → `release-installer.yml` re-compila instaladores con la pública nueva.
@@ -40,7 +40,7 @@ Historial de rotaciones: v1.2.0 (`hP5E…dKRY`, retirada sin emisiones) → v1.2
 
 | Problema | Diagnóstico | Solución |
 |---|---|---|
-| Workflow License Generator falla: "Falta el secret" | El secret no existe | Crearlo ([[Secret-de-GitHub-Actions]]) |
+| Workflow License Generator falla: "Falta el secret" | El secret no existe | Crearlo ([Secret-de-GitHub-Actions](Secret-de-GitHub-Actions.md)) |
 | Workflow falla: firma inválida / auto-verificación | Secret desincronizado con `public-key.ts` | Re-crear el secret con la privada del par incrustado |
 | Cliente importa ZIP → "firma inválida" | ZIP editado o emitido con otra clave | Re-emitir |
 | Cliente importa → `mismatch` | Licencia emitida para otros IDs (o cambió disco/equipo) | Re-emitir con los IDs de SU instalación |
