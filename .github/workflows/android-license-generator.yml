@@ -1,16 +1,29 @@
 name: Android License Generator
 
+# Pipeline de publicación del generador Android (FASES 1-8, release 3.0.0).
+#
+# CONTRATO: este workflow NUNCA produce un APK sin firmar. Si faltan los
+# 4 secrets de firma (VIEWLBA_KEYSTORE_*), el gate falla con:
+#   "Release signing secrets are required. Refusing to publish unsigned APK."
+# El flujo canónico (ver .github/actions/android-apk/action.yml):
+#   assembleRelease (unsigned) → zipalign → apksigner sign v1+v2+v3
+#   → apksigner verify → zipalign -c → badging → unzip -t → checksum → artifact
+#
+# NOTA: los TAGS v* NO se construyen aquí — los construye el job android de
+# release-installer.yml con el MISMO action compuesto (una sola definición
+# del pipeline). Así no hay builds duplicados ni carreras entre workflows.
+# push a main SIN filtro de paths: la firma se verifica SIEMPRE.
+
 on:
   push:
     branches: [main]
-    paths:
-      - "android-license-generator/**"
-      - ".github/workflows/android-license-generator.yml"
   pull_request:
     branches: [main]
     paths:
       - "android-license-generator/**"
       - ".github/workflows/android-license-generator.yml"
+      - ".github/actions/android-apk/**"
+      - "VERSION"
   workflow_dispatch:
 
 concurrency:
@@ -20,157 +33,51 @@ concurrency:
 permissions:
   contents: read
   # gitleaks-action en eventos pull_request lista los commits del PR vía API
-  # (ScanPullRequest) → sin pull-requests:read responde 403 (mismo fix que ci.yml).
+  # (ScanPullRequest) → sin pull-requests:read responde 403.
   pull-requests: read
-
-env:
-  APP_DIR: android-license-generator
-  APK_NAME: ViewLBA-License-Generator-v1.0.0.apk
 
 jobs:
   build:
-    name: Generador Android (lint · tests · seguridad · release)
+    name: "Generador Android (lint · tests · seguridad · firma · verificación)"
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - name: Checkout
         # Historia COMPLETA: gitleaks escanea el rango del push (before..after)
-        # y con clon superficial el commit base no existe → git falla (mismo
-        # fix documentado en ci.yml).
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # Java versión FIJA (JDK 17 — requerido por AGP 8.x)
-      - name: Instalar Java 17 (fijo)
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      # Android SDK con plataforma/build-tools FIJOS (reproducible)
-      - name: Instalar Android SDK (cmdline-tools)
-        uses: android-actions/setup-android@v3
-
-      - name: Instalar plataforma 35 + build-tools 35.0.0 (fijos)
+      - name: "Versión (única fuente de verdad: /VERSION)"
         run: |
-          yes | sdkmanager "platforms;android-35" "build-tools;35.0.0" > /dev/null
-          sdkmanager --list_installed | grep -E "platforms|build-tools" || true
+          set -euo pipefail
+          V=$(cat VERSION)
+          [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[\w.]+)?$ ]] || { echo "::error::/VERSION inválido: $V"; exit 1; }
+          echo "APK_VERSION=$V" >> "$GITHUB_ENV"
+          echo "→ versión: $V"
 
-      - name: Configurar Gradle 8.10.2 (wrapper, reproducible)
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.10.2"
-
-      # Cache de dependencias (claves estables por lockfile implícito de
-      # versiones EXACTAS en build.gradle.kts)
-      - name: Cache de dependencias Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('android-license-generator/**/*.gradle.kts') }}
-          restore-keys: gradle-${{ runner.os }}-
-
-      # ---------------- 1. Lint ----------------
-      - name: Lint (Android Lint, bloqueante)
-        working-directory: ${{ env.APP_DIR }}
-        run: ./gradlew :app:lintRelease --no-daemon
-
-      # ---------------- 2. Unit tests (JVM) ----------------
-      - name: Tests unitarios (JVM — códec/cripto/políticas/backup)
-        working-directory: ${{ env.APP_DIR }}
-        run: ./gradlew :app:testReleaseUnitTest --no-daemon
-
-      # ---------------- 3. Seguridad ----------------
-      - name: Seguridad — claves privadas NUNCA en fuentes
-        working-directory: ${{ env.APP_DIR }}
-        run: |
-          set -e
-          echo "Escaneo anti-material-de-claves en fuentes..."
-          if grep -rInE "(BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|privateKey.*=.*\"[A-Za-z0-9_-]{43}\")" \
-              --include="*.kt" --include="*.java" --include="*.xml" --include="*.properties" --include="*.kts" \
-              app/src/ 2>/dev/null; then
-            echo "::error::Material de clave privada detectado en el código fuente"
-            exit 1
-          fi
-          echo "✓ Sin material de clave en fuentes"
-
-      - name: Seguridad — gitleaks en el directorio de la app
+      - name: "gitleaks (secretos en el historial — bloqueante)"
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
 
-      # ---------------- 4. Build release ----------------
-      - name: Build release (R8 optimizado)
-        working-directory: ${{ env.APP_DIR }}
-        run: ./gradlew :app:assembleRelease --no-daemon
-
-      # ---------------- 5. Firma release (secrets) ----------------
-      - name: Firmar APK (GitHub Secrets)
-        id: sign
-        working-directory: ${{ env.APP_DIR }}
+      # Pipeline completo: Java/SDK/Gradle fijos, gate de secrets, lint,
+      # tests JVM, seguridad, build, zipalign, apksigner v1+v2+v3, verify,
+      # badging, unzip -t, análisis, branding, checksum, artifact.
+      - name: "APK firmado y verificado (action compuesto)"
+        uses: ./.github/actions/android-apk
         env:
           KEYSTORE_BASE64: ${{ secrets.VIEWLBA_KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.VIEWLBA_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.VIEWLBA_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.VIEWLBA_KEY_PASSWORD }}
-        run: |
-          set -e
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "::warning::Secret VIEWLBA_KEYSTORE_BASE64 no configurado — el APK queda SIN FIRMAR (configura los 4 secrets para firmar releases reales)."
-            cp app/build/outputs/apk/release/app-release-unsigned.apk "app/build/outputs/apk/release/${APK_NAME}"
-            echo "signed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "$KEYSTORE_BASE64" | base64 -d > release.keystore
-            VIEWLBA_KEYSTORE_FILE=release.keystore \
-            VIEWLBA_KEYSTORE_PASSWORD="$KEYSTORE_PASSWORD" \
-            VIEWLBA_KEY_ALIAS="$KEY_ALIAS" \
-            VIEWLBA_KEY_PASSWORD="$KEY_PASSWORD" \
-            ./gradlew :app:assembleRelease --no-daemon
-            cp app/build/outputs/apk/release/app-release.apk "app/build/outputs/apk/release/${APK_NAME}"
-            rm -f release.keystore
-            echo "signed=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      # ---------------- 6. Análisis de artifacts (sin secretos dentro) ----------------
-      - name: Análisis del artifact (sin material de claves dentro)
-        working-directory: ${{ env.APP_DIR }}
-        run: |
-          set -e
-          APK="app/build/outputs/apk/release/${APK_NAME}"
-          echo "Extrayendo classes.dex para inspección..."
-          unzip -o -q "$APK" classes.dex -d /tmp/apk-inspect
-          echo "Escaneando el binario en busca de patrones de claves..."
-          if strings /tmp/apk-inspect/classes.dex | grep -E "BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY"; then
-            echo "::error::Material de clave privada detectado dentro del APK"
-            exit 1
-          fi
-          echo "✓ APK limpio (sin material de clave)"
-
-      # ---------------- 7. Checksum + artifact ----------------
-      - name: Checksum SHA-256 (SHA256SUMS.txt)
-        working-directory: ${{ env.APP_DIR }}
-        run: |
-          cd app/build/outputs/apk/release
-          sha256sum "${APK_NAME}" > SHA256SUMS.txt
-          cat SHA256SUMS.txt
-
-      - name: Subir artifact (APK + checksum)
-        uses: actions/upload-artifact@v4
         with:
-          name: viewlba-license-generator
-          path: |
-            android-license-generator/app/build/outputs/apk/release/${{ env.APK_NAME }}
-            android-license-generator/app/build/outputs/apk/release/SHA256SUMS.txt
-          retention-days: 30
-          if-no-files-found: error
+          version-name: ${{ env.APK_VERSION }}
 
       - name: Resumen (sin secretos)
         run: |
-          echo "### APK del generador listo" >> $GITHUB_STEP_SUMMARY
-          echo "- Archivo: \`${{ env.APK_NAME }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Firmado: \`${{ steps.sign.outputs.signed }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Lint/tests/seguridad/build: PASS" >> $GITHUB_STEP_SUMMARY
+          echo "### Generador Android — APK firmado" >> $GITHUB_STEP_SUMMARY
+          echo "- Versión: \`${APK_VERSION}\` (fuente: /VERSION)" >> $GITHUB_STEP_SUMMARY
+          echo "- Firma: apksigner v1+v2+v3 verificados; zipalign PASS; badging PASS" >> $GITHUB_STEP_SUMMARY
+          echo "- Artifact: \`viewlba-license-generator\` (APK + SHA256SUMS + VERIFY)" >> $GITHUB_STEP_SUMMARY

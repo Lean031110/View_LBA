@@ -1,0 +1,291 @@
+name: "ViewLBA APK — build · sign · verify"
+description: >
+  Pipeline Android COMPLETO y bloqueante (FASES 1-8 de la release 3.0.0):
+  Java/SDK/Gradle fijos → lint → tests → seguridad → build SIN firmar →
+  zipalign → apksigner sign (v1+v2+v3) → apksigner verify → badging →
+  unzip -t → análisis anti-secretos → branding → SHA256SUMS → artifact.
+  NUNCA publica un APK sin firmar: si faltan los secrets de firma, FAIL.
+
+inputs:
+  version-name:
+    description: "versionName esperado dentro del APK (p.ej. 3.0.0 o 3.0.0-rc.1)"
+    required: true
+  app-dir:
+    description: "Directorio del proyecto Android"
+    required: false
+    default: "android-license-generator"
+  artifact-name:
+    description: "Nombre del artifact subido"
+    required: false
+    default: "viewlba-license-generator"
+
+runs:
+  using: "composite"
+  steps:
+    # ── 1-2. Toolchain FIJA (reproducible) ────────────────────────────────
+    - name: "Java 17 (JDK fijo — requerido por AGP 8.x)"
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: "17"
+
+    - name: "Android SDK (cmdline-tools)"
+      uses: android-actions/setup-android@v3
+
+    - name: "Plataforma 35 + build-tools 35.0.0 (fijos)"
+      shell: bash
+      run: |
+        set -euo pipefail
+        # 'yes |' alimenta las confirmaciones de licencia del sdkmanager.
+        # Sin pipefail LOCAL: yes muere con SIGPIPE 141 al cerrar sdkmanager
+        # (comportamiento esperado, no un error).
+        set +o pipefail
+        yes | sdkmanager "platforms;android-35" "build-tools;35.0.0" > /dev/null
+        set -o pipefail
+        sdkmanager --list_installed | grep -E "platforms|build-tools" || true
+
+    - name: "Gradle 8.10.2 (wrapper, reproducible)"
+      uses: gradle/actions/setup-gradle@v4
+      with:
+        gradle-version: "8.10.2"
+
+    - name: "Cache de dependencias Gradle"
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: gradle-${{ runner.os }}-${{ hashFiles('android-license-generator/**/*.gradle.kts') }}
+        restore-keys: gradle-${{ runner.os }}-
+
+    # ── 3. GATE de secrets: sin firma NO hay release (FASE 1/22) ──────────
+    - name: "Gate: secrets de firma OBLIGATORIOS (nunca APK unsigned)"
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ -z "${KEYSTORE_BASE64:-}" ] || [ -z "${KEYSTORE_PASSWORD:-}" ] \
+           || [ -z "${KEY_ALIAS:-}" ] || [ -z "${KEY_PASSWORD:-}" ]; then
+          echo "::error::Release signing secrets are required. Refusing to publish unsigned APK."
+          echo "Faltan: VIEWLBA_KEYSTORE_BASE64 / VIEWLBA_KEYSTORE_PASSWORD / VIEWLBA_KEY_ALIAS / VIEWLBA_KEY_PASSWORD"
+          exit 1
+        fi
+        echo "✓ 4 secrets de firma presentes (no se imprimen)"
+
+    - name: "Resolver versionCode (gradle.properties — monótono)"
+      id: vcode
+      shell: bash
+      run: |
+        set -euo pipefail
+        VC=$(grep -E '^VERSION_CODE=' android-license-generator/gradle.properties | cut -d= -f2)
+        [[ "$VC" =~ ^[0-9]+$ ]] || { echo "::error::VERSION_CODE inválido: $VC"; exit 1; }
+        [ "$VC" -ge 2 ] || { echo "::error::VERSION_CODE=$VC no es monótono (v1 publicada con 1)"; exit 1; }
+        echo "code=$VC" >> "$GITHUB_OUTPUT"
+        echo "✓ VERSION_CODE=$VC (monótono)"
+
+    # ── 4-5. Lint + tests JVM ─────────────────────────────────────────────
+    - name: "Lint (Android Lint, bloqueante)"
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd android-license-generator
+        ./gradlew :app:lintRelease --no-daemon
+
+    - name: "Tests unitarios JVM (códec · cripto · políticas · backup · fuzz)"
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd android-license-generator
+        ./gradlew :app:testReleaseUnitTest --no-daemon
+
+    # ── 6. Seguridad en fuentes ───────────────────────────────────────────
+    - name: "Seguridad — material de claves JAMÁS en fuentes"
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd android-license-generator
+        if grep -rInE "(BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|privateKey.*=.*\"[A-Za-z0-9_-]{43}\")" \
+            --include="*.kt" --include="*.java" --include="*.xml" --include="*.properties" --include="*.kts" \
+            app/src/ 2>/dev/null; then
+          echo "::error::Material de clave privada detectado en el código fuente"
+          exit 1
+        fi
+        echo "✓ Sin material de clave en fuentes"
+
+    # ── 7. Build release (SIN firmar — la firma es paso explícito) ────────
+    - name: "Build release R8 (unsigned — Gradle nunca firma)"
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd android-license-generator
+        ./gradlew :app:assembleRelease --no-daemon \
+          -PandroidVersionName="${{ inputs.version-name }}"
+        OUT=app/build/outputs/apk/release/app-release-unsigned.apk
+        test -s "$OUT" || { echo "::error::assembleRelease no produjo APK"; exit 1; }
+        ls -la "$OUT"
+
+    # ── 8-13. zipalign → sign → verify → badging → unzip (FASES 3-4) ──────
+    - name: "Firmar: zipalign → apksigner (v1+v2+v3) → verify → badging → unzip"
+      shell: bash
+      env:
+        APK_VERSION_NAME: ${{ inputs.version-name }}
+        APK_VERSION_CODE: ${{ steps.vcode.outputs.code }}
+      run: |
+        set -euo pipefail
+        cd android-license-generator
+        BT="$ANDROID_HOME/build-tools/35.0.0"
+        OUT=app/build/outputs/apk/release
+        UNSIGNED="$OUT/app-release-unsigned.apk"
+        ALIGNED="$OUT/app-release-aligned.apk"
+        APK_NAME="ViewLBA-License-Generator-v${APK_VERSION_NAME}.apk"
+        APK="$OUT/$APK_NAME"
+
+        # 8. zipalign (ANTES de firmar — apksigner preserva la alineación)
+        "$BT/zipalign" -f -P 4 4 "$UNSIGNED" "$ALIGNED"
+
+        # 9. apksigner sign — keystore de Secrets, NUNCA impreso, borrado tras firmar
+        echo "$KEYSTORE_BASE64" | base64 -d > "$OUT/release.keystore"
+        export KS_PASS="$KEYSTORE_PASSWORD" KPASS="$KEY_PASSWORD"
+        "$BT/apksigner" sign \
+          --ks "$OUT/release.keystore" \
+          --ks-key-alias "$KEY_ALIAS" \
+          --ks-pass env:KS_PASS \
+          --key-pass env:KPASS \
+          --v1-signing-enabled true \
+          --v2-signing-enabled true \
+          --v3-signing-enabled true \
+          --out "$APK" \
+          "$ALIGNED"
+        rm -f "$OUT/release.keystore"
+        echo "✓ firmado: $APK_NAME"
+
+        # 10. apksigner verify — esquemas v2/v3 y certificados
+        "$BT/apksigner" verify --verbose --print-certs "$APK" | tee "$OUT/apksigner-verify.txt"
+        grep -q "^Verifies" "$OUT/apksigner-verify.txt" \
+          || { echo "::error::apksigner verify NO pasa"; exit 1; }
+        grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" "$OUT/apksigner-verify.txt" \
+          || { echo "::error::firma v2 NO verifica"; exit 1; }
+        grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" "$OUT/apksigner-verify.txt" \
+          || { echo "::error::firma v3 NO verifica"; exit 1; }
+        grep -q "Signer #1 certificate SHA-256 digest:" "$OUT/apksigner-verify.txt" \
+          || { echo "::error::sin certificado del firmante"; exit 1; }
+        # v1 (JAR): con minSdk 26 verify la omite (no es requerida) → se fuerza
+        # --min-sdk-version 23 para probar que la firma JAR también es válida.
+        "$BT/apksigner" verify --verbose --min-sdk-version 23 "$APK" > "$OUT/apksigner-verify-v1.txt"
+        grep -q "Verified using v1 scheme (JAR signing): true" "$OUT/apksigner-verify-v1.txt" \
+          || { echo "::error::firma v1 (JAR) NO verifica con min-sdk 23"; exit 1; }
+        echo "✓ apksigner verify: v1 (min-sdk 23) + v2 + v3 = true"
+
+        # 11. zipalign -c (el APK firmado DEBE seguir alineado)
+        "$BT/zipalign" -c -P 4 4 "$APK"
+        echo "✓ zipalign -c PASS"
+
+        # 12. Metadata (aapt2 badging): package/version/minSdk/targetSdk/label
+        # (sin pipes a head: con pipefail un head cerraría el pipe → SIGPIPE)
+        "$BT/aapt2" dump badging "$APK" > "$OUT/badging.txt"
+        head -8 "$OUT/badging.txt"
+        grep -q "^package: name='com.viewlba.licensegen' versionCode='${APK_VERSION_CODE}' versionName='${APK_VERSION_NAME}'" "$OUT/badging.txt" \
+          || { echo "::error::package/versionCode/versionName incorrectos (esperado com.viewlba.licensegen / ${APK_VERSION_CODE} / ${APK_VERSION_NAME})"; exit 1; }
+        grep -Eq "^(sdk|minSdk)Version:'26'" "$OUT/badging.txt" \
+          || { echo "::error::minSdk ≠ 26"; exit 1; }
+        grep -q "^targetSdkVersion:'35'" "$OUT/badging.txt" \
+          || { echo "::error::targetSdk ≠ 35"; exit 1; }
+        grep -q "^application-label:'ViewLBA Licencias'" "$OUT/badging.txt" \
+          || { echo "::error::label de la app ≠ 'ViewLBA Licencias'"; exit 1; }
+        ICONS=$(grep -c "^application-icon" "$OUT/badging.txt" || true)
+        [ "$ICONS" -ge 1 ] || { echo "::error::el APK no declara iconos"; exit 1; }
+        echo "✓ badging: package/version/SDKs/label/iconos OK"
+
+        # 13. Integridad ZIP
+        unzip -t "$APK" > "$OUT/unzip-test.txt"
+        echo "✓ unzip -t PASS ($(grep -c 'OK' "$OUT/unzip-test.txt") entradas OK)"
+
+    # ── 12. Análisis del APK: sin material de claves ni credenciales ──────
+    - name: "Análisis del APK (anti-secretos + anti-keystore)"
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd android-license-generator
+        OUT=app/build/outputs/apk/release
+        APK=$(ls "$OUT"/ViewLBA-License-Generator-v*.apk)
+        rm -rf /tmp/apk-inspect && mkdir -p /tmp/apk-inspect
+        unzip -q "$APK" 'classes*.dex' -d /tmp/apk-inspect
+
+        # PEM / material de clave en TODO el binario y en cada dex
+        # (sin grep -q en pipes: cerraría el pipe y el SIGPIPE del productor
+        # enmascararía la detección — grep completo + redirect a /dev/null)
+        if strings "$APK" | grep -E "BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY" > /dev/null; then
+          echo "::error::Material de clave privada detectado en el APK"; exit 1
+        fi
+        if strings /tmp/apk-inspect/classes*.dex | grep -E "BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY" > /dev/null; then
+          echo "::error::Material de clave privada detectado en classes.dex"; exit 1
+        fi
+
+        # Los PROPIOS secrets no deben haber filtrado al binario
+        if [ -n "$KEYSTORE_PASSWORD" ] && strings "$APK" | grep -F -- "$KEYSTORE_PASSWORD" > /dev/null; then
+          echo "::error::La contraseña del keystore aparece dentro del APK"; exit 1
+        fi
+        if [ -n "$KEY_ALIAS" ] && strings "$APK" | grep -F -- "$KEY_ALIAS" > /dev/null; then
+          echo "::error::El alias de firma aparece dentro del APK"; exit 1
+        fi
+        echo "✓ APK limpio: sin claves privadas, sin credenciales de firma"
+
+    # ── 13. Branding (FASE 8): logo ViewLBA, no iconos genéricos ──────────
+    - name: "Branding — recursos ViewLBA correctos"
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd android-license-generator
+        M=app/src/main/AndroidManifest.xml
+        grep -q 'android:icon="@mipmap/ic_launcher"' "$M" || { echo "::error::manifest sin icono launcher"; exit 1; }
+        grep -q 'android:roundIcon="@mipmap/ic_launcher"' "$M" || { echo "::error::manifest sin round icon"; exit 1; }
+        grep -q 'com.viewlba.licensegen' "$M" || { echo "::error::package incorrecto"; exit 1; }
+        test -f app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml || { echo "::error::falta icono adaptativo"; exit 1; }
+        grep -q "ViewLBA Licencias" app/src/main/res/values/strings.xml || { echo "::error::app_name incorrecto"; exit 1; }
+        # Anti-genérico: el foreground del icono debe ser la marca ViewLBA (ámbar F5A623)
+        grep -q "#F5A623" app/src/main/res/drawable/ic_launcher_foreground.xml \
+          || { echo "::error::el icono launcher no es la marca ViewLBA (sin ámbar F5A623)"; exit 1; }
+        echo "✓ branding: icono adaptativo + round + label + package ViewLBA"
+
+    # ── 14. Checksum + evidencia ──────────────────────────────────────────
+    - name: "Checksum SHA-256 + evidencia de verificación"
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd android-license-generator/app/build/outputs/apk/release
+        APK=$(ls ViewLBA-License-Generator-v*.apk)
+        sha256sum "$APK" > LicenseGenerator-SHA256SUMS.txt
+
+        {
+          echo "# ViewLBA License Generator — verificación criptográfica del APK"
+          echo "Fecha: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "APK: $APK"
+          echo
+          echo "## SHA-256"
+          cat LicenseGenerator-SHA256SUMS.txt
+          echo
+          echo "## apksigner verify --verbose --print-certs"
+          cat apksigner-verify.txt
+          echo
+          echo "## apksigner verify --verbose --min-sdk-version 23 (firma v1/JAR)"
+          cat apksigner-verify-v1.txt
+          echo
+          echo "## aapt2 dump badging (metadatos)"
+          head -15 badging.txt
+          echo
+          echo "## unzip -t (integridad, últimas líneas)"
+          tail -3 unzip-test.txt
+        } > LicenseGenerator-VERIFY.txt
+        cat LicenseGenerator-SHA256SUMS.txt
+        echo "✓ checksum + evidencia escritos"
+
+    # ── 15. Artifact ──────────────────────────────────────────────────────
+    - name: "Subir artifact (APK firmado + checksum + evidencia)"
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: |
+          android-license-generator/app/build/outputs/apk/release/ViewLBA-License-Generator-v*.apk
+          android-license-generator/app/build/outputs/apk/release/LicenseGenerator-SHA256SUMS.txt
+          android-license-generator/app/build/outputs/apk/release/LicenseGenerator-VERIFY.txt
+        retention-days: 30
+        if-no-files-found: error

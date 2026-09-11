@@ -1,10 +1,30 @@
 # PRODUCTION_READINESS — ViewLBA / Pantalla_Restaurante
 
 > Documento final de la misión **"Producción Real 24/7"** (43 fases, MISSION.md)
-> + sistema de **licenciamiento v2 por token copiar/pegar** (v2.0.0).
-> Fecha: 2026-09-11 · Rama: `main` · Progreso detallado: `PRODUCTION_PLAN.md`.
+> + sistema de **licenciamiento v2 por token copiar/pegar** (v2.0.0)
+> + **release 3.0.0: APK firmado + pipeline de release verificable**.
+> Fecha: 2026-09-12 · Rama: `main` · Progreso detallado: `PRODUCTION_PLAN.md`.
 
 ---
+
+## 0. Addendum 3.0.0 — APK firmado y release verificable
+
+La auditoría FASE 0 (`RELEASE_3_AUDIT.md`) detectó que el APK publicado en
+v2.0.0 **no instalaba** (APK de release SIN FIRMAR: Android lo rechaza con
+`INSTALL_PARSE_FAILED_NO_CERTIFICATES`) y que el versionado estaba
+fragmentado (1.0.0/2.0.0 según el archivo). Estado tras 3.0.0:
+
+| Aspecto | Estado | Evidencia |
+|---|---|---|
+| Firma Android | **PASS** | Keystore PKCS#12 RSA-2048 (creado UNA vez, fuera del repo) en 4 GitHub Secrets; CI firma con `apksigner` v1+v2+v3 y VERIFICA antes de publicar |
+| APK instalable | **PASS** (binario) | `apksigner verify` v1+v2+v3 true · `zipalign -c` PASS · badging (package/versión/SDKs) · `unzip -t` 395 entradas |
+| Fallback unsigned | **ELIMINADO** | Falta de secrets ⇒ FAIL «Refusing to publish unsigned APK» (nunca warning+continuar) |
+| Versión única | **PASS** | `/VERSION` 3.0.0 + gate CI `scripts/check-version.ts` (package.json/CHANGELOG/Gradle/workflows sincronizados) |
+| versionCode | **PASS** | Monótono: 3 (gate CI ≥ 2) |
+| APK en el release | **PASS** | Job `build-android` en `release-installer.yml` (mismo pipeline); release incluye APK + checksums + `LicenseGenerator-VERIFY.txt` |
+| Fuzz/ataques | **PASS** | ~1.000 entradas adversariales TS + Kotlin; ataques storage/HTTP/backup; bug real hallado y corregido (`verifyStructure` aceptaba backup v0) |
+| Iconos instaladores | **PASS** | Placeholder Tauri (azul) reemplazado por la marca ViewLBA (logo-mark) — verificado visualmente |
+| Instalación en emulador/dispositivo | **NOT VERIFIED** (local sin KVM) | Workflow `android-emulator-smoke.yml` (install→launch→screenshot→logcat→uninstall) listo en CI; ejecutar en tag/rc |
 
 ## 1. Estado final
 
@@ -18,16 +38,15 @@ está marcado **NOT VERIFIED** con su motivo — nada marcado PASS sin prueba.
 
 ## 2. Versión y commits
 
-- **Versión actual del código: 2.0.0** (package.json — CHANGELOG documenta
-  1.0.0/1.1.0/1.2.0/1.2.1/2.0.0).
-- **2.0.0 = sistema de licencias v2 (token copiar/pegar)**: el flujo ZIP +
-  Installation/Disk ID a mano desaparece; nuevos formatos VLREQ2 (sealed box
-  X25519) y VLBA2 (firma Ed25519), rutas `/api/license/request-code` y
-  `/api/license/activate`, y **app Android privada del administrador**
-  (android-license-generator/) con DB cifrada SQLCipher + Keystore + PIN +
-  biometría, backup `.vlbak`, anti-replay/anti-downgrade, CI propia y APK
-  firmado como artifact. Rotación limpia de claves (cero licencias v1
-  emitidas). Base: producción 24/7 de las 43 fases + v1.2.1.
+- **Versión actual del código: 3.0.0** (`/VERSION`, única fuente de verdad —
+  package.json, CHANGELOG y el versionName de Gradle derivan de ella;
+  CHANGELOG documenta 1.0.0/1.1.0/1.2.0/1.2.1/2.0.0/3.0.0).
+- **3.0.0 = release de producción verificable**: APK del generador Android
+  FIRMADO (v1+v2+v3, keystore en GitHub Secrets), pipeline de firma canónico
+  compartido CI/release (`.github/actions/android-apk`), versión centralizada
+  con gate, APK dentro del GitHub Release, prereleases para `-rc.N`, fuzz +
+  ataques autorizados (storage/HTTP/backup) y smoke de instalación en
+  emulador como workflow separado.
 - Commits de la misión (desde la base `48f9583`): **40 commits** atómicos por fase (ver `git log --oneline 48f9583..HEAD`). Hitos: F31 installer (`c6c2a80`), F32 pairing (`38e3b77`), F33 recovery (`5bf3da2`), F34 offline/PWA (`4043f79`), F35 security (`709e1a0`), F36-38 perf (`14e64e7`), F39-40 docs (`bbc75be`), F41 review (`82cf792`), F42 matriz (`47ab3de`).
 
 ## 3. Cambios realizados (resumen por área)
