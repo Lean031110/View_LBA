@@ -41,12 +41,13 @@ jobs:
           java-version: "17"
 
       # Android SDK con plataforma/build-tools FIJOS (reproducible)
-      - name: Instalar Android SDK (plataforma 35 fija)
+      - name: Instalar Android SDK (cmdline-tools)
         uses: android-actions/setup-android@v3
-        with:
-          packages: |
-            platforms;android-35
-            build-tools;35.0.0
+
+      - name: Instalar plataforma 35 + build-tools 35.0.0 (fijos)
+        run: |
+          yes | sdkmanager "platforms;android-35" "build-tools;35.0.0" > /dev/null
+          sdkmanager --list_installed | grep -E "platforms|build-tools" || true
 
       - name: Configurar Gradle 8.10.2 (wrapper, reproducible)
         uses: gradle/actions/setup-gradle@v4
