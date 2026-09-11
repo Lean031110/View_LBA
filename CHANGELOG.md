@@ -5,6 +5,40 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato está basado en [Keep a Changelog](https://keepachangelog.com/es/1.1.0/),
 y este proyecto adhiere a [SemVer](https://semver.org/lang/es/).
 
+## [1.2.1] — 2026-09-11 — Rotación de clave de firma Ed25519 (producción)
+
+### Cambiado
+
+- **Rotación del par de claves de PRODUCCIÓN del sistema de licencias**:
+  `PRODUCTION_LICENSE_PUBLIC_KEY` en `src/lib/licensing/public-key.ts`
+  ahora es `ZT_i…GhEg` (antes `hP5E…dKRY`).
+  - **Motivo**: el par anterior fue emitido en v1.2.0 pero su clave privada
+    nunca llegó a ningún canal operativo (ni secret, ni entrega fuera de
+    banda registrada) → era imposible emitir licencias válidas para esa
+    clave. Se rota ANTES de emitir la primera licencia a un cliente real:
+    **cero impacto** (sin licencias activas en el campo, sin historial de
+    emisiones).
+  - La nueva clave privada queda SOLO en el secret de GitHub Actions
+    `VIEWLBA_LICENSE_PRIVATE_KEY` (cifrado sealed-box) + copia custodiada
+    por el dueño fuera de banda. **No está (ni estará) en el repo** —
+    verificado con gitleaks + búsqueda de patrón.
+  - Procedimiento conforme a `docs/LICENSE-SECURITY.md` §9 (Rotación de
+    claves): nuevo par → pública en el verificador → release.
+- **Instaladores re-compilados** con la clave pública nueva (v1.2.1):
+  los instaladores de v1.2.0 verifican licencias firmadas con la clave
+  retirada y NO deben usarse para despliegues con licencias reales.
+
+### Verificado
+
+- 136/136 tests de licensing (matriz de seguridad A–H: firma rota por
+  1 byte, re-firmado con otra clave, vencida, mismatch de equipo/disco,
+  planes 30/365 días exactos) tras la rotación.
+- Emisión E2E local con la clave nueva: firma verificada de ida y vuelta;
+  la misma licencia **falla** contra la clave retirada (comportamiento
+  esperado).
+- Workflow "License Generator" de GitHub Actions ejecutado con
+  `workflow_dispatch` usando el secret: ZIP firmado + artifact publicado.
+
 ## [1.2.0] — 2026-09-11 — Licenciamiento offline + generador + GitHub Actions
 
 ### Añadido

@@ -10,4 +10,4 @@
  * Rotación: generar nuevo par, actualizar esta constante, publicar release.
  * La clave privada se entrega al dueño fuera de banda (nunca por git).
  */
-export const PRODUCTION_LICENSE_PUBLIC_KEY = "hP5EZ8iWbR2DfMKjqNkZcnVydTqOSXkVyxBdV9LdKRY"
+export const PRODUCTION_LICENSE_PUBLIC_KEY = "ZT_iNNFWeV0ambnm03NjqCuABG5IRMK-Ez37QtbGhEg"

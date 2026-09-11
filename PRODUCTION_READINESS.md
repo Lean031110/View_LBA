@@ -18,8 +18,8 @@ está marcado **NOT VERIFIED** con su motivo — nada marcado PASS sin prueba.
 
 ## 2. Versión y commits
 
-- **Versión actual del código: 1.2.0** (package.json · Cargo.toml · tauri.conf.json — CHANGELOG documenta 1.0.0/1.1.0/1.2.0).
-- **1.2.0 = licenciamiento offline** (Ed25519 + binding equipo/disco + trial 7 días + generador + demo web + GitHub Actions), sobre la base de producción 24/7 de las 43 fases.
+- **Versión actual del código: 1.2.1** (package.json · Cargo.toml · tauri.conf.json — CHANGELOG documenta 1.0.0/1.1.0/1.2.0/1.2.1).
+- **1.2.1 = rotación de la clave de firma Ed25519 de producción** (antes de la primera emisión a cliente real: cero licencias afectadas) + secret de Actions `VIEWLBA_LICENSE_PRIVATE_KEY` operativo. **1.2.0 = licenciamiento offline** (Ed25519 + binding equipo/disco + trial 7 días + generador + demo web + GitHub Actions), sobre la base de producción 24/7 de las 43 fases. Los instaladores de v1.2.0 tienen la clave pública retirada — no usar con licencias reales.
 - Commits de la misión (desde la base `48f9583`): **40 commits** atómicos por fase (ver `git log --oneline 48f9583..HEAD`). Hitos: F31 installer (`c6c2a80`), F32 pairing (`38e3b77`), F33 recovery (`5bf3da2`), F34 offline/PWA (`4043f79`), F35 security (`709e1a0`), F36-38 perf (`14e64e7`), F39-40 docs (`bbc75be`), F41 review (`82cf792`), F42 matriz (`47ab3de`).
 
 ## 3. Cambios realizados (resumen por área)
@@ -32,7 +32,7 @@ está marcado **NOT VERIFIED** con su motivo — nada marcado PASS sin prueba.
 | Base de datos | Migraciones versionadas (3) + baseline · WAL · índices justificados · backup/restore verificados (borrar tabla → restore → íntegro) |
 | Operación | Instalador multiplataforma con verificación de target de DB · systemd (Linux) · NSSM (Windows) · timers de backup/purga · health global · logging estructurado + auditoría real |
 | Tests | 230 unit/servicios + 20 integración + 37 E2E (Playwright, stack real, ffmpeg como publicador) + recovery con SIGKILL real |
-| **Licenciamiento (v1.2.0)** | **Offline 100%** (sin llamadas de red): firma Ed25519 sobre payload canónico · binding Installation ID + Disk ID (recalculado contra hardware actual en cada lectura → restore/clone en otro disco = MISMATCH) · trial 7 días con anclas duales + anti-rollback de reloj · watermark TV · planes monthly 30 días / USD 10 y annual 365 días / USD 100 (exactos) · import ZIP con validación total y anti-downgrade · feature gating server-side (403 en backend, candados en UI) · auditoría de eventos de licencia · generador CLI + web demo + GitHub Actions con secret `VIEWLBA_LICENSE_PRIVATE_KEY` (la clave privada NUNCA en el repo — verificado gitleaks + grep de historial) |
+| **Licenciamiento (v1.2.1)** | **Offline 100%** (sin llamadas de red): firma Ed25519 sobre payload canónico · binding Installation ID + Disk ID (recalculado contra hardware actual en cada lectura → restore/clone en otro disco = MISMATCH) · trial 7 días con anclas duales + anti-rollback de reloj · watermark TV · planes monthly 30 días / USD 10 y annual 365 días / USD 100 (exactos) · import ZIP con validación total y anti-downgrade · feature gating server-side (403 en backend, candados en UI) · auditoría de eventos de licencia · generador CLI + web demo + GitHub Actions con secret `VIEWLBA_LICENSE_PRIVATE_KEY` creado y operativo (la clave privada NUNCA en el repo — verificado gitleaks + grep de historial; clave de producción rotada en v1.2.1) |
 
 ## 4. Migraciones de base de datos
 

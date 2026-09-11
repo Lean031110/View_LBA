@@ -154,6 +154,22 @@ engines, sidecars, 0 symlinks) y ejecuta el sidecar `--json detect`.
 
 ## Historial de releases
 
+### v1.2.1 (2026-09-11) — Rotación de clave de firma (Ed25519) + secret de Actions
+
+- **Alcance**: rotación del par de claves de PRODUCCIÓN del sistema de
+  licencias antes de la primera emisión a un cliente real (cero licencias
+  afectadas — no existía ninguna emitida con la clave anterior, cuya
+  privada nunca llegó a canal operativo alguno).
+- **Secret**: `VIEWLBA_LICENSE_PRIVATE_KEY` creado en el repositorio
+  (Settings → Secrets → Actions) con la clave privada nueva, cifrado
+  sealed-box vía API. El workflow "License Generator" queda 100%
+  operativo: `workflow_dispatch` → licencia firmada → artifact ZIP.
+- **Instaladores**: re-compilados con la clave pública nueva
+  (`ZT_i…GhEg`). Los instaladores de v1.2.0 (clave retirada `hP5E…dKRY`)
+  **no deben usarse** en despliegues con licencias reales.
+- **Versiones**: `package.json`, `Cargo.toml` y `tauri.conf.json` en 1.2.1.
+- **Rotación futura**: seguir `docs/LICENSE-SECURITY.md` §9.
+
 ### v1.2.0 (2026-09-11) — Licenciamiento offline + generador + GitHub Actions
 
 - **Alcance**: sistema de licencias 100% offline (Ed25519, binding equipo +
