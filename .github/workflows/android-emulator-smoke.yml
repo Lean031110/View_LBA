@@ -76,46 +76,23 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
           disable-animations: true
           emulator-boot-timeout: 900
-          # OJO: el script corre con /bin/sh (dash) — POSIX puro: 'set -o
-          # pipefail' NO existe (fallo del rc.2 tras bootear correctamente).
+          # NOTA CRÍTICA (evidencia rc.2/rc.3): la action ejecuta el script
+          # LÍNEA A LÍNEA en procesos `sh -c` SEPARADOS (dash, POSIX puro):
+          #   · NO hay variables que persistan entre líneas ($APK llegaba VACÍO)
+          #   · NO vale 'set -o pipefail' (fallo rc.2)
+          # → cada línea es AUTOCONTENIDA, con rutas literales y la versión
+          #   expandida por GitHub (${{ env.APK_VERSION }}) en tiempo de parse.
           script: |
-            set -eu
-            APK=$(ls android-license-generator/app/build/outputs/apk/release/ViewLBA-License-Generator-v*.apk)
-            echo "== APK: $APK =="
-
-            echo "== apksigner verify (re-verificación en el runner del emulador) =="
-            BT="$ANDROID_HOME/build-tools/35.0.0"
-            "$BT/apksigner" verify --print-certs "$APK" | head -5
-
-            echo "== adb install =="
-            adb install -r "$APK"
-            INSTALL_RC=$?
-
-            echo "== pm list packages (com.viewlba.licensegen) =="
+            adb install -r android-license-generator/app/build/outputs/apk/release/ViewLBA-License-Generator-v${{ env.APK_VERSION }}.apk
             adb shell pm list packages | grep com.viewlba.licensegen
-
-            echo "== am start (MainActivity) =="
             adb shell am start -n com.viewlba.licensegen/.ui.MainActivity
             sleep 12
-
-            echo "== proceso vivo =="
             adb shell pidof com.viewlba.licensegen
-
-            echo "== captura de pantalla =="
             adb exec-out screencap -p > /tmp/viewlba-smoke.png
             ls -la /tmp/viewlba-smoke.png
-
-            echo "== dumpsys del top activity =="
-            adb shell dumpsys activity activities | grep -m1 "topResumedActivity" || true
-
-            echo "== logcat de la app (errores FATALES) =="
-            adb logcat -d | grep -E "com.viewlba.licensegen|FATAL EXCEPTION" | tail -40 || true
-
-            echo "== desinstalar =="
+            adb shell dumpsys activity activities | grep -m1 topResumedActivity || echo "(dumpsys sin topResumedActivity — informativo)"
+            adb logcat -d | grep -E "FATAL EXCEPTION" | tail -20 || echo "sin FATAL EXCEPTION en logcat (correcto)"
             adb uninstall com.viewlba.licensegen
-
-            test $INSTALL_RC -eq 0
-            echo "✓ SMOKE COMPLETO: install + launch + evidencia + uninstall"
 
       - name: "Subir evidencia (screenshot)"
         if: always()
