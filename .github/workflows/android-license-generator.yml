@@ -34,7 +34,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
+        # Historia COMPLETA: gitleaks escanea el rango del push (before..after)
+        # y con clon superficial el commit base no existe → git falla (mismo
+        # fix documentado en ci.yml).
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # Java versión FIJA (JDK 17 — requerido por AGP 8.x)
       - name: Instalar Java 17 (fijo)

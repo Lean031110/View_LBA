@@ -101,7 +101,8 @@ test.describe("Licencia — flujo copiar/pegar completo (requisito sección 25)"
     await expect(page.getByText("Licencia guardada en el servidor")).toBeVisible()
 
     // el estado refleja la renovación (400 días > 365 del setup)
-    await expect(page.getByText(/^400 días$/, { exact: true })).toBeVisible({ timeout: 20_000 })
+    // (.first(): el historial también muestra «400 días · vence …»)
+    await expect(page.getByText(/^400 días$/, { exact: true }).first()).toBeVisible({ timeout: 20_000 })
     await expect(page.getByText("Lo D'Leo").first()).toBeVisible()
   })
 
