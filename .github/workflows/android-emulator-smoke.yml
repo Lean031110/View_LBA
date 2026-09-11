@@ -76,8 +76,10 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
           disable-animations: true
           emulator-boot-timeout: 900
+          # OJO: el script corre con /bin/sh (dash) — POSIX puro: 'set -o
+          # pipefail' NO existe (fallo del rc.2 tras bootear correctamente).
           script: |
-            set -euo pipefail
+            set -eu
             APK=$(ls android-license-generator/app/build/outputs/apk/release/ViewLBA-License-Generator-v*.apk)
             echo "== APK: $APK =="
 
