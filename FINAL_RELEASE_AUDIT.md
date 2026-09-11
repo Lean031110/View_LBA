@@ -28,13 +28,14 @@
 
 | APK | SHA-256 | Origen | Verificación externa |
 |---|---|---|---|
-| `ViewLBA-License-Generator-v3.0.0-rc.1.apk` | `8df32875fee19b7702506f6a6e5e1e8735864db0fd1c72e9100a2759aa27289f` | GitHub Release rc.1 (job build-android) | descargado y re-verificado: hash + apksigner v1/v2/v3 + zipalign + badging |
-| `ViewLBA-License-Generator-v3.0.0-rc.2.apk` | (publicado en el release rc.2, mismo pipeline) | GitHub Release rc.2 | idéntico pipeline verificado |
-| `ViewLBA-License-Generator-v3.0.0.apk` | `1d7649d272ca0a444f7f0b5f7aacc3861ea0febca8de96ead23a30435db13dac` | artifact de CI (rama main/PR, verificado) | descargado del artifact y verificado localmente |
+| **`ViewLBA-License-Generator-v3.0.0.apk` (RELEASE FINAL)** | **`1d7649d272ca0a444f7f0b5f7aacc3861ea0febca8de96ead23a30435db13dac`** | GitHub Release v3.0.0 (job build-android del tag) | descargado de GitHub y re-verificado: hash ✓ + apksigner v1/v2/v3 + zipalign + badging |
+| `ViewLBA-License-Generator-v3.0.0-rc.1.apk` | `8df32875fee19b7702506f6a6e5e1e8735864db0fd1c72e9100a2759aa27289f` | GitHub Release rc.1 | idéntica verificación externa |
 
-> El APK no es bit-reproducible entre entornos (marcas de tiempo de recursos);
-> el hash AUTORITATIVO es el del artifact que el propio CI firma y publica,
-> con su `LicenseGenerator-SHA256SUMS.txt` generado en el mismo pipeline.
+**Reproducibilidad observada**: el hash del APK del release final es
+IDÉNTICO al artifact de CI construido sobre commits distintos (solo diffs
+de docs/workflows) — el pipeline produce el mismo binario (no bit-flaky).
+El hash AUTORITATIVO es el publicado por el propio release con su
+`LicenseGenerator-SHA256SUMS.txt`.
 
 ## 3. Firma / verificación (evidencia)
 
@@ -231,10 +232,45 @@ mapeo de nombre (todos coinciden).
   base, script del emulador POSIX/autocontenido — todos con CI verde.
 - Tags RC: `v3.0.0-rc.1` y `v3.0.0-rc.2` (prereleases con 11 assets cada uno,
   incluido APK firmado + checksums + evidencia).
-- **Tag final: `v3.0.0`** sobre `4f0898c` (= `/VERSION`, gate verificado).
-- **GitHub Release 3.0.0**: `ViewLBA-License-Generator-v3.0.0.apk` +
-  `SHA256SUMS.txt` (nombres base) + `LicenseGenerator-SHA256SUMS.txt` +
-  `LicenseGenerator-VERIFY.txt` + `ViewLBA-Server-Setup-v3.0.0.exe` +
-  `ViewLBA-Server-v3.0.0-x86_64.deb` + AppImages + manifiestos.
-- La verificación externa del release final (hashes + binarios) se registra
-  a continuación tras la publicación.
+- **Tag final: `v3.0.0`** sobre `0347566` (= `/VERSION`, gate verificado;
+  CI verde en el commit del tag).
+- **GitHub Release 3.0.0 PUBLICADO y verificado externamente**:
+  https://github.com/Lean031110/Pantalla_Restaurante/releases/tag/v3.0.0
+  - `ViewLBA-License-Generator-v3.0.0.apk` — SHA-256
+    `1d7649d272ca0a444f7f0b5f7aacc3861ea0febca8de96ead23a30435db13dac`,
+    firmado v1+v2+v3, cert `f7f02e5f…`
+  - `ViewLBA-Server-Setup-v3.0.0.exe` —
+    `de3218549f05e838c24e2dc140eefe0c52fd47e6b03219b1bcb36ecd0cef8d6f`
+  - `ViewLBA-Server-v3.0.0-x86_64.deb` —
+    `8d55e6b20804bc2924d6478959afa102eae79b6e560e1448d9c1b5784a49118f`
+  - `ViewLBA-Server-3.0.0-x86_64.AppImage` —
+    `a957717ce406d08c5845bfcaac8226d9da23c26414a843bc9f52977db8be2c25`
+  - `ViewLBA-Server-CLI-v3.0.0-x86_64.AppImage` —
+    `c7ffa3f26177e2456b6d6c068342390a82d772e16eccb69069b66a3ce3a71029`
+  - `SHA256SUMS.txt` (nombres base — `sha256sum -c` funciona tras descargar,
+    verificado) + `LicenseGenerator-SHA256SUMS.txt` +
+    `LicenseGenerator-VERIFY.txt` (evidencia apksigner/badging/unzip) +
+    manifiestos linux/windows.
+- Emulator smoke sobre el tag final: **SUCCESS** (run 34640562770 —
+  install → launch → topResumedActivity → screenshot → sin FATAL →
+  uninstall del APK v3.0.0).
+- Todos los jobs del tag v3.0.0: build-android ✓ · build-linux ✓ ·
+  build-windows ✓ · release ✓ · emulator-smoke ✓.
+
+---
+
+## 13. Conclusión
+
+**ViewLBA 3.0.0 está PUBLICADA como release de producción con evidencia
+verificable de extremo a extremo**: build → sign (apksigner v1+v2+v3,
+cert de producción) → verify (verify/zipalign/badging/unzip) → release
+(conjunto completo de instaladores + APK + checksums + evidencia) →
+verificación externa (descarga desde GitHub, hashes re-computados) →
+instalación REAL en emulador API 35 (install → launch → top activity →
+screenshot → sin FATAL → uninstall).
+
+Quedan **NOT VERIFIED** (sin hardware en el entorno de auditoría, documentado
+en §11): dispositivo Android físico, systemd sobre hardware Linux y Windows
+real — cada uno con su procedimiento de verificación listo para ejecutar
+in situ. Nada de lo anterior impide la distribución: el binario publicado
+está íntegro, firmado y verificado.
