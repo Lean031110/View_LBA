@@ -89,6 +89,11 @@ segundos**. Todo por la red local: el sistema funciona **sin depender de Interne
   controla su estado, resolución y audio de forma remota.
 - 👥 **Roles y auditoría** — ADMIN / OPERADOR / VISOR, registro de acciones y autenticación con
   contraseñas scrypt.
+- 🔐 **Licenciamiento offline** (v1.2+) — firma digital Ed25519 por instalación (equipo + disco),
+  prueba de 7 días automática con marca de agua, planes **Mensual 30 días / USD 10** y
+  **Anual 365 días / USD 100**, activación por importación de ZIP **sin Internet**, y funciones
+  premium (multi-pantalla, logotipo, usuarios…) desbloqueadas solo con licencia válida.
+  Ver [docs/LICENSE-SYSTEM.md](docs/LICENSE-SYSTEM.md) y la [wiki](docs/wiki/).
 
 ## 🏗️ Arquitectura
 
@@ -251,6 +256,9 @@ por RTMP real) y el build standalone en cada push/PR.
 
 - Clave RTMP enmascarada; revelable/regenerable solo por ADMIN; validada server-side (hook
   `prePublish`); **nunca llega al navegador de la TV**.
+- **Sistema de licencias con criptografía asimétrica** — la clave privada de firma vive SOLO en
+  el emisor (secret de GitHub Actions + custodia del dueño); el producto verifica con la clave
+  pública incrustada. Historial escaneado con gitleaks en cada push.
 - Sesiones httpOnly firmadas (HMAC) · contraseñas scrypt · 3 roles con matriz de permisos.
 - Subida de archivos validada por *magic bytes* (no por MIME), nombres generados por el servidor
   y cuota de almacenamiento.

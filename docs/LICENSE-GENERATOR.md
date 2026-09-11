@@ -39,7 +39,9 @@ bun tools/license-generator/cli.ts keys --write-private /ruta/segura/viewlba-pri
 - La **pública** correspondiente va al verificador: la de producción ya está
   incrustada en `src/lib/licensing/public-key.ts`; para auto-verificar en el
   generador exporta `VIEWLBA_LICENSE_PUBLIC_KEY` con el mismo valor.
-- Para GitHub Actions: crea el **secret** `VIEWLBA_LICENSE_PRIVATE_KEY`.
+- Para GitHub Actions: el **secret** `VIEWLBA_LICENSE_PRIVATE_KEY` ya está
+  creado y verificado en el repositorio (rotación v1.2.1). Para rotarlo:
+  ver `docs/wiki/Secret-de-GitHub-Actions.md` (procedimiento UI y API).
 
 ## 3. Emitir una licencia nueva (sección 34, criterio de éxito)
 
