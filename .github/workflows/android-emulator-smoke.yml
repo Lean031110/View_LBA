@@ -55,6 +55,17 @@ jobs:
           version-name: ${{ env.APK_VERSION }}
           artifact-name: viewlba-emulator-smoke
 
+      # EVIDENCIA del rc.1: el emulador moderno exige ~7.4 GB de userdata y
+      # el runner llega con ~7.1 GB tras el build («Not enough space to create
+      # userdata partition»). El APK ya está en disco: se liberan caches e
+      # imágenes de sistema preinstaladas que este job no usa.
+      - name: "Liberar disco para el emulador (userdata ~7.4 GB)"
+        run: |
+          set -euo pipefail
+          rm -rf ~/.gradle/caches ~/.gradle/wrapper
+          rm -rf "$ANDROID_HOME/system-images"/* || true
+          df -h / | tail -1
+
       # Instalación/lanzanmiento en emulador REAL API 35
       - name: "Emulador: instalar, lanzar y evidenciar"
         uses: reactivecircus/android-emulator-runner@v2
@@ -64,6 +75,7 @@ jobs:
           arch: x86_64
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
           disable-animations: true
+          emulator-boot-timeout: 900
           script: |
             set -euo pipefail
             APK=$(ls android-license-generator/app/build/outputs/apk/release/ViewLBA-License-Generator-v*.apk)
