@@ -220,12 +220,12 @@ runs:
           echo "::error::Material de clave privada detectado en classes.dex"; exit 1
         fi
 
-        # Los PROPIOS secrets no deben haber filtrado al binario
+        # Los PROPIOS secrets no deben haber filtrado al binario.
+        # (Solo la CONTRASEÑA: el alias 'viewlba' es subcadena legítima del
+        # nombre de package com.viewlba.licensegen → grep del alias daría
+        # falsos positivos.)
         if [ -n "$KEYSTORE_PASSWORD" ] && strings "$APK" | grep -F -- "$KEYSTORE_PASSWORD" > /dev/null; then
           echo "::error::La contraseña del keystore aparece dentro del APK"; exit 1
-        fi
-        if [ -n "$KEY_ALIAS" ] && strings "$APK" | grep -F -- "$KEY_ALIAS" > /dev/null; then
-          echo "::error::El alias de firma aparece dentro del APK"; exit 1
         fi
         echo "✓ APK limpio: sin claves privadas, sin credenciales de firma"
 
@@ -236,15 +236,19 @@ runs:
         set -euo pipefail
         cd android-license-generator
         M=app/src/main/AndroidManifest.xml
+        G=app/build.gradle.kts
         grep -q 'android:icon="@mipmap/ic_launcher"' "$M" || { echo "::error::manifest sin icono launcher"; exit 1; }
         grep -q 'android:roundIcon="@mipmap/ic_launcher"' "$M" || { echo "::error::manifest sin round icon"; exit 1; }
-        grep -q 'com.viewlba.licensegen' "$M" || { echo "::error::package incorrecto"; exit 1; }
+        # El package NO va en el manifest (AGP moderno): vive en Gradle y se
+        # verifica de forma autoritativa en el badging del APK firmado.
+        grep -q 'namespace = "com.viewlba.licensegen"' "$G" || { echo "::error::namespace de Gradle incorrecto"; exit 1; }
+        grep -q 'applicationId = "com.viewlba.licensegen"' "$G" || { echo "::error::applicationId de Gradle incorrecto"; exit 1; }
         test -f app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml || { echo "::error::falta icono adaptativo"; exit 1; }
         grep -q "ViewLBA Licencias" app/src/main/res/values/strings.xml || { echo "::error::app_name incorrecto"; exit 1; }
         # Anti-genérico: el foreground del icono debe ser la marca ViewLBA (ámbar F5A623)
         grep -q "#F5A623" app/src/main/res/drawable/ic_launcher_foreground.xml \
           || { echo "::error::el icono launcher no es la marca ViewLBA (sin ámbar F5A623)"; exit 1; }
-        echo "✓ branding: icono adaptativo + round + label + package ViewLBA"
+        echo "OK branding: icono adaptativo + round + label + namespace ViewLBA"
 
     # ── 14. Checksum + evidencia ──────────────────────────────────────────
     - name: "Checksum SHA-256 + evidencia de verificación"
