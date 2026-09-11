@@ -19,6 +19,9 @@ concurrency:
 
 permissions:
   contents: read
+  # gitleaks-action en eventos pull_request lista los commits del PR vía API
+  # (ScanPullRequest) → sin pull-requests:read responde 403 (mismo fix que ci.yml).
+  pull-requests: read
 
 env:
   APP_DIR: android-license-generator

@@ -28,8 +28,12 @@ test.describe("Licencia — vista (estado ocultando la técnica)", () => {
     // estado ACTIVA con cliente de la licencia activada por el setup
     await expect(page.getByText("LICENCIA ACTIVA")).toBeVisible({ timeout: 20_000 })
     await expect(page.getByText("Restaurante E2E").first()).toBeVisible()
-    await expect(page.getByText(/Restan \d+ días/).first()).toBeVisible()
-    await expect(page.getByText(/Vence el \d{2}\/\d{2}\/\d{4}/).first()).toBeVisible()
+    // «Restan X días» — etiqueta y valor se renderizan en spans contiguos
+    await expect(page.getByText("Restan", { exact: true })).toBeVisible()
+    await expect(page.getByText(/^\d+ días$/, { exact: true }).first()).toBeVisible()
+    // «Vence el DD/MM/YYYY»
+    await expect(page.getByText("Vence el", { exact: true })).toBeVisible()
+    await expect(page.getByText(/^\d{2}\/\d{2}\/\d{4}$/, { exact: true }).first()).toBeVisible()
 
     // ⚠ SIN datos técnicos: Installation ID y Disk ID OCULTOS por completo
     await expect(page.getByText(E2E_INSTALLATION_ID, { exact: true })).toHaveCount(0)
@@ -97,7 +101,7 @@ test.describe("Licencia — flujo copiar/pegar completo (requisito sección 25)"
     await expect(page.getByText("Licencia guardada en el servidor")).toBeVisible()
 
     // el estado refleja la renovación (400 días > 365 del setup)
-    await expect(page.getByText(/Restan 400 días/).first()).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByText(/^400 días$/, { exact: true })).toBeVisible({ timeout: 20_000 })
     await expect(page.getByText("Lo D'Leo").first()).toBeVisible()
   })
 
