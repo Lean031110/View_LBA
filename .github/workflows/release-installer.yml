@@ -514,7 +514,7 @@ jobs:
           # re-computar sobre los archivos REALES con sus nombres finales
           # (incluye el APK del generador Android — TODOS los binarios del release)
           find . -type f \( -name "*.exe" -o -name "*.deb" -o -name "*.AppImage" -o -name "ViewLBA-License-Generator-v*.apk" \) -print0 \
-            | while IFS= read -r -d '' f; do b=$(basename "$f"); sha256sum "$f" | sed "s| .*/ | $b |" ; done > ../SHA256SUMS.txt
+            | while IFS= read -r -d '' f; do b=$(basename "$f"); sha256sum "$f" | awk -v b="$b" '{print $1 "  " b}'; done > ../SHA256SUMS.txt
           cat ../SHA256SUMS.txt
           # sanity: 4+ entradas (exe, deb, CLI appimage [+ GUI appimage] + APK)
           LINES=$(wc -l < ../SHA256SUMS.txt)
