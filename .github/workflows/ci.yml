@@ -51,6 +51,11 @@ jobs:
         # ubuntu-latest ya NO incluye ffmpeg — necesario para stream-pipeline
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
 
+      - name: Coherencia de versión (única fuente de verdad /VERSION)
+        # FASE 5 de la release 3.0.0: /VERSION == package.json == CHANGELOG ==
+        # gradle derivado == sin hardcodeos en workflows. Fail si diverge.
+        run: bun scripts/check-version.ts
+
       - name: Generar Prisma Client
         run: bunx prisma generate
 

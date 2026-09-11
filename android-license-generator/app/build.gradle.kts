@@ -11,8 +11,17 @@ android {
         applicationId = "com.viewlba.licensegen"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        // ── Versión: ÚNICA FUENTE DE VERDAD = <repo>/VERSION ──────────────
+        // versionName se lee del archivo VERSION de la raíz del repositorio
+        // (nunca hardcoded aquí). Override para builds de release candidate:
+        //   ./gradlew assembleRelease -PandroidVersionName=3.0.0-rc.1
+        versionName = (providers.gradleProperty("androidVersionName").orNull)
+            ?: File(rootDir.parentFile, "VERSION").readText().trim()
+        // versionCode MONÓTONO (gradle.properties VERSION_CODE — subir en
+        // cada release publicada). Override análogo para variantes de CI.
+        versionCode = (providers.gradleProperty("androidVersionCode").orNull
+            ?: providers.gradleProperty("VERSION_CODE").orNull
+            ?: "1").toInt()
     }
 
     buildTypes {
@@ -23,23 +32,10 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // Firma de release: la inyecta CI desde GitHub Secrets
-            // (VIEWLBA_KEYSTORE_BASE64/…). Localmente se puede firmar con un
-            // keystore propio sobrescribiendo estas propiedades en
-            // ~/.gradle/gradle.properties o env vars.
-            val ksPath = System.getenv("VIEWLBA_KEYSTORE_FILE")
-            val ksPassword = System.getenv("VIEWLBA_KEYSTORE_PASSWORD")
-            val ksAlias = System.getenv("VIEWLBA_KEY_ALIAS")
-            val ksKeyPassword = System.getenv("VIEWLBA_KEY_PASSWORD")
-            if (ksPath != null && ksPassword != null && ksAlias != null) {
-                signingConfig = signingConfigs.create("release") {
-                    storeFile = file(ksPath)
-                    storePassword = ksPassword
-                    keyAlias = ksAlias
-                    keyPassword = ksKeyPassword ?: ksPassword
-                }
-            }
-            // sin firma configurada → APK sin firmar (CI lo avisa)
+            // FIRMA: Gradle NUNCA firma. El APK sale SIN firmar y la firma es
+            // un paso explícito y auditable de CI (zipalign → apksigner sign
+            // → apksigner verify) con el keystore de GitHub Secrets. Flujo
+            // único: no existe ruta alternativa de publicación.
         }
         debug {
             applicationIdSuffix = ".debug"

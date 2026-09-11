@@ -5,6 +5,90 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato está basado en [Keep a Changelog](https://keepachangelog.com/es/1.1.0/),
 y este proyecto adhiere a [SemVer](https://semver.org/lang/es/).
 
+## [3.0.0] — 2026-09-12 — Release de producción: APK firmado + pipeline de release verificable
+
+### Arreglado (BLOQUEANTE de producción)
+
+- **El APK publicado NO INSTALABA**: era un APK de release SIN FIRMAR
+  (`apksigner verify` → `Missing META-INF/MANIFEST.MF` → Android lo rechaza
+  con `INSTALL_PARSE_FAILED_NO_CERTIFICATES`). Causa raíz: el workflow tenía
+  un fallback «si faltan los secrets → publica el APK unsigned con un
+  warning». **Fallback ELIMINADO**: ahora el CI falla inmediatamente con
+  `Release signing secrets are required. Refusing to publish unsigned APK.`
+  si falta cualquiera de los 4 secrets de firma.
+- **Caos de versiones**: el APK de la release v2.0.0 se llamaba `v1.0.0`
+  (Gradle decía 1.0.0/1, el workflow hardcodeaba el nombre, package.json
+  decía 2.0.0). Nueva fuente única de verdad: **archivo `/VERSION`** en la
+  raíz + gate de coherencia en CI (`scripts/check-version.ts`): /VERSION ==
+  package.json == CHANGELOG == Gradle derivado == workflows sin hardcodeo.
+
+### Añadido
+
+- **Firma Android REAL de producción**: keystore PKCS#12 RSA-2048 creado UNA
+  sola vez fuera del repositorio y configurado como GitHub Secrets
+  (`VIEWLBA_KEYSTORE_BASE64/PASSWORD/KEY_ALIAS/KEY_PASSWORD`). El secret
+  huérfano v1 (`VIEWLBA_LICENSE_PRIVATE_KEY`, clave ya rotada) fue eliminado.
+- **Pipeline de firma canónico** (`.github/actions/android-apk/action.yml`,
+  compartido por CI y release):
+  `assembleRelease (unsigned) → zipalign -P 4 4 → apksigner sign v1+v2+v3 →
+  apksigner verify → zipalign -c → aapt2 badging (package/versionName/
+  versionCode/minSdk/targetSdk/label/iconos) → unzip -t → análisis
+  anti-secretos del binario → branding → SHA256SUMS → artifact`.
+  El APK solo se publica si TODA la verificación criptográfica pasa.
+- **El APK del generador entra al pipeline de release**: `release-installer.yml`
+  tiene job `build-android` (mismos 15 pasos) y el GitHub Release incluye
+  `ViewLBA-License-Generator-v{versión}.apk` + `LicenseGenerator-SHA256SUMS.txt`
+  + `LicenseGenerator-VERIFY.txt` (evidencia: apksigner + badging + checksum).
+  Los tags `-rc.N`/`-beta.N` se publican como **prerelease**.
+- **versionCode monótono** gestionado (`VERSION_CODE=3` en
+  `android-license-generator/gradle.properties`, gate CI ≥ 2).
+- **FUZZ/property tests del lado servidor** (`tests/licensing/fuzz.test.ts`):
+  ~1.000 entradas adversariales (vacías, enormes, truncadas, bytes aleatorios,
+  unicode, NULs, duplicados, campos extra, números extremos) contra los
+  parsers de token/solicitud/tramas/Base32/JSON canónico. Expectativa:
+  rechazo tipado, NUNCA crash. PRNG con semilla fija (reproducible).
+- **Ataques autorizados al almacenamiento** (`tests/licensing/storage-tamper.test.ts`):
+  mutar el token guardado, inyectar un token firmado por un atacante, editar
+  el payload de la DB (features «gratis»), clonar la DB a otro equipo
+  (mismatch), token corrupto, downgrade. Todo rechazado: la DB JAMÁS es
+  autoridad — el token se revalida (firma + binding) en cada evaluación.
+- **Ataques HTTP contra /api/license/activate**
+  (`tests/integration/license-api-adversarial.test.ts`): 12 POST concurrentes
+  del mismo token (idempotencia real, 0 errores 500), payloads de 1 MB,
+  cuerpos no-JSON, tipos inesperados, ráfaga de repetición 20x, 15 variantes
+  de token corrupto, bypass de sesión (401). `LICENSE_RATE_LIMIT_MAX`
+  configurable para test (default de producción sin cambios: 10/min).
+- **Fuzz Android** (`CodecFuzzTest.kt`): tramas aleatorias, mutaciones,
+  truncados, Base32 caótico → solo `CodecException` tipada.
+- **Ataques al backup `.vlbak`** (`BackupAttackTest.kt`): versión futura/0/99,
+  magic alterado, checksum reinyectado tras manipular ciphertext (el tag GCM
+  interno sigue rechazando — defensa en profundidad), salt manipulado,
+  truncado en cada posición, 800 archivos aleatorios.
+- **Smoke de instalación REAL en emulador** (`.github/workflows/
+  android-emulator-smoke.yml`, job separado opt-in + tags): emulator API 35
+  → `adb install` → `am start` → `pm list packages` → screenshot → logcat →
+  `uninstall`. Evidencia subida como artifact.
+- **Gate de coherencia de versión en CI** (job quality de ci.yml).
+
+### Cambiado
+
+- `app/build.gradle.kts` ya NO firma desde Gradle (ni acepta env vars de
+  firma): el APK sale siempre unsigned de `assembleRelease` y la firma es un
+  paso explícito y auditable de CI. `versionName` se lee de `/VERSION`
+  (override `-PandroidVersionName` para RC); `versionCode` de
+  `gradle.properties`.
+- `android-license-generator.yml`: se dispara en CADA push a main (sin filtro
+  de paths — la firma se verifica siempre), usa el action compuesto y
+  ejecuta gitleaks como paso propio.
+- `RELEASE_3_AUDIT.md` (nuevo): auditoría FASE 0 de la release 3.0.0 con la
+  causa raíz del APK inválido, riesgos, secrets y plan.
+
+### Verificado
+
+- Apksigner: v1 + v2 + v3 = true · zipalign -c PASS · badging: package
+  `com.viewlba.licensegen`, versionName 3.0.0, versionCode 3, minSdk 26,
+  targetSdk 35 · unzip -t PASS · sin material de claves en el binario.
+
 ## [2.0.0] — 2026-09-11 — Sistema de licencias v2: token copiar/pegar + generador Android
 
 ### Cambiado (ROMPE el flujo v1 — migración limpia)

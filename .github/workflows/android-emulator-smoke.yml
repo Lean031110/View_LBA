@@ -1,0 +1,113 @@
+name: Android Emulator Smoke
+
+# FASE 7 (release 3.0.0) — INSTALACIÓN REAL del APK en un emulador.
+#
+# Job SEPARADO del pipeline de release (el emulador puede ser inestable en
+# CI): NO bloquea la publicación de artifacts, pero produce EVIDENCIA de
+# instalación real (install → launch → pm list → screenshot → logcat →
+# uninstall). El pipeline bloqueante de validación binaria (apksigner,
+# zipalign, badging) vive en .github/actions/android-apk.
+#
+# Se dispara: manualmente (workflow_dispatch) y en cada tag v* (RC y final).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-emulator-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: "Emulador API 35: install · launch · evidencia"
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Versión (tag o /VERSION)"
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then V="${GITHUB_REF_NAME#v}"; else V=$(cat VERSION); fi
+          echo "APK_VERSION=$V" >> "$GITHUB_ENV"
+          echo "→ versión: $V"
+
+      - name: "KVM disponible (requisito del emulador)"
+        run: |
+          set -euo pipefail
+          test -e /dev/kvm && (sudo chmod 777 /dev/kvm || true) && echo "✓ KVM presente" \
+            || { echo "::error::Este runner no tiene KVM — el smoke no puede correr aquí"; exit 1; }
+
+      # Mismo pipeline firmado (lint/tests/sign/verify) → APK en disco
+      - name: "APK firmado y verificado (action compuesto)"
+        uses: ./.github/actions/android-apk
+        env:
+          KEYSTORE_BASE64: ${{ secrets.VIEWLBA_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.VIEWLBA_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.VIEWLBA_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.VIEWLBA_KEY_PASSWORD }}
+        with:
+          version-name: ${{ env.APK_VERSION }}
+          artifact-name: viewlba-emulator-smoke
+
+      # Instalación/lanzanmiento en emulador REAL API 35
+      - name: "Emulador: instalar, lanzar y evidenciar"
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
+          disable-animations: true
+          script: |
+            set -euo pipefail
+            APK=$(ls android-license-generator/app/build/outputs/apk/release/ViewLBA-License-Generator-v*.apk)
+            echo "== APK: $APK =="
+
+            echo "== apksigner verify (re-verificación en el runner del emulador) =="
+            BT="$ANDROID_HOME/build-tools/35.0.0"
+            "$BT/apksigner" verify --print-certs "$APK" | head -5
+
+            echo "== adb install =="
+            adb install -r "$APK"
+            INSTALL_RC=$?
+
+            echo "== pm list packages (com.viewlba.licensegen) =="
+            adb shell pm list packages | grep com.viewlba.licensegen
+
+            echo "== am start (MainActivity) =="
+            adb shell am start -n com.viewlba.licensegen/.ui.MainActivity
+            sleep 12
+
+            echo "== proceso vivo =="
+            adb shell pidof com.viewlba.licensegen
+
+            echo "== captura de pantalla =="
+            adb exec-out screencap -p > /tmp/viewlba-smoke.png
+            ls -la /tmp/viewlba-smoke.png
+
+            echo "== dumpsys del top activity =="
+            adb shell dumpsys activity activities | grep -m1 "topResumedActivity" || true
+
+            echo "== logcat de la app (errores FATALES) =="
+            adb logcat -d | grep -E "com.viewlba.licensegen|FATAL EXCEPTION" | tail -40 || true
+
+            echo "== desinstalar =="
+            adb uninstall com.viewlba.licensegen
+
+            test $INSTALL_RC -eq 0
+            echo "✓ SMOKE COMPLETO: install + launch + evidencia + uninstall"
+
+      - name: "Subir evidencia (screenshot)"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: viewlba-emulator-evidence
+          path: /tmp/viewlba-smoke.png
+          retention-days: 30
+          if-no-files-found: ignore

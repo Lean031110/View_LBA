@@ -78,16 +78,34 @@ Ver `docs/LICENSE-SECURITY.md`. Resumen:
 ## Compilación y CI
 
 ```bash
-./gradlew :app:testReleaseUnitTest   # 57 tests JVM (incluye vectores dorados)
+./gradlew :app:testReleaseUnitTest   # 74 tests JVM (vectores dorados + fuzz + ataques backup)
 ./gradlew :app:lintRelease
-./gradlew :app:assembleRelease       # firma por env VIEWLBA_KEYSTORE_*
+./gradlew :app:assembleRelease       # APK SIN firmar (la firma es paso de CI)
 ```
 
-CI (`.github/workflows/android-license-generator.yml`): JDK 17 + SDK 35
-fijos, lint, tests, gitleaks + grep anti-claves, build, firma con secrets
-(`VIEWLBA_KEYSTORE_BASE64`, `VIEWLBA_KEYSTORE_PASSWORD`,
-`VIEWLBA_KEY_ALIAS`, `VIEWLBA_KEY_PASSWORD`), análisis del APK, checksum y
-artifact.
+### Firma (pipeline canónico — release 3.0.0)
+
+Gradle **nunca** firma: `assembleRelease` produce `app-release-unsigned.apk`
+y la firma es un paso explícito, auditable y bloqueante de CI
+(`.github/actions/android-apk/action.yml`, idéntico en local con
+`scripts/sign-and-verify-apk.sh` del entorno de build):
+
+```
+zipalign -f -P 4 4 unsigned.apk aligned.apk
+apksigner sign --ks <keystore de Secrets> --v1 --v2 --v3 --out APK aligned.apk
+apksigner verify --verbose --print-certs APK          # v2+v3 true (bloqueante)
+apksigner verify --verbose --min-sdk-version 23 APK   # v1/JAR true
+zipalign -c -P 4 4 APK
+aapt2 dump badging APK               # package/version/minSdk/targetSdk/label
+unzip -t APK
+```
+
+Si falta cualquiera de los 4 secrets (`VIEWLBA_KEYSTORE_BASE64`,
+`VIEWLBA_KEYSTORE_PASSWORD`, `VIEWLBA_KEY_ALIAS`, `VIEWLBA_KEY_PASSWORD`)
+el CI **falla inmediatamente**: nunca se publica un APK sin firmar. El
+keystore se creó UNA sola vez fuera del repositorio (PKCS#12, RSA-2048,
+~33 años de validez); NO regenerarlo nunca (se perdería la continuidad de
+actualización de la app).
 
 ## Vectores dorados (compatibilidad TS↔Kotlin)
 

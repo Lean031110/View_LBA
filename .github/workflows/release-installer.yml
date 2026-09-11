@@ -423,11 +423,52 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
+  # ---------------------------------------------------------------- Android
+  # APK del generador — MISMO pipeline compuesto que el CI de la app
+  # (.github/actions/android-apk): lint, tests, build, zipalign, apksigner
+  # v1+v2+v3, verify, badging, unzip -t, análisis, branding, checksum.
+  # El APK llega al GitHub Release SOLO pasando la verificación cripto.
+  build-android:
+    name: "Android: APK firmado + verificado (apksigner v1+v2+v3)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: "Versión de release (tag con gate contra /VERSION)"
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            V="${GITHUB_REF_NAME#v}"
+            FV=$(cat VERSION)
+            # Tag FINAL (sin sufijo -rc/-beta): debe coincidir EXACTAMENTE
+            # con la única fuente de verdad del repo.
+            if [[ "$V" != *"-"* && "$V" != "$FV" ]]; then
+              echo "::error::tag v$V ≠ /VERSION ($FV) — sincroniza VERSION antes del tag final"
+              exit 1
+            fi
+          else
+            V=$(cat VERSION)
+          fi
+          echo "APK_VERSION=$V" >> "$GITHUB_ENV"
+          echo "→ versión Android: $V"
+
+      - name: "APK firmado y verificado (action compuesto)"
+        uses: ./.github/actions/android-apk
+        env:
+          KEYSTORE_BASE64: ${{ secrets.VIEWLBA_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.VIEWLBA_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.VIEWLBA_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.VIEWLBA_KEY_PASSWORD }}
+        with:
+          version-name: ${{ env.APK_VERSION }}
+          artifact-name: viewlba-license-generator-release
+
   # ---------------------------------------------------------------- Release
   # NO recompila: consume ÚNICAMENTE artefactos ya validados por los builds.
   release:
     name: "GitHub Release (gitleaks + SHA256SUMS + publicación)"
-    needs: [build-linux, build-windows]
+    needs: [build-linux, build-windows, build-android]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -453,22 +494,31 @@ jobs:
           EXE=$(find artifacts -name "ViewLBA-Server-Setup-*.exe" | head -1)
           DEB=$(find artifacts -name "ViewLBA-Server-*-x86_64.deb" | head -1)
           CLI=$(find artifacts -name "ViewLBA-Server-CLI-*-x86_64.AppImage" | head -1)
+          APK=$(find artifacts -name "ViewLBA-License-Generator-v*.apk" | head -1)
+          APKSUMS=$(find artifacts -name "LicenseGenerator-SHA256SUMS.txt" | head -1)
+          APKVERIFY=$(find artifacts -name "LicenseGenerator-VERIFY.txt" | head -1)
           [[ -n "$EXE" && -s "$EXE" ]] || { echo "✗ falta el Setup.exe"; exit 1; }
           [[ -n "$DEB" && -s "$DEB" ]] || { echo "✗ falta el .deb"; exit 1; }
           [[ -n "$CLI" && -s "$CLI" ]] || { echo "✗ falta el AppImage CLI"; exit 1; }
-          echo "✓ conjunto completo: exe + deb + CLI AppImage"
+          [[ -n "$APK" && -s "$APK" ]] || { echo "✗ falta el APK firmado del generador"; exit 1; }
+          [[ -n "$APKSUMS" && -s "$APKSUMS" ]] || { echo "✗ falta el checksum del APK"; exit 1; }
+          [[ -n "$APKVERIFY" && -s "$APKVERIFY" ]] || { echo "✗ falta la evidencia de verificación del APK"; exit 1; }
+          # El APK debe estar FIRMADO: evidencia de apksigner dentro del artifact
+          grep -q "Verified using v2 scheme" "$APKVERIFY" || { echo "✗ el APK no pasó apksigner verify"; exit 1; }
+          grep -q "Verified using v3 scheme" "$APKVERIFY" || { echo "✗ el APK no pasó apksigner v3"; exit 1; }
+          echo "✓ conjunto completo: exe + deb + CLI AppImage + APK firmado + checksums"
 
       - name: SHA256SUMS.txt consolidado (nombres públicos)
         run: |
           cd artifacts
           # re-computar sobre los archivos REALES con sus nombres finales
-          find . -type f \( -name "*.exe" -o -name "*.deb" -o -name "*.AppImage" \) -print0 \
+          # (incluye el APK del generador Android — TODOS los binarios del release)
+          find . -type f \( -name "*.exe" -o -name "*.deb" -o -name "*.AppImage" -o -name "ViewLBA-License-Generator-v*.apk" \) -print0 \
             | while IFS= read -r -d '' f; do b=$(basename "$f"); sha256sum "$f" | sed "s| .*/ | $b |" ; done > ../SHA256SUMS.txt
-          # nota: sed conserva el hash; el nombre final es el basename público
           cat ../SHA256SUMS.txt
-          # sanity: 3+ entradas (exe, deb, CLI appimage [+ GUI appimage])
+          # sanity: 4+ entradas (exe, deb, CLI appimage [+ GUI appimage] + APK)
           LINES=$(wc -l < ../SHA256SUMS.txt)
-          [[ "$LINES" -ge 3 ]] || { echo "✗ menos de 3 instaladores en el release"; exit 1; }
+          [[ "$LINES" -ge 4 ]] || { echo "✗ menos de 4 binarios en el release"; exit 1; }
 
       - name: Crear Release (SOLO artefactos ya validados — cero recompilación)
         uses: softprops/action-gh-release@v2
@@ -478,8 +528,13 @@ jobs:
             artifacts/**/ViewLBA-Server-Setup-*.exe
             artifacts/**/ViewLBA-Server-*-x86_64.deb
             artifacts/**/ViewLBA-Server-*-x86_64.AppImage
+            artifacts/**/ViewLBA-License-Generator-v*.apk
+            artifacts/**/LicenseGenerator-SHA256SUMS.txt
+            artifacts/**/LicenseGenerator-VERIFY.txt
             artifacts/**/*.sha256
             artifacts/**/manifest-*.json
+          # tags -rc.N / -beta.N se publican como prerelease (FASE 23)
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

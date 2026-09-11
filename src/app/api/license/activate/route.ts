@@ -17,8 +17,13 @@ export const maxDuration = 30
  */
 const MAX_TOKEN_INPUT = 8192
 
-/** Límite simple en memoria: 10 activaciones por minuto por IP. */
-const RATE_LIMIT_MAX = 10
+/** Límite simple en memoria: 10 activaciones por minuto por IP.
+ *  Configurable para entornos de test (LICENSE_RATE_LIMIT_MAX) — el default
+ *  de producción NO cambia. */
+const RATE_LIMIT_MAX = (() => {
+  const n = Number(process.env.LICENSE_RATE_LIMIT_MAX ?? 10)
+  return Number.isFinite(n) && n > 0 ? n : 10
+})()
 const RATE_LIMIT_WINDOW_MS = 60_000
 const hits = new Map<string, { count: number; resetAt: number }>()
 

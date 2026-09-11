@@ -89,7 +89,8 @@ segundos**. Todo por la red local: el sistema funciona **sin depender de Interne
   controla su estado, resolución y audio de forma remota.
 - 👥 **Roles y auditoría** — ADMIN / OPERADOR / VISOR, registro de acciones y autenticación con
   contraseñas scrypt.
-- 🔐 **Licenciamiento por token copiar/pegar** (v2.0+) — prueba de 7 días automática con marca de
+- 🔐 **Licenciamiento por token copiar/pegar** (v2.0+; release **3.0.0** con APK firmado) —
+  prueba de 7 días automática con marca de
   agua, planes **Mensual 30 días / USD 10** y **Anual 365 días / USD 100**, activación sin Internet:
   el cliente copia un código de solicitud, lo manda por WhatsApp y pega el token de licencia que
   recibe. Firma digital Ed25519 por instalación (equipo + disco, ocultos al cliente), funciones
@@ -243,7 +244,7 @@ reconectar — sin tocar nada.
 ```bash
 bun run lint        # ESLint — 0 errores · 0 warnings
 bun run typecheck   # TypeScript estricto
-bun test            # 356 tests: unit + realtime + pairing + recovery + installer + pipeline
+bun test            # 589 tests: unit + realtime + pairing + recovery + installer + pipeline
 bun run build       # Build de producción (standalone)
 bun run test:e2e    # E2E Playwright (37 specs: auth, contenido, pantallas,
                     # pairing, streaming con ffmpeg real, offline, seguridad)
@@ -251,9 +252,12 @@ bun run test:e2e    # E2E Playwright (37 specs: auth, contenido, pantallas,
 
 CI en GitHub Actions: 5 jobs requeridos (quality · integration · e2e · security
 con gitleaks y audit crítico bloqueantes · android-license-generator con lint,
-tests JVM, escaneo anti-claves y build firmado del APK) — el job quality ejecuta
-lint, tipos, tests (incluido el pipeline de streaming con ffmpeg publicando
-por RTMP real) y el build standalone en cada push/PR.
+tests JVM, fuzz, escaneo anti-claves y **APK firmado y verificado**
+(apksigner v1+v2+v3, zipalign, badging, análisis del binario) — el job quality
+ejecuta lint, tipos, tests (incluido el pipeline de streaming con ffmpeg
+publicando por RTMP real), el gate de coherencia de versión (`/VERSION`) y el
+build standalone en cada push/PR. La versión vive en `/VERSION` (única fuente
+de verdad: package.json, CHANGELOG y Gradle derivan de ella).
 
 ## 🔒 Seguridad
 

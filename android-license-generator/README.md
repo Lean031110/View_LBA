@@ -82,23 +82,43 @@ repo) y verificados en `CrossCompatTest` (JVM).
 ```bash
 # Requisitos: JDK 17, Android SDK (platform 35, build-tools 35.0.0)
 echo "sdk.dir=/ruta/al/sdk" > local.properties
-./gradlew :app:testReleaseUnitTest   # tests JVM
+./gradlew :app:testReleaseUnitTest   # 74 tests JVM (fuzz + ataques backup incluidos)
 ./gradlew :app:lintRelease           # Android lint
-./gradlew :app:assembleRelease       # APK (firmado si hay env de keystore)
+./gradlew :app:assembleRelease       # APK SIN firmar (la firma es paso de CI)
 ```
 
-Firma de release con variables de entorno (CI usa GitHub Secrets):
+### Firma de release (canónica — 3.0.0)
+
+Gradle NUNCA firma (no acepta env vars de keystore). El APK sale unsigned
+de `assembleRelease` y CI lo firma con `apksigner` tras `zipalign`, con el
+keystore de producción guardado en GitHub Secrets (creado UNA sola vez
+fuera del repo — NO regenerar):
 
 ```
-VIEWLBA_KEYSTORE_FILE=/ruta/keystore.jks
-VIEWLBA_KEYSTORE_PASSWORD=…
-VIEWLBA_KEY_ALIAS=…
-VIEWLBA_KEY_PASSWORD=…
+VIEWLBA_KEYSTORE_BASE64    # keystore PKCS#12 codificado en base64
+VIEWLBA_KEYSTORE_PASSWORD  # password del keystore
+VIEWLBA_KEY_ALIAS          # viewlba
+VIEWLBA_KEY_PASSWORD       # password de la clave (PKCS#12: = store)
 ```
+
+Verificación bloqueante tras firmar: `apksigner verify` (v2+v3, y v1 vía
+`--min-sdk-version 23`), `zipalign -c`, `aapt2 dump badging` (package
+`com.viewlba.licensegen`, versionName de `/VERSION`, versionCode de
+`gradle.properties`, minSdk 26, targetSdk 35), `unzip -t` y escaneo
+anti-secretos del binario. Si falta un secret, el CI FALLA («Refusing to
+publish unsigned APK») — jamás se publica un APK sin firmar.
 
 ## CI
 
-`.github/workflows/android-license-generator.yml` — lint, tests JVM,
-escaneo anti-claves en fuentes (grep) + gitleaks, build release, firma con
-secrets, análisis del artifact, checksum `SHA256SUMS.txt` y subida del APK
+`.github/workflows/android-license-generator.yml` — en cada push a main y
+PR: gitleaks + pipeline compuesto (`.github/actions/android-apk`): lint,
+tests JVM, escaneo anti-claves en fuentes, build, zipalign, firma con
+secrets, verificación apksigner, badging, `unzip -t`, análisis del
+artifact, branding, checksum `SHA256SUMS.txt` y subida del APK
 `ViewLBA-License-Generator-vX.Y.Z.apk` (retención 30 días).
+
+En tags `v*` el MISMO pipeline corre dentro de `release-installer.yml`
+(job `build-android`) y el APK firmado + checksums + evidencia
+(`LicenseGenerator-VERIFY.txt`) se publican en el GitHub Release. Además,
+`android-emulator-smoke.yml` instala y lanza el APK en un emulador API 35
+real (evidencia de instalación).

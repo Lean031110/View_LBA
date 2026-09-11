@@ -152,6 +152,10 @@ object BackupEnvelope {
         if (!bytes.copyOfRange(0, 5).contentEquals(MAGIC)) throw BackupException("El archivo no es un backup ViewLBA (.vlbak)")
         val version = bytes[5].toInt() and 0xff
         if (version > VERSION) throw BackupException("Backup de versión futura ($version)")
+        // MISMO criterio que decrypt: versiones < 1 o no soportadas también se
+        // rechazan aquí (antes bastaba con > VERSION y un v0 pasaba la
+        // verificación estructural — hallado por BackupAttackTest, FASE 16).
+        if (version != VERSION) throw BackupException("Versión de backup no soportada ($version)")
         val bodyEnd = bytes.size - 32
         if (!CryptoBox.sha256(bytes.copyOfRange(6, bodyEnd)).contentEquals(bytes.copyOfRange(bodyEnd, bytes.size))) {
             throw BackupException("El backup está alterado o corrupto (checksum incorrecto)")

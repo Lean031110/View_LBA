@@ -8,13 +8,27 @@
 | `ViewLBA-Server-<ver>-x86_64.AppImage` | Linux (GUI, opcional) | `cargo tauri build --bundles appimage --ci` |
 | `ViewLBA-Server-CLI-<ver>-x86_64.AppImage` | Linux (headless) | `installer/package/appimage.sh` |
 | `ViewLBA-Server-Setup-<ver>.exe` | Windows (GUI NSIS, obligatorio) | `cargo tauri build --bundles nsis --ci` (desde `C:\v`) |
-| `ViewLBA-License-Generator-vX.Y.Z.apk` | Android (app privada del admin) | workflow `android-license-generator.yml` (firmado con secrets) |
-| `SHA256SUMS.txt` | todos | release job (re-computado sobre los subidos) |
+| `ViewLBA-License-Generator-v<ver>.apk` | Android (app privada del admin, **FIRMADO**) | job `build-android` (action `.github/actions/android-apk`) |
+| `LicenseGenerator-SHA256SUMS.txt` + `LicenseGenerator-VERIFY.txt` | Android | evidencia: apksigner v1+v2+v3, badging, checksum |
+| `SHA256SUMS.txt` | todos | release job (re-computado sobre los subidos, APK incluido) |
 | `manifest-{linux,windows}.json` | todos | `installer/package/build-manifest.ts` (commit ↔ binario) |
 
 Todos con `SHA256SUMS` verificable. El payload es **completamente offline**:
 la red se usa SOLO durante el build (deps, Bun, NSSM, herramientas de Tauri);
 el instalador final funciona sin Internet.
+
+**Versión única de verdad**: el archivo `/VERSION` de la raíz (3.0.0).
+`package.json`, `CHANGELOG.md` y el `versionName` de Gradle se sincronizan
+con él (gate en CI: `bun scripts/check-version.ts`). El `versionCode`
+Android es monótono (`VERSION_CODE` en `gradle.properties`). Los tags
+`-rc.N`/`-beta.N` se publican como prerelease y su versión viaja en el tag.
+
+**Firma Android (3.0.0+)**: el APK se firma en CI con el keystore de
+GitHub Secrets (`VIEWLBA_KEYSTORE_*`, creado UNA sola vez fuera del repo).
+Si falta un secret, el build FALLA («Refusing to publish unsigned APK»).
+Antes de publicarse se verifica: `apksigner verify` v2+v3 (+ v1 con
+`--min-sdk-version 23`), `zipalign -c`, badging (package/versión/SDKs),
+`unzip -t` y escaneo anti-secretos.
 
 ## Release automático (recomendado)
 
@@ -27,7 +41,7 @@ git tag v1.0.1-rc.1 && git push origin v1.0.1-rc.1
 git tag v1.0.1 && git push origin v1.0.1
 ```
 
-El workflow `.github/workflows/release-installer.yml` (3 jobs):
+El workflow `.github/workflows/release-installer.yml` (4 jobs):
 
 1. **build-linux**: deps (build env) → tests del installer → **payload de
    producción** (`bundle-server.ts`, guards incluidos) → **smoke REAL**
@@ -41,9 +55,15 @@ El workflow `.github/workflows/release-installer.yml` (3 jobs):
    (entrypoint/engines/sidecars/0 symlinks) + sidecar `--json detect` →
    NSIS desde ruta corta `C:\v` → **exactamente 1 `.exe`** validado
    (PE/MZ, >0 bytes) → manifiest + SHA256SUMS + artefactos.
-3. **release**: **NO recompila nada**. `needs: [build-linux, build-windows]`
-   → gitleaks → valida el conjunto completo (exe+deb+CLI AppImage) →
-   `SHA256SUMS.txt` consolidado → publica el GitHub Release.
+3. **build-android** (3.0.0+): MISMO pipeline compuesto que el CI de la app
+   (`.github/actions/android-apk`): lint + tests JVM + seguridad + build +
+   zipalign + apksigner v1+v2+v3 + verify + badging + `unzip -t` + análisis
+   + branding + checksum. El APK solo se publica si TODO verifica. Para
+   tags finales, gate extra: tag == `/VERSION`.
+4. **release**: **NO recompila nada**. `needs: [build-linux, build-windows,
+   build-android]` → gitleaks → valida el conjunto completo
+   (exe+deb+CLI AppImage+APK firmado) → `SHA256SUMS.txt` consolidado
+   (incluye el APK) → publica el GitHub Release (prerelease para `-rc`/`-beta`).
 
 Versiones EXACTAS (reproducible — nunca `latest`): Bun build `1.4.2`
 (setup-bun, sin el input `cache` no soportado), Bun del payload `1.3.14`,
@@ -155,6 +175,29 @@ engines, sidecars, 0 symlinks) y ejecuta el sidecar `--json detect`.
 ---
 
 ## Historial de releases
+
+### v3.0.0 (2026-09-12) — Release de producción: APK firmado + pipeline verificable
+
+- **Arreglado el APK inválido**: la release v2.0.0 incluía un APK SIN
+  FIRMAR (`apksigner` → `Missing META-INF/MANIFEST.MF` → Android lo
+  rechazaba). Causa raíz: fallback «sin secrets → publicar unsigned».
+  ELIMINADO: ahora falta de secrets = FAIL inmediato.
+- **Firma Android de producción**: keystore PKCS#12 RSA-2048 creado UNA
+  vez fuera del repo y configurado en los 4 GitHub Secrets
+  `VIEWLBA_KEYSTORE_*`. Pipeline canónico: unsigned → zipalign → apksigner
+  v1+v2+v3 → verify → badging → unzip -t → análisis → checksum.
+- **Versión única de verdad** `/VERSION` + gate de coherencia en CI
+  (`scripts/check-version.ts`); versionCode monótono (3).
+- **El APK entra al GitHub Release** (job `build-android`) junto a
+  `LicenseGenerator-SHA256SUMS.txt` y `LicenseGenerator-VERIFY.txt`
+  (evidencia criptográfica). Tags `-rc.N` → prerelease.
+- **Seguridad ampliada**: fuzz de parsers (TS + Kotlin), ataques al
+  storage, ataques HTTP concurrentes, ataques al backup `.vlbak`
+  (hallado y corregido: `verifyStructure` aceptaba versión 0).
+- **Smoke de instalación real**: `android-emulator-smoke.yml` (emulador
+  API 35: install → launch → screenshot → logcat → uninstall).
+- **Versiones**: `/VERSION` 3.0.0 · `package.json` 3.0.0 · Android
+  versionName 3.0.0 / versionCode 3.
 
 ### v2.0.0 (2026-09-11) — Sistema de licencias v2 (token copiar/pegar) + generador Android
 
