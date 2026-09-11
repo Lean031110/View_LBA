@@ -24,13 +24,13 @@ cd wiki-push && git add -A && git commit -m "Wiki inicial del sistema de licenci
 |---|---|
 | `Home.md` | Índice general + estado actual + reglas de oro |
 | `Sistema-de-Licencias.md` | Arquitectura, estados (trial/active/expired/…), flujo end-to-end |
-| `Claves-Ed25519.md` | **Cómo se generan las claves** (par Ed25519), formatos, custodia, rotación |
-| `Secret-de-GitHub-Actions.md` | `VIEWLBA_LICENSE_PRIVATE_KEY`: creación (UI/API), verificación, rotación |
-| `Emisión-de-Licencias.md` | Las 3 vías: GitHub Actions (recomendada), CLI, demo web |
+| `Claves-Ed25519.md` | **Cómo se generan las claves** (Ed25519 firma + X25519 solicitudes), formatos, custodia, rotación |
+| `Secret-de-GitHub-Actions.md` | Secrets de firma del APK Android: creación, verificación, rotación |
+| `Emisión-de-Licencias.md` | Emisión desde la app Android (única vía) — paso a paso |
 | `Planes-y-Precios.md` | Trial 7 días · Mensual 30 días/USD 10 · Anual 365 días/USD 100 |
 | `Binding-Hardware-y-Disco.md` | Installation ID `VWLB-…`, Disk ID `DSK-…`, matriz de escenarios |
 | `Trial-de-7-días.md` | Anclas duales, anti-rollback de reloj, no-repetición |
-| `Importación-de-Licencia.md` | Pipeline de validación del ZIP, APIs, auditoría |
+| `Importación-de-Licencia.md` | Flujo del cliente (copiar código → pegar token → activar) |
 | `Seguridad.md` | Dónde NO está la clave privada, matriz de ataques y mitigaciones |
 | `Mantenimiento-y-Rotación.md` | Rotación de claves, checklist de release, troubleshooting |
 

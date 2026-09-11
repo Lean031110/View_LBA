@@ -13,7 +13,7 @@
  * transmisión, pantalla TV, health (ver docs/LICENSE-SYSTEM.md).
  * La lista de features es extensible vía license.features (futuro).
  */
-import { CONTACT_PHONE, type FeatureAvailability, type FeatureKey, type LicensePlan, type LicenseStatus } from "./types"
+import { CONTACT_PHONE, type FeatureAvailability, type FeatureKey, type LicenseStatus } from "./types"
 
 export const FEATURE_KEYS: FeatureKey[] = [
   "display.watermark",
@@ -109,7 +109,7 @@ export function resolveFeatures(input: ResolveFeaturesInput): FeatureAvailabilit
       lines = ["LICENCIA VENCIDA · ViewLBA", `Renueva tu licencia: ${CONTACT_PHONE}`]
       break
     case "mismatch":
-      lines = ["LICENCIA VINCULADA A OTRA INSTALACIÓN · ViewLBA", `Contacto: ${CONTACT_PHONE}`]
+      lines = ["LICENCIA NO CORRESPONDE A ESTE EQUIPO · ViewLBA", `Contacto: ${CONTACT_PHONE}`]
       break
     default: // invalid
       lines = ["LICENCIA NO VÁLIDA · ViewLBA", `Contacto: ${CONTACT_PHONE}`]

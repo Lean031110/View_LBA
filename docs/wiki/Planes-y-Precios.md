@@ -44,7 +44,7 @@ Ni el trial ni el plan cambian el precio de la licencia: `PLAN_PRICE_USD` es inf
 
 ## Cómo afecta el plan a la emisión
 
-- El emisor elige `--plan monthly|annual` (CLI) o el campo `plan` del formulario de Actions.
+- El administrador elige la duración en la app Android (Mensual/Anual/Personalizada 1–3650).
 - `startDate` (`YYYY-MM-DD`, default hoy UTC) + duración exacta → `startsAt`/`expiresAt` (ISO 8601 UTC) en la licencia.
 - La renovación (`renew`) puede cambiar de plan y siempre emite una licencia **nueva** con `licenseId` nuevo (la anterior queda en el historial; el `licenseId` es `VLBA-XXXXXXXXXXXX`, 12 hex aleatorios).
 - El validador acepta **cualquier** `plan` del enum en la firma; el vencimiento real lo marcan las fechas firmadas, no el nombre del plan.

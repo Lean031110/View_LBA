@@ -208,32 +208,36 @@ model Settings {
   updatedAt DateTime @updatedAt
 }
 
-// ============ LICENSING (offline) ============
-// Licencia comercial importada (autoridad del SERVIDOR — fila única "main").
-// licenseJson = SignedLicense completa (JSON). Se REVALIDA contra el
-// hardware/disco actual en cada evaluación → restore/clone a otra máquina
-// = MISMATCH (docs/LICENSE-SYSTEM.md).
+// ============ LICENSING (v2 — token copiar/pegar) ============
+// Licencia comercial activada (autoridad del SERVIDOR — fila única "main").
+// token = VLBA2-XXXX-… normalizado (tal como se pegó); payloadJson = payload
+// decodificado y verificado. El token se REVALIDA (firma Ed25519 + binding
+// contra hardware/disco actual) en cada evaluación → restore/clone a otra
+// máquina = MISMATCH (docs/LICENSE-SYSTEM.md).
 model LicenseState {
   id          String    @id @default("main")
-  licenseJson String?
-  importedAt  DateTime?
-  importedBy  String?
+  token       String?
+  payloadJson String?
+  activatedAt DateTime?
+  activatedBy String?
   updatedAt   DateTime  @updatedAt
 }
 
-// Historial de licencias importadas (renovaciones, sección 18/25).
+// Historial de licencias activadas (renovaciones).
 model LicenseHistory {
-  id           String   @id @default(cuid())
-  licenseId    String
-  customerName String
-  plan         String // monthly | annual
-  issuedAt     DateTime
-  startsAt     DateTime
-  expiresAt    DateTime
-  deviceId     String // VWLB-XXXX-XXXX-XXXX-XXXX
-  diskId       String // DSK-XXXX-XXXX-XXXX
-  importedAt   DateTime @default(now())
-  current      Boolean  @default(false)
+  id            String   @id @default(cuid())
+  licenseId     String
+  customerName  String
+  plan          String // monthly | annual | custom
+  durationDays  Int
+  issuedAt      DateTime
+  startsAt      DateTime
+  expiresAt     DateTime
+  installationId String // VWLB-XXXX-XXXX-XXXX-XXXX
+  diskId        String // DSK-XXXX-XXXX-XXXX
+  activatedAt   DateTime @default(now())
+  activatedBy   String?
+  current       Boolean  @default(false)
 }
 
 // ============ AUDIT LOG ============

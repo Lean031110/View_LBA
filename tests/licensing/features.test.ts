@@ -52,9 +52,9 @@ describe("resolveFeatures", () => {
     expect(f.watermarkLines?.[0]).toContain("LICENCIA VENCIDA")
   })
 
-  it("mismatch: watermark de vinculación", () => {
+  it("mismatch: watermark de vinculación (mensaje humano del requisito)", () => {
     const f = resolveFeatures({ status: "mismatch" })
-    expect(f.watermarkLines?.[0]).toContain("OTRA INSTALACIÓN")
+    expect(f.watermarkLines?.[0]).toContain("LICENCIA NO CORRESPONDE A ESTE EQUIPO")
   })
 
   it("invalid: watermark genérico", () => {

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Marca ViewLBA: "V" ámbar sobre escudo redondeado oscuro. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <group
+        android:scaleX="0.6"
+        android:scaleY="0.6"
+        android:translateX="21.6"
+        android:translateY="21.6">
+
+        <!-- Escudo -->
+        <path
+            android:fillColor="#15151B"
+            android:strokeColor="#F5A623"
+            android:strokeWidth="3"
+            android:pathData="M50,6 L88,18 L88,50 C88,72 72,88 50,94 C28,88 12,72 12,50 L12,18 Z" />
+
+        <!-- V -->
+        <path
+            android:fillColor="#F5A623"
+            android:pathData="M32,32 L50,76 L68,32 L59,32 L50,55 L41,32 Z" />
+
+        <!-- Llave (símbolo de licencia) -->
+        <path
+            android:fillColor="#9A9AA3"
+            android:pathData="M50,78 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0" />
+    </group>
+</vector>

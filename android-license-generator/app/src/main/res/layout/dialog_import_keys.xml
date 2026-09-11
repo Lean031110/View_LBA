@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="20dp">
+
+    <EditText
+        android:id="@+id/import_ed"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="@string/import_ed_hint"
+        android:inputType="textNoSuggestions"
+        android:fontFamily="monospace"
+        android:textSize="11sp"
+        android:textColor="@color/text_primary"
+        android:textColorHint="@color/text_secondary" />
+
+    <EditText
+        android:id="@+id/import_x"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:hint="@string/import_x_hint"
+        android:inputType="textNoSuggestions"
+        android:fontFamily="monospace"
+        android:textSize="11sp"
+        android:textColor="@color/text_primary"
+        android:textColorHint="@color/text_secondary" />
+</LinearLayout>

@@ -8,6 +8,7 @@
 | `ViewLBA-Server-<ver>-x86_64.AppImage` | Linux (GUI, opcional) | `cargo tauri build --bundles appimage --ci` |
 | `ViewLBA-Server-CLI-<ver>-x86_64.AppImage` | Linux (headless) | `installer/package/appimage.sh` |
 | `ViewLBA-Server-Setup-<ver>.exe` | Windows (GUI NSIS, obligatorio) | `cargo tauri build --bundles nsis --ci` (desde `C:\v`) |
+| `ViewLBA-License-Generator-vX.Y.Z.apk` | Android (app privada del admin) | workflow `android-license-generator.yml` (firmado con secrets) |
 | `SHA256SUMS.txt` | todos | release job (re-computado sobre los subidos) |
 | `manifest-{linux,windows}.json` | todos | `installer/package/build-manifest.ts` (commit ↔ binario) |
 
@@ -18,7 +19,8 @@ el instalador final funciona sin Internet.
 ## Release automático (recomendado)
 
 ```bash
-# 1. Todo verde en CI (quality/integration/e2e/security + installer tests)
+# 1. Todo verde en CI (quality/integration/e2e/security + android-license-generator
+#    + installer tests)
 # 2. Tag de candidato (primero) y push:
 git tag v1.0.1-rc.1 && git push origin v1.0.1-rc.1
 # 3. Solo si TODO pasa (build+validación+packaging+smoke), tag estable:
@@ -153,6 +155,23 @@ engines, sidecars, 0 symlinks) y ejecuta el sidecar `--json detect`.
 ---
 
 ## Historial de releases
+
+### v2.0.0 (2026-09-11) — Sistema de licencias v2 (token copiar/pegar) + generador Android
+
+- **Alcance**: reemplazo completo del flujo de licencias — ZIP/JSON/IDs a
+  mano ELIMINADOS. Nuevos formatos `VLREQ2-…` (sealed box X25519→HKDF→
+  AES-256-GCM) y `VLBA2-…` (firma Ed25519), rutas `/api/license/request-code`
+  y `/api/license/activate`, y la **app Android privada del administrador**
+  (`android-license-generator/`) con DB cifrada SQLCipher, Keystore+PIN+
+  biometría, backup `.vlbak`, anti-replay/anti-downgrade, renovación y CI
+  propia (APK firmado como artifact + `SHA256SUMS.txt`).
+- **Claves**: par NUEVO Ed25519 (firma) + X25519 (solicitudes) para
+  producción — públicas en `public-key.ts`, privadas entregadas al
+  administrador fuera de banda para importar en la app. Cero impacto
+  (no existían licencias v1 activas).
+- **Artefactos nuevos**: `ViewLBA-License-Generator-v1.0.0.apk` (workflow
+  `android-license-generator.yml`).
+- **Versiones**: `package.json` 2.0.0 · app Android 1.0.0.
 
 ### v1.2.1 (2026-09-11) — Rotación de clave de firma (Ed25519) + secret de Actions
 

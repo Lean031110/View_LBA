@@ -1,17 +1,19 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSessionUser } from "@/lib/auth"
-import { getLicenseSystemState, getInstallationIdentity, getLicenseHistory, licenseStateEpoch } from "@/lib/licensing"
+import { getLicenseSystemState, getLicenseHistory, licenseStateEpoch, CONTACT_PHONE } from "@/lib/licensing"
 
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
 
 /**
- * GET /api/license — estado del sistema de licencias (sección 21).
+ * GET /api/license — estado del sistema de licencias (v2, copiar/pegar).
  *
  * PÚBLICO (TV / watchdog): resumen SIN datos de cliente ni identificadores
  * de binding — solo lo necesario para pintar watermark y features.
- * ADMIN (cookie de sesión): respuesta enriquecida con datos de la licencia,
- * Installation ID, Disk ID y motivos de estado.
+ * ADMIN (cookie de sesión): respuesta enriquecida con el resumen seguro de
+ * la licencia (cliente, plan, fechas, días) e historial — SIN Installation
+ * ID, Disk ID, hashes ni ningún dato técnico: la identidad vive oculta en el
+ * servidor y viaja encapsulada dentro del código de solicitud VLREQ2.
  *
  * Cache interno de 3s: la evaluación implica detección de hardware/disco
  * (child_process) — no debe ejecutarse por cada poll de cada TV.
@@ -25,7 +27,7 @@ export async function GET(_req: NextRequest) {
     const isAdmin = user?.role === "ADMIN" || user?.role === "OPERATOR"
 
     // El cuerpo PÚBLICO se cachea 3s, PERO se invalida al instante cuando
-    // cambia la época de estado (importación de licencia).
+    // cambia la época de estado (activación de licencia).
     const epoch = licenseStateEpoch()
     let publicBody: Record<string, unknown>
     if (cache && cache.epoch === epoch && Date.now() - cache.at < CACHE_TTL_MS) {
@@ -52,9 +54,8 @@ export async function GET(_req: NextRequest) {
       return NextResponse.json(publicBody, { headers: { "Cache-Control": "no-store" } })
     }
 
-    // ---- Vista ADMIN (operador+) ----
+    // ---- Vista ADMIN (operador+) — resumen seguro, sin datos técnicos ----
     const state = await getLicenseSystemState()
-    const identity = await getInstallationIdentity()
     const history = await getLicenseHistory()
 
     return NextResponse.json(
@@ -69,30 +70,33 @@ export async function GET(_req: NextRequest) {
               endsAt: state.trial.endsAt ? new Date(state.trial.endsAt).toISOString() : null,
             }
           : null,
-        license: state.license,
-        validation: state.validation
+        license: state.license
           ? {
-              status: state.validation.status,
-              reasons: state.validation.reasons,
-              detail: state.validation.detail,
+              licenseId: state.license.licenseId,
+              customerName: state.license.customerName,
+              plan: state.license.plan,
+              durationDays: state.license.durationDays,
+              issuedAt: state.license.issuedAt,
+              startsAt: state.license.startsAt,
+              expiresAt: state.license.expiresAt,
+              daysLeft: state.daysLeft,
             }
           : null,
-        identity: {
-          installationId: identity.installationId,
-          diskId: identity.diskId,
-          diskLabel: identity.diskLabel,
-          installPath: identity.installPath,
-          bindingStrength: {
-            fingerprint: identity.fingerprintMethod,
-            disk: identity.diskBindingMethod,
-          },
-        },
-        history: history.slice(0, 20),
-        contact: "52973387",
+        history: history.slice(0, 20).map((h) => ({
+          licenseId: h.licenseId,
+          customerName: h.customerName,
+          plan: h.plan,
+          durationDays: h.durationDays,
+          startsAt: h.startsAt,
+          expiresAt: h.expiresAt,
+          activatedAt: h.activatedAt,
+          current: h.current,
+        })),
+        contact: CONTACT_PHONE,
       },
       { headers: { "Cache-Control": "no-store" } }
     )
-  } catch (e) {
+  } catch {
     return NextResponse.json({ error: "Error evaluando el estado de licencia" }, { status: 500 })
   }
 }

@@ -1,17 +1,25 @@
 /**
- * ViewLBA — Sistema de licenciamiento OFFLINE (tipos y constantes).
+ * ViewLBA — Sistema de licenciamiento por TOKEN copiar/pegar (tipos y constantes).
  *
- * Diseño (ver docs/LICENSE-SYSTEM.md y docs/LICENSE-SECURITY.md):
- *  · Licencia firmada Ed25519 (criptografía asimétrica; la clave PRIVADA
- *    solo vive en el generador de licencias, NUNCA en la app/TV/bundle).
- *  · La app solo verifica con la clave pública incrustada.
- *  · Binding mínimo: deviceId (Installation ID) + diskId (binding del disco
- *    de instalación). installPath se registra pero NO es binding estricto.
+ * Diseño v2 (ver docs/LICENSE-SYSTEM.md):
+ *  · El CLIENTE solo ve dos artefactos:
+ *      1. Código de solicitud  VLREQ2-XXXX-XXXX-… (copia y envía por WhatsApp)
+ *      2. Token de licencia    VLBA2-XXXX-XXXX-…  (pega y activa)
+ *  · El código de solicitud encapsula CIFRADO (X25519 efímero → HKDF →
+ *    AES-256-GCM) el customerName, installationId y diskId: viaja sellado
+ *    al emisor (app Android privada del administrador).
+ *  · El token de licencia viaja FIRMADO (Ed25519) con el binding de equipo
+ *    y disco; el servidor SOLO contiene la clave pública de verificación.
+ *  · La clave PRIVADA de firma vive EXCLUSIVAMENTE en la app generadora
+ *    (android-license-generator), protegida por Android Keystore.
  *  · 100% offline: ninguna validación requiere Internet.
  */
 
-/** Versión del esquema de licencia (bump → rechazar versiones futuras). */
-export const LICENSE_SCHEMA_VERSION = 1
+/** Versión del esquema del token de licencia VLBA2 (bump → rechazar futuras). */
+export const LICENSE_SCHEMA_VERSION = 2
+
+/** Versión del esquema del código de solicitud VLREQ2. */
+export const REQUEST_SCHEMA_VERSION = 2
 
 /** Producto que emite/valida esta licencia. */
 export const LICENSE_PRODUCT = "ViewLBA-Server"
@@ -19,63 +27,101 @@ export const LICENSE_PRODUCT = "ViewLBA-Server"
 /** Duración del trial por instalación (días). */
 export const TRIAL_DAYS = 7
 
-/** Duración de cada plan comercial (días). */
-export const PLAN_DURATION_DAYS: Record<LicensePlan, number> = {
+/** Duración de cada plan comercial (días); "custom" la define el generador. */
+export const PLAN_DURATION_DAYS: Record<Exclude<LicensePlan, "custom">, number> = {
   monthly: 30,
   annual: 365,
 }
 
-/** Precio de referencia de cada plan (USD) — informativo, para docs/README. */
-export const PLAN_PRICE_USD: Record<LicensePlan, number> = {
-  monthly: 10,
-  annual: 100,
-}
+/** Duración máxima permitida para un plan personalizado (años = 10). */
+export const MAX_CUSTOM_DURATION_DAYS = 3650
+
+/** Antigüedad máxima aceptable de un código de solicitud (días). */
+export const REQUEST_CODE_MAX_AGE_DAYS = 15
+
+/** Longitud (normalizada, sin guiones/espacios) mínima/máxima del token VLBA2. */
+export const TOKEN_MIN_LENGTH = 200
+export const TOKEN_MAX_LENGTH = 4096
+
+/** Longitud (normalizada) mínima/máxima del código VLREQ2. */
+export const REQUEST_CODE_MIN_LENGTH = 120
+export const REQUEST_CODE_MAX_LENGTH = 2048
+
+/** Tamaño máximo del payload JSON firmable del token (bytes). */
+export const TOKEN_PAYLOAD_MAX_BYTES = 3072
+
+/** Tamaño máximo del contenido cifrado del código de solicitud (bytes). */
+export const REQUEST_CIPHERTEXT_MAX_BYTES = 1024
 
 /** Contacto comercial soportado por el proveedor (aparece en watermark y UI). */
 export const CONTACT_PHONE = "52973387"
 
 // ---------------------------------------------------------------------------
-// Payload de licencia (todo lo firmado — JAMÁS incluir "signature" aquí)
+// Planes
 // ---------------------------------------------------------------------------
 
-export type LicensePlan = "monthly" | "annual"
+/** La duración SOLO la decide el generador (admin); el cliente nunca la elige. */
+export type LicensePlan = "monthly" | "annual" | "custom"
 
-/** Campos de licencia SIN firma. La firma cubre la forma canónica de esto. */
-export interface LicensePayload {
+// ---------------------------------------------------------------------------
+// Payload del token de licencia (TODO lo firmado — sin "signature" implícito:
+// la firma Ed25519 cubre los bytes JSON exactos del payload dentro del frame)
+// ---------------------------------------------------------------------------
+
+/** Campos del token VLBA2. Fechas en ms epoch (enteros). */
+export interface LicenseTokenPayload {
   /** Versión de esquema (LICENSE_SCHEMA_VERSION). */
-  schemaVersion: number
+  v: number
   /** Identificador de la licencia: VLBA-XXXXXXXXXXXX (12 hex). */
   licenseId: string
   /** Nombre del cliente. */
   customerName: string
-  /** Plan contratado. */
+  /** Plan contratado (monthly | annual | custom). */
   plan: LicensePlan
-  /** Fecha de emisión (ISO 8601, UTC). */
-  issuedAt: string
-  /** Inicio de vigencia (ISO 8601, UTC). */
-  startsAt: string
-  /** Fin de vigencia (ISO 8601, UTC). */
-  expiresAt: string
-  /** Installation ID de la instalación vinculada: VWLB-XXXX-XXXX-XXXX-XXXX. */
-  deviceId: string
-  /** Disk ID del disco vinculado: DSK-XXXX-XXXX-XXXX. */
-  diskId: string
-  /** Ruta de instalación normalizada (informativa; NO binding estricto). */
-  installPath: string
+  /** Duración exacta en días (1..3650) — la decide el generador. */
+  durationDays: number
   /** Producto cubierto por la licencia. */
   product: string
+  /** Fecha de emisión (ms epoch). */
+  issuedAt: number
+  /** Inicio de vigencia (ms epoch). */
+  startsAt: number
+  /** Fin de vigencia (ms epoch) = startsAt + durationDays días exactos. */
+  expiresAt: number
+  /** Installation ID vinculada: VWLB-XXXX-XXXX-XXXX-XXXX. */
+  installationId: string
+  /** Disk ID vinculado: DSK-XXXX-XXXX-XXXX. */
+  diskId: string
   /** Features habilitadas explícitamente por la licencia. */
   features: Record<string, boolean>
-}
-
-/** Licencia firmada tal como viaja en license.json. */
-export interface SignedLicense extends LicensePayload {
-  /** Firma Ed25519 del payload canónico (base64url, 64 bytes). */
-  signature: string
+  /** Nonce único de emisión (hex; anti-replay/colisión de licenseId). */
+  nonce: string
 }
 
 // ---------------------------------------------------------------------------
-// Identidad de la instalación (hardware + disco)
+// Payload del código de solicitud (viaja CIFRADO, no firmado)
+// ---------------------------------------------------------------------------
+
+/** Campos encapsulados dentro del código VLREQ2. */
+export interface RequestCodePayload {
+  /** Versión de esquema (REQUEST_SCHEMA_VERSION). */
+  v: number
+  /** Producto que solicita la licencia. */
+  product: string
+  /** Nombre del negocio/cliente que SOLICITA (lo escribe el cliente). */
+  customerName: string
+  /** Installation ID de la instalación (generada automáticamente). */
+  installationId: string
+  /** Disk ID del disco de instalación (generado automáticamente). */
+  diskId: string
+  /** Nonce único de solicitud (hex; anti-replay del emisor). */
+  nonce: string
+  /** Momento de generación (ms epoch) — expiración de la solicitud. */
+  requestedAt: number
+}
+
+// ---------------------------------------------------------------------------
+// Identidad de la instalación (hardware + disco) — interna, nunca visible
 // ---------------------------------------------------------------------------
 
 export interface InstallationIdentity {
@@ -89,14 +135,12 @@ export interface InstallationIdentity {
   diskIdHash: string
   /** Identificador público del disco: DSK-XXXX-XXXX-XXXX. */
   diskId: string
-  /** Etiqueta amigable del disco para UX ("C:" / "/dev/sda2 · ext4"). */
+  /** Etiqueta amigable del disco para logs internos ("C:" / "/dev/sda2 · ext4"). */
   diskLabel: string
   /** Método con el que se detectó el disco (calidad del binding). */
   diskBindingMethod: string
-  /** Ruta de instalación en crudo. */
+  /** Ruta de instalación en crudo (uso interno/telemetry; NO binding). */
   installPath: string
-  /** Ruta de instalación normalizada (comparaciones). */
-  installPathNormalized: string
 }
 
 // ---------------------------------------------------------------------------
@@ -108,8 +152,8 @@ export interface InstallationIdentity {
  *  · trial      — prueba de 7 días activa (sin licencia comercial)
  *  · active     — licencia válida y vigente
  *  · expired    — licencia comercial vencida
- *  · invalid    — licencia con firma/estructura/producto inválidos
- *  · mismatch   — licencia vinculada a otra instalación/disco
+ *  · invalid    — token con firma/estructura/producto inválidos
+ *  · mismatch   — token vinculado a otra instalación/disco
  *  · grace      — vencida dentro de la ventana de gracia (opcional)
  *  · unlicensed — sin licencia comercial y trial agotado (o nunca iniciado)
  */
@@ -117,7 +161,6 @@ export type LicenseStatus = "trial" | "active" | "expired" | "invalid" | "mismat
 
 /** Estado del trial tras analizar anclas + reloj. */
 export interface TrialResult {
-  /** ¿El trial está corriendo ahora? */
   active: boolean
   /** true = trial agotado o congelado por manipulación de reloj. */
   ended: boolean
@@ -131,35 +174,15 @@ export interface TrialResult {
   clockTampered: boolean
 }
 
-/** Resultado de validar una licencia contra la instalación actual. */
+/** Resultado de validar el payload de un token contra la instalación actual. */
 export interface LicenseValidationResult {
-  /** true únicamente si la licencia es válida, vigente y coincide. */
+  /** true únicamente si el token es válido, vigente y coincide con el equipo. */
   valid: boolean
-  /** Estado derivado. */
   status: "active" | "grace" | "expired" | "invalid" | "mismatch"
   /** Motivos legables (es-ES). Vacío si valid. */
   reasons: string[]
-  /** Detalle adicional SOLO para el admin (nunca se expone público). */
-  detail?: {
-    expectedInstallationId?: string
-    foundInstallationId?: string
-    expectedDiskId?: string
-    foundDiskId?: string
-    installPathWarning?: string
-  }
-  /** Metadatos seguros de la licencia (post-firma-válida). */
-  license?: {
-    licenseId: string
-    customerName: string
-    plan: LicensePlan
-    issuedAt: string
-    startsAt: string
-    expiresAt: string
-    deviceId: string
-    diskId: string
-    installPath: string
-    features: Record<string, boolean>
-  }
+  /** Metadatos seguros del payload (post-firma-válida). */
+  payload?: LicenseTokenPayload
 }
 
 // ---------------------------------------------------------------------------
@@ -167,22 +190,18 @@ export interface LicenseValidationResult {
 // ---------------------------------------------------------------------------
 
 export type FeatureKey =
-  | "display.watermark" // true durante trial/limitado (marca de agua en TV)
-  | "screens.multiDisplay" // sección Pantallas: gestión multi-pantalla
-  | "branding.customLogo" // sección Logotipo: branding personalizado
-  | "themes.custom" // sección Apariencia: temas/colores personalizados
-  | "users.management" // sección Usuarios: gestión de usuarios/roles
-  | "backup.selfService" // botón de backup manual del Dashboard
-  | "analytics.advanced" // Dashboard: métricas avanzadas
+  | "display.watermark"
+  | "screens.multiDisplay"
+  | "branding.customLogo"
+  | "themes.custom"
+  | "users.management"
+  | "backup.selfService"
+  | "analytics.advanced"
 
 export interface FeatureAvailability {
-  /** Flags resueltas para el estado actual. */
   flags: Record<FeatureKey, boolean>
-  /** true si hay marca de agua visible en la TV. */
   watermark: boolean
-  /** Texto de la marca de agua (líneas) — null si no hay watermark. */
   watermarkLines: string[] | null
-  /** Motivo del bloqueo (para UI) — null si todo desbloqueado. */
   lockReason: string | null
 }
 
@@ -193,17 +212,11 @@ export interface FeatureAvailability {
 /** Estado persistido en cada ancla de trial (archivo JSON firmado con HMAC). */
 export interface TrialAnchorState {
   v: 1
-  /** Hash de hardware al que pertenece esta ancla (anclas ajenas se ignoran). */
   deviceIdHash: string
-  /** Inicio del trial (ms epoch) — null si aún no arrancó. */
   trialStartAt: number | null
-  /** Marca de agua temporal (ms epoch) — anti rollback de reloj. */
   lastSeenAt: number | null
-  /** true si se detectó reloj hacia atrás (sticky). */
   clockTampered: boolean
-  /** Último estado de licencia registrado (para audit sin spam). */
   lastLoggedStatus?: string | null
-  /** HMAC-SHA256 de integridad del propio ancla. */
   stamp: string
 }
 
@@ -213,9 +226,7 @@ export interface MergedTrialState {
   lastSeenAt: number | null
   clockTampered: boolean
   lastLoggedStatus: string | null
-  /** Anclas leídas con sello inválido (sospecha de manipulación). */
   integrityWarnings: number
-  /** Número de anclas físicas encontradas. */
   anchorsFound: number
 }
 
@@ -223,45 +234,32 @@ export interface MergedTrialState {
 // Persistencia en DB (autoridad del servidor)
 // ---------------------------------------------------------------------------
 
-/** Registro de licencia importada (DB LicenseState — fila única "main"). */
+/** Registro de licencia activada (DB LicenseState — fila única "main"). */
 export interface LicenseRecord {
-  license: SignedLicense
-  importedAt: string
-  importedBy: string | null
+  /** Token VLBA2 original (normalizado, tal como se pegó). */
+  token: string
+  /** Payload decodificado y verificado en la activación. */
+  payload: LicenseTokenPayload
+  /** Momento de activación (ms epoch ISO). */
+  activatedAt: string
+  activatedBy: string | null
 }
 
-/** Entrada del historial de licencias importadas (DB LicenseHistory). */
+/** Entrada del historial de licencias activadas (DB LicenseHistory). */
 export interface LicenseHistoryEntry {
   licenseId: string
   customerName: string
   plan: LicensePlan
-  issuedAt: string
-  startsAt: string
-  expiresAt: string
-  deviceId: string
+  durationDays: number
+  /** Fechas en ms epoch. */
+  issuedAt: number
+  startsAt: number
+  expiresAt: number
+  installationId: string
   diskId: string
-  importedAt: string
-  /** ¿Sigue siendo la licencia activa actual? */
+  activatedAt: number
+  activatedBy: string | null
   current: boolean
-}
-
-// ---------------------------------------------------------------------------
-// Resultado de importación
-// ---------------------------------------------------------------------------
-
-export interface ImportResult {
-  ok: boolean
-  /** Motivos del rechazo (es-ES) si !ok. */
-  reasons: string[]
-  /** Resumen cuando ok (para toasts/UI). */
-  summary?: {
-    licenseId: string
-    customerName: string
-    plan: LicensePlan
-    startsAt: string
-    expiresAt: string
-    daysLeft: number
-  }
 }
 
 /** Interfaz de almacenamiento de licencias (Prisma en app; mock en tests). */
@@ -270,14 +268,81 @@ export interface LicenseStore {
   saveLicenseRecord(record: LicenseRecord): Promise<void>
   appendHistory(entry: LicenseHistoryEntry): Promise<void>
   listHistory(): Promise<LicenseHistoryEntry[]>
+  /** Búsqueda por licenseId (control anti-replay/colisión). */
+  findHistoryByLicenseId(licenseId: string): Promise<LicenseHistoryEntry | null>
 }
 
 // ---------------------------------------------------------------------------
-// Eventos de auditoría (vocabulario exacto del requisito, sección 22)
+// Resultado de activación (POST /api/license/activate)
+// ---------------------------------------------------------------------------
+
+/** Resumen seguro de una licencia activa (SIN datos de binding). */
+export interface LicenseSummary {
+  licenseId: string
+  customerName: string
+  plan: LicensePlan
+  durationDays: number
+  issuedAt: number
+  startsAt: number
+  expiresAt: number
+  daysLeft: number
+  features: Record<string, boolean>
+}
+
+/** Códigos de rechazo de activación (se mapean a mensajes humanos). */
+export type ActivationRejectCode =
+  | "empty_token"
+  | "bad_charset"
+  | "too_short"
+  | "too_long"
+  | "bad_prefix"
+  | "bad_frame"
+  | "bad_version"
+  | "bad_crc"
+  | "bad_json"
+  | "bad_schema"
+  | "bad_signature"
+  | "bad_product"
+  | "bad_dates"
+  | "not_started"
+  | "already_expired"
+  | "binding_mismatch"
+  | "duplicate_license"
+  | "downgrade"
+
+export interface ActivationResult {
+  ok: boolean
+  /** Código del rechazo si !ok. */
+  code?: ActivationRejectCode
+  /** Mensivo legible (es-ES) — humano, sin detalles criptográficos. */
+  reason?: string
+  /** true si el token ya estaba activo (re-activación idempotente). */
+  alreadyActive?: boolean
+  /** Resumen cuando ok. */
+  summary?: LicenseSummary
+}
+
+// ---------------------------------------------------------------------------
+// Errores de decodificación de tokens/códigos
+// ---------------------------------------------------------------------------
+
+/** Error de decodificación con código estructural (nunca expone secretos). */
+export class TokenDecodeError extends Error {
+  constructor(
+    public readonly code: "bad_prefix" | "bad_charset" | "too_short" | "too_long" | "bad_frame" | "bad_version" | "bad_crc" | "bad_json",
+    message: string
+  ) {
+    super(message)
+    this.name = "TokenDecodeError"
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Eventos de auditoría
 // ---------------------------------------------------------------------------
 
 export const LICENSE_AUDIT_EVENTS = [
-  "license_imported",
+  "license_activated",
   "license_rejected",
   "license_expired",
   "license_mismatch",

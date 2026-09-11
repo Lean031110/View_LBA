@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ViewLBA Licencias</string>
+    <string name="app_subtitle">Generador privado del administrador</string>
+
+    <!-- Primer uso / desbloqueo -->
+    <string name="first_use_title">Configura tu PIN de acceso</string>
+    <string name="first_use_hint">La base de datos local (claves y licencias) se cifra con una clave maestra protegida por Android Keystore y por este PIN. Si pierdes el PIN Y el backup, no hay recuperación.</string>
+    <string name="pin1_hint">PIN (6–16 caracteres)</string>
+    <string name="pin2_hint">Repite el PIN</string>
+    <string name="btn_create_pin">Crear bóveda</string>
+    <string name="vault_created">Bóveda creada — guarda tu backup .vlbak pronto</string>
+    <string name="pin_policy">El PIN debe tener entre 6 y 16 caracteres</string>
+    <string name="pin_mismatch">Los PIN no coinciden</string>
+    <string name="unlock_title">Generador bloqueado</string>
+    <string name="unlock_hint">Introduce tu PIN o usa la biometría</string>
+    <string name="unlock_pin_hint">PIN</string>
+    <string name="btn_unlock">Desbloquear</string>
+    <string name="btn_biometric">Usar biometría</string>
+    <string name="pin_wrong">PIN incorrecto</string>
+    <string name="biometric_title">Desbloquear generador</string>
+    <string name="biometric_subtitle">Se requiere tu huella para abrir la bóveda</string>
+    <string name="locked_error">La bóveda está bloqueada — desbloquea de nuevo</string>
+
+    <!-- Home -->
+    <string name="home_title">ViewLBA · Generador de licencias</string>
+    <string name="home_stats">%1$d licencias emitidas · %2$d activas</string>
+    <string name="btn_new_license">Nueva licencia</string>
+    <string name="btn_history">Historial</string>
+    <string name="btn_backup">Backup</string>
+    <string name="btn_settings">Ajustes</string>
+    <string name="btn_lock">Bloquear ahora</string>
+
+    <!-- Nueva licencia -->
+    <string name="new_license_title">Nueva licencia</string>
+    <string name="renew_title">Renovar licencia</string>
+    <string name="request_code_hint">Pega aquí el código VLREQ2-… del cliente</string>
+    <string name="btn_validate">Validar código</string>
+    <string name="request_valid">✓ Solicitud válida — elige la duración y genera</string>
+    <string name="device_info_masked">Equipo: %1$s (identidad completa oculta por seguridad)</string>
+    <string name="plan_title">Duración (la decide el administrador)</string>
+    <string name="plan_monthly">Mensual · 30 días</string>
+    <string name="plan_annual">Anual · 365 días</string>
+    <string name="plan_custom">Personalizada</string>
+    <string name="custom_days_hint">Días (1–3650)</string>
+    <string name="allow_shorten">Acortar licencia (acción administrativa)</string>
+    <string name="btn_generate">Generar y copiar token</string>
+    <string name="validate_first">Valida primero el código de solicitud</string>
+    <string name="issued_ok">✓ Licencia emitida: %1$s · %2$d días · vence el %3$s — token copiado</string>
+    <string name="token_result_label">Token de licencia (envíalo al cliente por WhatsApp)</string>
+    <string name="btn_copy_token">Copiar token</string>
+    <string name="copied">Copiado al portapapeles</string>
+
+    <!-- Historial -->
+    <string name="history_title">Historial de licencias</string>
+    <string name="history_search_hint">Buscar por cliente o licenseId</string>
+    <string name="history_count">%1$d licencias</string>
+    <string name="filter_all">Todas</string>
+    <string name="filter_active">Activas</string>
+    <string name="filter_expired">Vencidas</string>
+    <string name="filter_future">Futuras</string>
+
+    <!-- Detalle -->
+    <string name="detail_title">Detalle de licencia</string>
+    <string name="detail_license_id">Licencia: %1$s</string>
+    <string name="detail_plan">Plan: %1$s (%2$d días)</string>
+    <string name="detail_start">Inicio: %1$s</string>
+    <string name="detail_expiry">Vencimiento: %1$s</string>
+    <string name="detail_days_left">Restan: %1$s</string>
+    <string name="detail_status">Estado: %1$s</string>
+    <string name="btn_renew">Renovar</string>
+    <string name="btn_back">Volver</string>
+
+    <!-- Backup -->
+    <string name="backup_title">Backup (.vlbak)</string>
+    <string name="backup_hint">Copia cifrada y autenticada de TODO el contenido: licencias, historial de solicitudes y material de claves (solo legible con tu contraseña). Restaura en un teléfono nuevo tras verificarlo.</string>
+    <string name="btn_create_backup">Crear backup</string>
+    <string name="btn_restore_backup">Restaurar backup</string>
+    <string name="btn_verify_backup">Verificar integridad</string>
+    <string name="last_backup">Último backup: %1$s</string>
+    <string name="no_backup_yet">Aún no hay backup — crea uno pronto</string>
+    <string name="backup_password_title">Contraseña del backup</string>
+    <string name="restore_password_title">Contraseña del backup a restaurar</string>
+    <string name="verify_password_title">Contraseña del backup a verificar</string>
+    <string name="backup_password_hint">Contraseña (guárdala bien: sin ella no hay recuperación)</string>
+    <string name="backup_created">✓ Backup creado con %1$d licencias</string>
+    <string name="backup_created_toast">Backup .vlbak guardado</string>
+    <string name="backup_restored">✓ Restaurado: %1$d licencias</string>
+    <string name="backup_restored_toast">Backup restaurado (%1$d licencias)</string>
+    <string name="backup_verified">✓ Backup v%1$d íntegro: %2$d licencias · %3$d claves · %4$s</string>
+
+    <!-- Ajustes -->
+    <string name="settings_title">Ajustes del generador</string>
+    <string name="keys_configured">Claves del emisor configuradas</string>
+    <string name="keys_missing">SIN claves: impórtalas o genera unas nuevas antes de emitir</string>
+    <string name="pub_ed_label">Clave pública Ed25519 (para el servidor ViewLBA)</string>
+    <string name="pub_x_label">Clave pública X25519 (solicitudes)</string>
+    <string name="btn_copy_pub_ed">Copiar Ed25519</string>
+    <string name="btn_copy_pub_x">Copiar X25519</string>
+    <string name="btn_import_keys">Importar claves privadas</string>
+    <string name="btn_generate_keys">Generar claves nuevas</string>
+    <string name="btn_change_pin">Cambiar PIN</string>
+    <string name="import_keys_title">Importar claves privadas (base64url)</string>
+    <string name="import_ed_hint">Ed25519 privada (firma de licencias)</string>
+    <string name="import_x_hint">X25519 privada (apertura de solicitudes)</string>
+    <string name="import_action">Importar</string>
+    <string name="import_keys_missing">Pega las DOS claves</string>
+    <string name="keys_imported_ok">✓ Claves importadas</string>
+    <string name="generate_keys_title">Generar claves nuevas</string>
+    <string name="generate_keys_warning">⚠ Al generar claves nuevas, los tokens anteriores dejarán de validarse en el servidor hasta que actualices las claves públicas (env o build). ¿Continuar?</string>
+    <string name="generate_action">Generar</string>
+    <string name="keys_generated_ok">✓ Claves generadas — copia las públicas para el servidor</string>
+    <string name="change_pin_title">Cambiar PIN</string>
+    <string name="pin_old_hint">PIN actual</string>
+    <string name="pin_new_hint">PIN nuevo</string>
+    <string name="change_action">Cambiar</string>
+    <string name="pin_change_failed">El PIN actual no es correcto</string>
+    <string name="pin_changed">✓ PIN cambiado</string>
+    <string name="cancel">Cancelar</string>
+    <string name="ok">Aceptar</string>
+    <string name="generic_error">Error inesperado</string>
+</resources>

@@ -1,16 +1,20 @@
 /**
- * Tests de INTEGRACIÓN del sistema de licencias — contra un servidor REAL.
+ * Tests de INTEGRACIÓN del sistema de licencias v2 (token copiar/pegar) —
+ * contra un servidor REAL.
  *
  * Se levanta `next dev` en el puerto 3300 con entorno AISLADO:
  *  · DB temporal (migraciones reales + usuario admin de prueba)
  *  · DATA_DIR temporal (anclas de trial frescas → trial de 7 días)
- *  · Overrides de identidad de test (VIEWLBA_TEST_*) + clave pública de test
+ *  · Overrides de identidad de test (VIEWLBA_TEST_*) + claves públicas de test
  *
- * Cubre el flujo completo de las secciones 15/16/21/27:
+ * Cubre el flujo completo de la UX (requisito v2):
  *  1. Trial: watermark público en /api/content + gating server-side (403)
- *  2. GET /api/license público SIN secretos; identity con auth ADMIN
- *  3. Importación: ZIP válido → ACTIVA; manipulado → rechazado; mismatch
- *  4. Post-import: watermark fuera, premium habilitado, historial en DB
+ *  2. GET /api/license público SIN secretos y SIN Installation/Disk ID
+ *  3. POST /api/license/request-code → código VLREQ2 (se abre con la clave
+ *     X25519 de test del "emisor" → customerName + binding correctos)
+ *  4. POST /api/license/activate: token válido → ACTIVA; manipulado →
+ *     rechazado; de otro equipo → rechazo humano; renovación; downgrade
+ *  5. Post-activación: watermark fuera, premium habilitado, historial en DB
  *
  * SKIP VISIBLE si el puerto está ocupado (patrón de recovery.test.ts).
  */
@@ -62,47 +66,41 @@ async function portFree(port: number): Promise<boolean> {
 }
 
 // ---------------- claves e identidad de test (efímeras) ----------------
-const { generateLicenseKeyPair, deriveInstallationId, deriveDiskId, signLicense, buildZip } = await import(
+const { generateLicenseKeyPair, generateRequestKeyPair, deriveInstallationId, deriveDiskId, openRequestCode, buildLicenseToken } = await import(
   "../../src/lib/licensing/index"
 )
+import type { LicenseTokenPayload } from "../../src/lib/licensing/types"
 
-const key = generateLicenseKeyPair()
+const key = generateLicenseKeyPair() // Ed25519 del "emisor" (Android de test)
+const reqKey = generateRequestKeyPair() // X25519 de apertura de solicitudes
 const DEVICE_FP = randomBytes(32).toString("hex")
 const DISK_HASH = randomBytes(32).toString("hex")
 const INSTALLATION_ID = deriveInstallationId(DEVICE_FP)
 const DISK_ID = deriveDiskId(DISK_HASH)
 const INSTALL_PATH = "/srv/viewlba-lic-test"
 
-function makeLicense(opts: { days?: number; customerName?: string; deviceId?: string; diskId?: string; tamper?: boolean } = {}) {
+function makeTokenPayload(opts: { days?: number; customerName?: string; installationId?: string; diskId?: string; licenseId?: string } = {}): LicenseTokenPayload {
   const days = opts.days ?? 365
-  const payload = {
-    schemaVersion: 1,
-    licenseId: `VLBA-${randomBytes(6).toString("hex")}`,
+  const startsAt = Date.now()
+  return {
+    v: 2,
+    licenseId: opts.licenseId ?? `VLBA-${randomBytes(6).toString("hex")}`,
     customerName: opts.customerName ?? "Restaurante La Terraza",
-    plan: "annual",
-    issuedAt: new Date().toISOString(),
-    startsAt: new Date().toISOString(),
-    expiresAt: new Date(Date.now() + days * 86400000).toISOString(),
-    deviceId: opts.deviceId ?? INSTALLATION_ID,
-    diskId: opts.diskId ?? DISK_ID,
-    installPath: INSTALL_PATH,
+    plan: days === 30 ? "monthly" : days === 365 ? "annual" : "custom",
+    durationDays: days,
     product: "ViewLBA-Server",
-    features: { "users.management": true, "screens.multiDisplay": true },
+    issuedAt: startsAt,
+    startsAt,
+    expiresAt: startsAt + days * 86400000,
+    installationId: opts.installationId ?? INSTALLATION_ID,
+    diskId: opts.diskId ?? DISK_ID,
+    features: { "users.management": true, "screens.multiDisplay": true, "themes.custom": true },
+    nonce: randomBytes(16).toString("hex"),
   }
-  const signature = signLicense(payload, key.privateKey)
-  const license = { ...payload, signature }
-  if (opts.tamper) {
-    // manipulación POST-firma (cambia el cliente sin re-firmar)
-    return { ...license, customerName: "Falsificado SA" }
-  }
-  return license
 }
 
-function makeZip(license: unknown): Buffer {
-  return buildZip([
-    { name: "license.json", data: Buffer.from(JSON.stringify(license, null, 2), "utf8") },
-    { name: "README.txt", data: Buffer.from("ViewLBA — Licencia de integración", "utf8") },
-  ])
+function makeToken(opts: Parameters<typeof makeTokenPayload>[0] = {}): string {
+  return buildLicenseToken(makeTokenPayload(opts), key.privateKey)
 }
 
 // ---------------- helpers HTTP ----------------
@@ -127,12 +125,8 @@ async function api(method: string, path: string, body?: unknown, cookie?: string
   return { status: res.status, data }
 }
 
-async function importZip(zip: Buffer, cookie = adminCookie): Promise<{ status: number; data: any }> {
-  const form = new FormData()
-  form.append("file", new File([new Uint8Array(zip)], "ViewLBA-License-test.zip", { type: "application/zip" }))
-  const res = await fetch(`${APP}/api/license/import`, { method: "POST", body: form, headers: { cookie } })
-  const data = await res.json().catch(() => ({}))
-  return { status: res.status, data }
+async function activate(token: string, cookie = adminCookie): Promise<{ status: number; data: any }> {
+  return api("POST", "/api/license/activate", { token }, cookie)
 }
 
 // ---------------- entorno del servidor ----------------
@@ -180,6 +174,7 @@ beforeAll(async () => {
     `VIEWLBA_TEST_DISK_ID_HASH='${DISK_HASH}'`,
     `VIEWLBA_TEST_INSTALL_PATH='${INSTALL_PATH}'`,
     `VIEWLBA_LICENSE_PUBLIC_KEY='${key.publicKey}'`,
+    `VIEWLBA_REQUEST_PUBLIC_KEY='${reqKey.publicKey}'`,
   ].join(" ")
   app = spawn("/bin/sh", ["-c", `cd '${ROOT}' && ${env} exec bunx next dev -p ${APP_PORT}`], {
     stdio: ["ignore", "pipe", "pipe"],
@@ -240,16 +235,11 @@ describe.skipIf(!canRun)("LICENSING integración — fase TRIAL (sin licencia)",
     expect(json).not.toContain("deviceIdHash")
   })
 
-  it("GET /api/license/identity SIN sesión → 401; CON admin → Installation ID + Disk ID + bloque de solicitud", async () => {
-    const noAuth = await api("GET", "/api/license/identity")
-    expect(noAuth.status).toBe(401)
-
-    const withAuth = await api("GET", "/api/license/identity", undefined, adminCookie)
-    expect(withAuth.status).toBe(200)
-    expect(withAuth.data.installationId).toBe(INSTALLATION_ID)
-    expect(withAuth.data.diskId).toBe(DISK_ID)
-    expect(withAuth.data.requestBlock).toContain(`Installation ID: ${INSTALLATION_ID}`)
-    expect(withAuth.data.requestBlock).toContain(`Disk ID: ${DISK_ID}`)
+  it("las rutas antiguas ZIP/identity YA NO EXISTEN (404 — flujo unificado)", async () => {
+    const identity = await api("GET", "/api/license/identity", undefined, adminCookie)
+    expect(identity.status).toBe(404)
+    const imported = await api("POST", "/api/license/import", {}, adminCookie)
+    expect(imported.status).toBe(404)
   })
 
   it("gating server-side en trial: crear usuarios → 403 con feature y contacto; backup → 403", async () => {
@@ -272,40 +262,106 @@ describe.skipIf(!canRun)("LICENSING integración — fase TRIAL (sin licencia)",
   })
 })
 
-describe.skipIf(!canRun)("LICENSING integración — importación (sección 15)", { timeout: 120_000 }, () => {
-  it("ZIP manipulado (cliente cambiado tras la firma) → 422 rechazado, nada guardado", async () => {
-    const { status, data } = await importZip(makeZip(makeLicense({ tamper: true })))
+describe.skipIf(!canRun)("LICENSING integración — código de solicitud (paso 1 del flujo UX)", { timeout: 120_000 }, () => {
+  it("POST /api/license/request-code SIN sesión → 401", async () => {
+    const res = await api("POST", "/api/license/request-code", { customerName: "Lo D'Leo" })
+    expect(res.status).toBe(401)
+  })
+
+  it("request-code sin customerName → 400", async () => {
+    const res = await api("POST", "/api/license/request-code", { customerName: "" }, adminCookie)
+    expect(res.status).toBe(400)
+  })
+
+  it("genera VLREQ2-… que el EMISOR abre con su clave X25519: customerName + binding OCULTOS al cliente", async () => {
+    const { status, data } = await api("POST", "/api/license/request-code", { customerName: "Lo D'Leo" }, adminCookie)
+    expect(status).toBe(200)
+    expect(String(data.requestCode).startsWith("VLREQ2-")).toBe(true)
+    expect(data.validForDays).toBe(15)
+
+    // el cliente JAMÁS ve Installation ID / Disk ID en la respuesta
+    const json = JSON.stringify(data)
+    expect(json).not.toContain("installationId")
+    expect(json).not.toContain(INSTALLATION_ID)
+    expect(json).not.toContain("diskId")
+    expect(json).not.toContain(DISK_ID)
+
+    // el "emisor Android" (test) abre el código con la clave privada X25519
+    const opened = openRequestCode(data.requestCode, reqKey.privateKey, {})
+    expect(opened.payload.customerName).toBe("Lo D'Leo")
+    expect(opened.payload.installationId).toBe(INSTALLATION_ID)
+    expect(opened.payload.diskId).toBe(DISK_ID)
+    expect(opened.payload.product).toBe("ViewLBA-Server")
+    expect(opened.requestHash).toMatch(/^[0-9a-f]{64}$/)
+  })
+})
+
+describe.skipIf(!canRun)("LICENSING integración — activación por token (paso 2 del flujo UX)", { timeout: 120_000 }, () => {
+  it("POST /api/license/activate SIN sesión → 401", async () => {
+    const res = await api("POST", "/api/license/activate", { token: makeToken() })
+    expect(res.status).toBe(401)
+  })
+
+  it("token vacío → 400 empty_token", async () => {
+    const { status, data } = await api("POST", "/api/license/activate", { token: "" }, adminCookie)
+    expect(status).toBe(400)
+    expect(data.code).toBe("empty_token")
+  })
+
+  it("token manipulado (1 char) → 422 rechazado, nada guardado", async () => {
+    const token = makeToken({ days: 90 })
+    const pos = token.length - 3
+    const flipped = token.slice(0, pos) + (token[pos] === "A" ? "B" : "A") + token.slice(pos + 1)
+    const { status, data } = await activate(flipped)
     expect(status).toBe(422)
     expect(data.ok).toBe(false)
-    expect(String(data.reasons[0])).toMatch(/firma/i)
+    expect(["bad_crc", "bad_frame", "bad_charset", "bad_signature"]).toContain(data.code)
   })
 
-  it("ZIP de OTRO equipo → 422 mismatch con detalle para el admin", async () => {
-    const other = makeLicense({ deviceId: "VWLB-1111-2222-3333-4444" })
-    const { status, data } = await importZip(makeZip(other))
+  it("token de OTRO equipo → 422 binding_mismatch con mensaje humano (sin datos técnicos)", async () => {
+    const other = makeToken({ installationId: "VWLB-1111-2222-3333-4444" })
+    const { status, data } = await activate(other)
     expect(status).toBe(422)
-    expect(String(data.reasons[0])).toMatch(/otra instalación/i)
+    expect(data.code).toBe("binding_mismatch")
+    expect(String(data.reason)).toContain("NO corresponde a este equipo")
+    expect(JSON.stringify(data)).not.toContain(INSTALLATION_ID)
   })
 
-  it("ZIP válido → 200 ok con resumen; la licencia queda ACTIVA", async () => {
-    const { status, data } = await importZip(makeZip(makeLicense({ days: 90 })))
+  it("token válido de 90 días → 200 ok con resumen seguro; la licencia queda ACTIVA", async () => {
+    const { status, data } = await activate(makeToken({ days: 90, customerName: "Restaurante La Terraza" }))
     expect(status).toBe(200)
     expect(data.ok).toBe(true)
     expect(data.summary.customerName).toBe("Restaurante La Terraza")
+    expect(data.summary.durationDays).toBe(90)
     expect(data.summary.daysLeft).toBe(90)
+    expect(JSON.stringify(data.summary)).not.toContain("installationId")
+    expect(JSON.stringify(data.summary)).not.toContain("diskId")
   })
 
-  it("GET /api/license (admin) tras importar: ACTIVE con cliente, plan, fechas e historial", async () => {
+  it("re-pegar el MISMO token → idempotente (alreadyActive)", async () => {
+    const token = makeToken({ days: 90 })
+    const first = await activate(token)
+    expect(first.status).toBe(200)
+    const second = await activate(token)
+    expect(second.status).toBe(200)
+    expect(second.data.alreadyActive).toBe(true)
+  })
+
+  it("GET /api/license (admin) tras activar: ACTIVE con cliente, plan, fechas e historial — SIN identity", async () => {
     const { data } = await api("GET", "/api/license", undefined, adminCookie)
     expect(data.status).toBe("active")
     expect(data.license.customerName).toBe("Restaurante La Terraza")
-    expect(data.license.plan).toBe("annual")
-    expect(data.identity.installationId).toBe(INSTALLATION_ID)
-    expect(data.history.length).toBe(1)
+    expect(data.license.plan).toBe("custom")
+    expect(typeof data.license.startsAt).toBe("number")
+    expect(data.history.length).toBeGreaterThanOrEqual(1)
     expect(data.history[0].current).toBe(true)
+    // la vista admin YA NO expone identity (Installation/Disk ID ocultos)
+    expect(data.identity).toBeUndefined()
+    expect(JSON.stringify(data)).not.toContain(INSTALLATION_ID)
+    expect(JSON.stringify(data)).not.toContain("diskLabel")
   })
 
-  it("el watermark DESAPARECE de /api/content al importar la licencia (refresco ETag)", async () => {
+  it("el watermark DESAPARECE de /api/content al activar la licencia (refresco ETag)", async () => {
     await wait(3500) // superar el cache interno de 3s del endpoint público
     const bundle = await waitFor(
       async () => (await (await fetch(`${APP}/api/content`, { cache: "no-store" })).json()) as { license: { watermark: boolean } },
@@ -325,38 +381,42 @@ describe.skipIf(!canRun)("LICENSING integración — importación (sección 15)"
     expect(backup.data.ok).toBe(true)
   })
 
-  it("downgrade: licencia que vence antes que la activa → 422 y la activa sigue", async () => {
-    const downgrade = makeLicense({ days: 30, customerName: "Corta Vigencia" })
-    const { status, data } = await importZip(makeZip(downgrade))
+  it("downgrade: token que vence antes que la activa → 422 y la activa sigue", async () => {
+    const { data: before } = await api("GET", "/api/license", undefined, adminCookie)
+    const activeExpiry = before.license.expiresAt as number
+    const daysShort = Math.max(1, Math.floor((activeExpiry - Date.now()) / 86400000) - 30)
+    const downgrade = makeToken({ days: daysShort, customerName: "Corta Vigencia" })
+    const { status, data } = await activate(downgrade)
     expect(status).toBe(422)
-    expect(String(data.reasons[0])).toMatch(/downgrade/i)
+    expect(data.code).toBe("downgrade")
 
     const { data: state } = await api("GET", "/api/license", undefined, adminCookie)
     expect(state.license.customerName).toBe("Restaurante La Terraza")
   })
 
-  it("renovación: licencia posterior → 200 y el historial registra ambas", async () => {
-    const renewal = makeLicense({ days: 365, customerName: "Restaurante La Terraza" })
-    const { status, data } = await importZip(makeZip(renewal))
+  it("renovación: token posterior → 200 y el historial registra ambas", async () => {
+    const renewal = makeToken({ days: 365, customerName: "Restaurante La Terraza" })
+    const { status, data } = await activate(renewal)
     expect(status).toBe(200)
     expect(data.ok).toBe(true)
 
     const { data: state } = await api("GET", "/api/license", undefined, adminCookie)
     expect(state.status).toBe("active")
-    expect(state.history.length).toBe(2)
+    expect(state.history.length).toBeGreaterThanOrEqual(2)
   })
 })
 
-describe.skipIf(!canRun)("LICENSING integración — auditoría (sección 22)", { timeout: 60_000 }, () => {
-  it("los eventos de licencia quedan en el Log (license_imported / license_rejected) sin secretos", async () => {
+describe.skipIf(!canRun)("LICENSING integración — auditoría", { timeout: 60_000 }, () => {
+  it("los eventos de licencia quedan en el Log (license_activated / license_rejected) sin secretos", async () => {
     const { data } = await api("GET", "/api/admin/logs?limit=100", undefined, adminCookie)
     const actions = (data.items as { action: string }[]).map((l) => l.action)
-    expect(actions).toContain("license_imported")
+    expect(actions).toContain("license_activated")
     expect(actions).toContain("license_rejected")
     expect(actions).toContain("trial_started")
     // ninguna clave/secret en los registros
     const dump = JSON.stringify(data)
     expect(dump).not.toContain(key.privateKey)
+    expect(dump).not.toContain(reqKey.privateKey)
     expect(dump).not.toContain("signature")
   })
 })

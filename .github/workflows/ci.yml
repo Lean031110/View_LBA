@@ -97,9 +97,10 @@ jobs:
         run: bun scripts/e2e-setup.ts
 
       - name: Arrancar servidor (dev) con la DB de integración
-        # LICENSING: overrides de identidad + clave pública DUMMY de test para
-        # que la licencia importada por e2e-setup valide como ACTIVA (mismos
-        # valores que playwright.config.ts; claves de e2e/fixtures/licensing).
+        # LICENSING v2: overrides de identidad + claves públicas DUMMY de test
+        # para que el token activado por e2e-setup valide como ACTIVA y los
+        # códigos VLREQ2 se sellen hacia el emisor DUMMY (mismos valores que
+        # playwright.config.ts; claves de e2e/fixtures/licensing).
         run: |
           DATABASE_URL="file:../db/e2e.db" \
           AUTH_SECRET="${{ env.AUTH_SECRET }}" \
@@ -108,7 +109,8 @@ jobs:
           VIEWLBA_TEST_DEVICE_FINGERPRINT="00946114a3a48905be6f60d95f945a1b29f3f2b261e32f30521afed84407f8e7" \
           VIEWLBA_TEST_DISK_ID_HASH="a5ed432a37dde11ef146fcc98049c07d06e0db193cc1cf69dc2214d7b2cc8b02" \
           VIEWLBA_TEST_INSTALL_PATH="/srv/viewlba-e2e" \
-          VIEWLBA_LICENSE_PUBLIC_KEY="DEYlcmsRR7oWGjm7E72KhO2G5BzgirmO5w0mmsVtz6w" \
+          VIEWLBA_LICENSE_PUBLIC_KEY="GDEuTLCbpriQyXbECGbffdgTa52f-YHPjp-lVhvjxd0" \
+          VIEWLBA_REQUEST_PUBLIC_KEY="qWlCO6xJt2e_AZjNxDZ2olv_DiJBNuLHNBGSLm87pjE" \
             nohup bunx next dev -p 3000 > dev-server.log 2>&1 &
           echo $! > /tmp/dev-server.pid
 
@@ -136,8 +138,9 @@ jobs:
 
       - name: Tests de integración de licencias (spawn propio :3300)
         # Suite autocontenida: DB temporal + migraciones + admin + anclas de
-        # trial frescas + identidad de test. Cubre import ZIP (válido/tamper/
-        # mismatch), trial + watermark público, gating 403 y renovación.
+        # trial frescas + identidad de test. Cubre request-code VLREQ2,
+        # activación por token (válido/tamper/mismatch), trial + watermark
+        # público, gating 403, renovación y anti-downgrade.
         run: DATABASE_URL="file:./db/lic-int.db" bun test tests/integration/license-api.test.ts
 
       - name: Logs del servidor (solo en fallo)
