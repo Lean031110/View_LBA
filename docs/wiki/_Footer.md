@@ -1,0 +1,1 @@
+Sistema de licencias ViewLBA · Contacto y soporte: **52973387** · Documentación completa en [`docs/`](https://github.com/Lean031110/Pantalla_Restaurante/tree/main/docs) · La clave privada NUNCA vive en este repositorio ni en esta wiki.
