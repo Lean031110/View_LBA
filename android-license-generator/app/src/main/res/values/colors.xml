@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg">#0C0C10</color>
+    <color name="surface">#15151B</color>
+    <color name="surface_alt">#1D1D24</color>
+    <color name="accent">#F5A623</color>
+    <color name="accent_dark">#B87A10</color>
+    <color name="text_primary">#F2F2F5</color>
+    <color name="text_secondary">#9A9AA3</color>
+    <color name="status_active">#34D399</color>
+    <color name="status_expired">#FB923C</color>
+    <color name="status_future">#93C5FD</color>
+    <color name="error">#F87171</color>
+    <color name="ok">#34D399</color>
+    <color name="ic_launcher_background">#0C0C10</color>
+</resources>

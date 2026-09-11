@@ -1,15 +1,14 @@
 /**
  * Tests: máquina de estados completa (getLicenseSystemState) + escenarios de
- * backup/restore y cambio de disco (sección 20 — "restore DB a otro disco →
- * MISMATCH").
+ * backup/restore y cambio de disco ("restore DB a otro disco → MISMATCH").
  *
  * Todo con MemoryStore + anclas en temp dirs: sin DB, sin red, determinista.
  */
 import { describe, expect, it, beforeEach, afterEach } from "bun:test"
-import { getLicenseSystemState, importLicenseZip } from "@/lib/licensing/index"
+import { getLicenseSystemState, activateLicenseToken } from "@/lib/licensing/index"
 import { MemoryLicenseStore } from "@/lib/licensing/storage"
 import { generateLicenseKeyPair } from "@/lib/licensing/crypto"
-import { makeIdentity, makeSignedLicense, makeLicenseZip, makeAnchorPaths, cleanupAnchorPaths, DAY_MS } from "./helpers"
+import { makeIdentity, makeLicenseToken, makeAnchorPaths, cleanupAnchorPaths, DAY_MS } from "./helpers"
 import { TRACKED_TABLES } from "@/lib/backup"
 
 let identity: ReturnType<typeof makeIdentity>
@@ -23,8 +22,6 @@ beforeEach(() => {
   store = new MemoryLicenseStore()
   anchors = makeAnchorPaths()
   process.env.AUTH_SECRET = "test-auth-secret-0123456789abcdef"
-  // La evaluación del estado usa la clave pública RESUELTA (como en la app
-  // real vía env) — fijamos la efímera de este test.
   process.env.VIEWLBA_LICENSE_PUBLIC_KEY = key.publicKey
 })
 
@@ -45,7 +42,7 @@ describe("getLicenseSystemState — ciclo de vida", () => {
     expect(state.features.flags["users.management"]).toBe(false)
   })
 
-  it("día 8 (now avanzado) → unlicensed (sección 14: modo limitado)", async () => {
+  it("día 8 (now avanzado) → unlicensed (modo limitado)", async () => {
     const now = Date.now()
     await getLicenseSystemState({ ...stateOpts(), now })
     const later = await getLicenseSystemState({ ...stateOpts(), now: now + 8 * DAY_MS })
@@ -54,15 +51,15 @@ describe("getLicenseSystemState — ciclo de vida", () => {
     expect(later.features.watermarkLines?.[0]).toContain("PERÍODO DE PRUEBA FINALIZADO")
   })
 
-  it("licencia importada → active: watermark OFF y premium ON", async () => {
-    const license = makeSignedLicense(identity, key, { days: 60, plan: "monthly" })
-    const imported = await importLicenseZip(makeLicenseZip(license), { store, identity, publicKey: key.publicKey, silent: true })
-    expect(imported.ok).toBe(true)
+  it("licencia activada por token → active: watermark OFF y premium ON", async () => {
+    const token = makeLicenseToken(identity, key, { durationDays: 60, plan: "custom", customerName: "Leandro Bueno" })
+    const activated = await activateLicenseToken(token, { store, identity, anchorPaths: anchors, silent: true })
+    expect(activated.ok).toBe(true)
 
     const state = await getLicenseSystemState(stateOpts())
     expect(state.status).toBe("active")
     expect(state.license?.customerName).toBe("Leandro Bueno")
-    expect(state.license?.plan).toBe("monthly")
+    expect(state.license?.plan).toBe("custom")
     expect(state.daysLeft).toBe(60)
     expect(state.features.watermark).toBe(false)
     expect(state.features.flags["users.management"]).toBe(true)
@@ -70,42 +67,54 @@ describe("getLicenseSystemState — ciclo de vida", () => {
   })
 
   it("licencia vencida → expired (watermark de renovación)", async () => {
-    // Se importa VIGENTE (en el pasado) y luego se evalúa AHORA (vencida)
-    const license = makeSignedLicense(identity, key, { startsAt: new Date(Date.now() - 50 * DAY_MS), days: 20 })
-    const imported = await importLicenseZip(makeLicenseZip(license), {
+    // Se activa VIGENTE (en el pasado) y luego se evalúa AHORA (vencida)
+    const token = makeLicenseToken(identity, key, { startsAt: new Date(Date.now() - 50 * DAY_MS), durationDays: 20, plan: "custom" })
+    const activated = await activateLicenseToken(token, {
       store,
       identity,
-      publicKey: key.publicKey,
+      anchorPaths: anchors,
       silent: true,
-      now: Date.now() - 40 * DAY_MS, // momento de la importación (vigente)
+      now: Date.now() - 40 * DAY_MS, // momento de la activación (vigente)
     })
-    expect(imported.ok).toBe(true)
+    expect(activated.ok).toBe(true)
 
     const state = await getLicenseSystemState(stateOpts())
     expect(state.status).toBe("expired")
-    expect(state.license?.customerName).toBe("Leandro Bueno") // visible para renovar
+    expect(state.license?.customerName).toBe("Lo D'Leo") // visible para renovar
     expect(state.features.watermarkLines?.[0]).toContain("LICENCIA VENCIDA")
   })
 
   it("licencia manipulada tras el guardado → invalid en la siguiente evaluación", async () => {
-    const license = makeSignedLicense(identity, key, { days: 60 })
-    await importLicenseZip(makeLicenseZip(license), { store, identity, publicKey: key.publicKey, silent: true })
-    // manipulan la DB (licenseJson editado)
+    const token = makeLicenseToken(identity, key, { durationDays: 60, plan: "custom" })
+    await activateLicenseToken(token, { store, identity, anchorPaths: anchors, silent: true })
+    // manipulan la DB: el TOKEN guardado se edita (el token es la fuente de
+    // verdad — el payloadJson es solo un cache de lectura)
     const record = await store.getLicenseRecord()
-    record!.license.customerName = "Falsificado"
-    await store.saveLicenseRecord(record!)
+    const tamperedToken = record!.token.slice(0, -2) + (record!.token.endsWith("A") ? "B" : "A")
+    await store.saveLicenseRecord({ ...record!, token: tamperedToken })
 
     const state = await getLicenseSystemState(stateOpts())
     expect(state.status).toBe("invalid")
-    expect(state.reasons[0]).toMatch(/firma/i)
+    expect(state.reasons[0]).toMatch(/no fue emitido|modificado|esquema|alterado|truncado|corrupto/i)
+  })
+
+  it("mismatch → mensaje humano 'NO CORRESPONDE A ESTE EQUIPO'", async () => {
+    const token = makeLicenseToken(identity, key, { durationDays: 365, plan: "annual" })
+    await activateLicenseToken(token, { store, identity, anchorPaths: anchors, silent: true })
+
+    // la identidad recalculada difiere (otro equipo)
+    const movedIdentity = makeIdentity()
+    const state = await getLicenseSystemState({ store, identity: movedIdentity, anchorPaths: anchors, silent: true })
+    expect(state.status).toBe("mismatch")
+    expect(state.features.watermarkLines?.[0]).toContain("LICENCIA NO CORRESPONDE A ESTE EQUIPO")
   })
 })
 
-describe("sección 20 — restore / cambio de disco (binding SIEMPRE se recalcula)", () => {
+describe("restore / cambio de disco (binding SIEMPRE se recalcula)", () => {
   it("L) restore de la DB a OTRO DISCO → MISMATCH (no se clona la licencia)", async () => {
     // Instalación original con licencia activa
-    const license = makeSignedLicense(identity, key, { days: 365 })
-    await importLicenseZip(makeLicenseZip(license), { store, identity, publicKey: key.publicKey, silent: true })
+    const token = makeLicenseToken(identity, key, { durationDays: 365, plan: "annual" })
+    await activateLicenseToken(token, { store, identity, anchorPaths: anchors, silent: true })
     const before = await getLicenseSystemState(stateOpts())
     expect(before.status).toBe("active")
 
@@ -126,13 +135,13 @@ describe("sección 20 — restore / cambio de disco (binding SIEMPRE se recalcul
   })
 
   it("restore a OTRO EQUIPO (mismo disco no) → MISMATCH por instalación", async () => {
-    const license = makeSignedLicense(identity, key, { days: 365 })
-    await importLicenseZip(makeLicenseZip(license), { store, identity, publicKey: key.publicKey, silent: true })
+    const token = makeLicenseToken(identity, key, { durationDays: 365, plan: "annual" })
+    await activateLicenseToken(token, { store, identity, anchorPaths: anchors, silent: true })
 
     const otherMachine = makeIdentity()
     const state = await getLicenseSystemState({ store, identity: otherMachine, anchorPaths: anchors, silent: true })
     expect(state.status).toBe("mismatch")
-    expect(state.reasons.join(" ")).toMatch(/otra instalación|otro disco/i)
+    expect(state.reasons.join(" ")).toMatch(/otro equipo|otro disco/i)
   })
 
   it("el trial NO se resetea tras restaurar la DB: las anclas viven fuera de la DB", async () => {
@@ -154,11 +163,11 @@ describe("sección 20 — restore / cambio de disco (binding SIEMPRE se recalcul
 
 describe("anti-rollback integrado en la máquina de estados", () => {
   it("licencia vencida + reloj hacia atrás → sigue EXPIRED (no revive)", async () => {
-    const license = makeSignedLicense(identity, key, { startsAt: new Date(Date.now() - 50 * DAY_MS), days: 20 })
-    const imported = await importLicenseZip(makeLicenseZip(license), {
+    const token = makeLicenseToken(identity, key, { startsAt: new Date(Date.now() - 50 * DAY_MS), durationDays: 20, plan: "custom" })
+    const imported = await activateLicenseToken(token, {
       store,
       identity,
-      publicKey: key.publicKey,
+      anchorPaths: anchors,
       silent: true,
       now: Date.now() - 40 * DAY_MS,
     })

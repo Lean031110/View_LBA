@@ -89,11 +89,13 @@ segundos**. Todo por la red local: el sistema funciona **sin depender de Interne
   controla su estado, resolución y audio de forma remota.
 - 👥 **Roles y auditoría** — ADMIN / OPERADOR / VISOR, registro de acciones y autenticación con
   contraseñas scrypt.
-- 🔐 **Licenciamiento offline** (v1.2+) — firma digital Ed25519 por instalación (equipo + disco),
-  prueba de 7 días automática con marca de agua, planes **Mensual 30 días / USD 10** y
-  **Anual 365 días / USD 100**, activación por importación de ZIP **sin Internet**, y funciones
+- 🔐 **Licenciamiento por token copiar/pegar** (v2.0+) — prueba de 7 días automática con marca de
+  agua, planes **Mensual 30 días / USD 10** y **Anual 365 días / USD 100**, activación sin Internet:
+  el cliente copia un código de solicitud, lo manda por WhatsApp y pega el token de licencia que
+  recibe. Firma digital Ed25519 por instalación (equipo + disco, ocultos al cliente), funciones
   premium (multi-pantalla, logotipo, usuarios…) desbloqueadas solo con licencia válida.
-  Ver [docs/LICENSE-SYSTEM.md](docs/LICENSE-SYSTEM.md) y la [wiki](docs/wiki/).
+  Emisión con la app Android privada del administrador. Ver
+  [docs/LICENSE-SYSTEM.md](docs/LICENSE-SYSTEM.md) y la [wiki](docs/wiki/).
 
 ## 🏗️ Arquitectura
 
@@ -247,8 +249,9 @@ bun run test:e2e    # E2E Playwright (37 specs: auth, contenido, pantallas,
                     # pairing, streaming con ffmpeg real, offline, seguridad)
 ```
 
-CI en GitHub Actions: 4 jobs requeridos (quality · integration · e2e ·
-security con gitleaks y audit crítico bloqueantes) — el job quality ejecuta
+CI en GitHub Actions: 5 jobs requeridos (quality · integration · e2e · security
+con gitleaks y audit crítico bloqueantes · android-license-generator con lint,
+tests JVM, escaneo anti-claves y build firmado del APK) — el job quality ejecuta
 lint, tipos, tests (incluido el pipeline de streaming con ffmpeg publicando
 por RTMP real) y el build standalone en cada push/PR.
 
@@ -256,9 +259,10 @@ por RTMP real) y el build standalone en cada push/PR.
 
 - Clave RTMP enmascarada; revelable/regenerable solo por ADMIN; validada server-side (hook
   `prePublish`); **nunca llega al navegador de la TV**.
-- **Sistema de licencias con criptografía asimétrica** — la clave privada de firma vive SOLO en
-  el emisor (secret de GitHub Actions + custodia del dueño); el producto verifica con la clave
-  pública incrustada. Historial escaneado con gitleaks en cada push.
+- **Sistema de licencias v2 con criptografía asimétrica** — las claves PRIVADAS de firma/apertura
+  viven SOLO en la app Android del administrador (DB cifrada SQLCipher + Keystore + PIN/biometría);
+  el servidor solo contiene las claves PÚBLICAS. Historial escaneado con gitleaks en cada push
+  y análisis anti-claves del artifact APK.
 - Sesiones httpOnly firmadas (HMAC) · contraseñas scrypt · 3 roles con matriz de permisos.
 - Subida de archivos validada por *magic bytes* (no por MIME), nombres generados por el servidor
   y cuota de almacenamiento.

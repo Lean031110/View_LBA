@@ -1,76 +1,61 @@
-# Sistema de Licencias — Arquitectura
+# Sistema de Licencias v2 (token copiar/pegar)
 
-ViewLBA usa un sistema de licenciamiento **100% offline** basado en criptografía asimétrica **Ed25519**. La app del cliente **solo verifica** (jamás firma); el emisor (dueño del negocio) **firma** cada licencia con la clave privada. No hay llamadas de red en ninguna parte del ciclo de vida de la licencia: ni phone-home, ni activación online, ni verificación contra servidores externos.
+> El flujo v1 (ZIP + license.json + IDs a mano) fue **eliminado** en v2.0.0.
+> Esta página describe el único flujo soportado. Detalle técnico completo:
+> [`docs/LICENSE-SYSTEM.md`](https://github.com/Lean031110/Pantalla_Restaurante/blob/main/docs/LICENSE-SYSTEM.md).
 
-## Principios de diseño
-
-1. **Clave privada solo en el emisor.** La clave privada de firma existe únicamente en el generador de licencias (CLI, demo web protegida o GitHub Actions via secret). El producto (frontend, TV, bundle, instaladores, repositorio) contiene **únicamente la clave pública** incrustada en `src/lib/licensing/public-key.ts`.
-2. **Binding mínimo y robusto**: cada licencia se vincula a una instalación concreta — Installation ID (equipo) + Disk ID (disco de instalación). La ruta de instalación se registra pero no es binding estricto.
-3. **Firma sobre payload canónico**: la firma Ed25519 cubre TODO el payload excepto el campo `signature`, con claves ordenadas recursivamente (`src/lib/licensing/canonical.ts`). Cambiar 1 byte de cualquier campo (cliente, fechas, IDs, plan, features) invalida la firma.
-4. **Verificación offline**: `validateLicense()` no hace ninguna llamada de red. La única operación "externa" del ciclo es la entrega manual del ZIP al cliente.
-
-## Flujo end-to-end
+## El flujo en una imagen
 
 ```
-┌─────────────┐   solicitud (Installation ID + Disk ID)    ┌──────────────────┐
-│  CLIENTE    │ ─────────────────────────────────────────▶ │  EMISOR (dueño)  │
-│ (instalación)│                                            │                  │
-│             │ ◀──────────── ZIP con licencia ──────────── │ firma Ed25519    │
-│ importa ZIP │            license.json + README.txt        │ (clave PRIVADA)  │
-└─────────────┘                                            └──────────────────┘
-      │
-      ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│ APP DEL CLIENTE (verificación 100% offline)                          │
-│  1. firma Ed25519 (clave pública incrustada)                         │
-│  2. esquema + producto (ViewLBA-Server)                              │
-│  3. fechas (startsAt ≤ hoy < expiresAt)                              │
-│  4. Installation ID == hardware actual                               │
-│  5. Disk ID == disco actual                                          │
-│  6. anti-downgrade (no acortar vigencia activa)                      │
-└─────────────────────────────────────────────────────────────────────┘
+CLIENTE (Administración → Licencia)           ADMINISTRADOR (app Android)
+──────────────────────────────────           ────────────────────────────
+Escribe el nombre del negocio
+«Copiar código de solicitud»      ── WhatsApp ──►  Nueva licencia
+  (el código VLREQ2-… lleva la        pegar código → validar → ver nombre
+   identidad del equipo OCULTA         elegir duración (30/365/custom)
+   y CIFRADA dentro)                   «Generar y copiar token»
+                     ◄────── WhatsApp ──────┘
+Pega el token VLBA2-…
+«Activar licencia»
+══► LICENCIA ACTIVA · cliente · vence DD/MM/YYYY · Restan X días
 ```
 
-El cliente solicita la licencia desde **Administración → Licencia**, donde la app muestra un bloque listo para copiar y enviar (nombre, Installation ID, Disk ID, ruta). El emisor genera el ZIP y se lo devuelve por cualquier canal (email, WhatsApp…). El cliente lo importa en la misma pantalla. Todo lo demás es automático.
+Tres pasos por lado, cero archivos, cero JSON, cero IDs técnicos visibles.
 
-## Los 7 estados (`LicenseStatus`)
+## Qué ve el cliente (y qué NO)
 
-| Estado | Significado | Qué ve el usuario |
-|---|---|---|
-| `trial` | Prueba de 7 días activa (sin licencia comercial) | App funcional con marca de agua en la TV + banner en el panel |
-| `active` | Licencia válida, vigente y con binding correcto | Todo desbloqueado, sin marca de agua |
-| `expired` | Licencia comercial vencida | Marca de agua "LICENCIA VENCIDA", features premium bloqueados |
-| `grace` | Vencida dentro de la ventana de gracia (`LICENSE_GRACE_HOURS`) | Igual que activa, con aviso de renovación |
-| `invalid` | Firma/estructura/producto inválidos | Rechazo en importación + motivo exacto |
-| `mismatch` | Licencia vinculada a otro equipo/disco | Rechazo con detalle (expected vs found) |
-| `unlicensed` | Sin licencia y trial agotado | Marca de agua de finalización, features bloqueados |
-
-## Componentes del código
-
-| Módulo (`src/lib/licensing/`) | Responsabilidad |
+| Ve | NO ve |
 |---|---|
-| `types.ts` | Contratos + constantes (planes, duraciones, teléfono de contacto) |
-| `canonical.ts` | Forma canónica del payload (lo que se firma) |
-| `crypto.ts` | Ed25519: generación de par, firma, verificación (node:crypto) |
-| `public-key.ts` | **Clave pública de PRODUCCIÓN incrustada** (única clave del producto) |
-| `fingerprint.ts` | Hardware → `deviceIdHash` → Installation ID público |
-| `disk-binding.ts` | Disco → `diskIdHash` → Disk ID público |
-| `trial.ts` | Lógica del trial de 7 días |
-| `storage.ts` | Anclas duales de trial + persistencia en DB |
-| `validator.ts` | Máquina de validación completa (la matriz de seguridad A–H) |
-| `features.ts` | Feature gating según estado (watermark, candados) |
-| `index.ts` | Orquestación del ciclo de vida (`getLicenseState()`) |
-| `zip.ts` | Empaquetado/desempaquetado seguro del ZIP (límites anti zip-bomb) |
-| `audit.ts` | Eventos de auditoría (vocabulario fijo) |
-| `guard.ts` | Guard de sesión para rutas de licencia |
+| Estado actual (humano) | Installation ID |
+| «Copiar código de solicitud» | Disk ID |
+| Campo «Token de licencia» + «Activar licencia» | Hashes / firmas |
+| Cliente, inicio, vencimiento, días restantes | JSON / ZIP / criptografía |
 
-La API interna expuesta por el servidor: `GET /api/license` (público, sin secretos — solo estado/watermark/features), `GET /api/license/identity` (requiere sesión OPERATOR+), `POST /api/license/import` (requiere sesión ADMIN). Ver [Importación-de-Licencia](Importación-de-Licencia.md).
+## Formatos
 
-## Test suite
+- **`VLREQ2-XXXX-…`** — código de solicitud: sealed box
+  (X25519→HKDF→AES-256-GCM) con customerName + binding cifrados; nonce;
+  expira a los 15 días; Base32 con guiones (tolerante a WhatsApp).
+- **`VLBA2-XXXX-…`** — token de licencia: payload JSON canónico firmado
+  Ed25519 (licenseId, cliente, plan, duración EXACTA, fechas, binding,
+  features, nonce) + CRC32; Base32.
 
-- **136 tests unitarios** de licensing (`tests/licensing/`) incluida la **matriz de seguridad A–H** (modificar 1 byte → FAIL, re-firmar con otra clave → FAIL, vencida → EXPIRED, IDs de otro equipo → MISMATCH, planes de 30/365 días exactos).
-- **14 tests de integración** contra servidor real aislado (`tests/integration/`).
-- **6 tests E2E** del flujo completo del administrador (Playwright).
-- gitleaks en CI bloquea cualquier fuga de secretos en el historial.
+## Estados
 
-Siguiente: [Claves-Ed25519](Claves-Ed25519.md) — cómo se generan las claves.
+`trial` → PRUEBA ACTIVA · `active` → LICENCIA ACTIVA · `expired` →
+LICENCIA VENCIDA · `invalid` → LICENCIA NO VÁLIDA · `mismatch` →
+LICENCIA NO CORRESPONDE A ESTE EQUIPO · `grace` · `unlicensed`.
+
+El vencimiento y los días restantes usan el **reloj efectivo
+anti-rollback** (nunca el reloj del frontend).
+
+## Rutas API
+
+- `GET /api/license` — estado público (TV) + resumen seguro (admin, SIN
+  datos de binding).
+- `POST /api/license/request-code` — `{customerName}` → código VLREQ2
+  (identidad generada automáticamente y oculta).
+- `POST /api/license/activate` — `{token}` → pipeline de 12 pasos →
+  resumen seguro. Si algo falla, no se persiste nada.
+
+Las rutas v1 (`identity`, `import`) devuelven **404**.

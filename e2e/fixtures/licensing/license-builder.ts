@@ -1,42 +1,43 @@
 /**
- * E2E fixtures — constructor de licencias firmadas para tests.
+ * E2E fixtures — constructor de tokens VLBA2 firmados para tests.
  *
- * Reutiliza el MISMO código canónico de firma del producto (src/lib/licensing)
- * → si el generador/verificador divergen, los E2E lo detectan.
+ * Reutiliza el MISMO código de firma del producto (src/lib/licensing) → si
+ * el emisor de referencia y el verificador divergen, los E2E lo detectan.
  */
-import { signLicense, newLicenseId, buildZip, normalizeInstallPath } from "../../../src/lib/licensing/index"
-import type { LicensePayload, SignedLicense } from "../../../src/lib/licensing/types"
-import { E2E_LICENSE_PRIVATE_KEY, E2E_INSTALLATION_ID, E2E_DISK_ID, E2E_INSTALL_PATH } from "./keys"
+import { buildLicenseToken } from "../../../src/lib/licensing/token"
+import { openRequestCode } from "../../../src/lib/licensing/request-code"
+import type { LicenseTokenPayload } from "../../../src/lib/licensing/types"
+import { E2E_LICENSE_PRIVATE_KEY, E2E_REQUEST_PRIVATE_KEY, E2E_INSTALLATION_ID, E2E_DISK_ID } from "./keys"
 
-export interface E2eLicenseOptions {
+export interface E2eTokenOptions {
   customerName?: string
-  plan?: "monthly" | "annual"
-  startsAt?: Date
-  days?: number
-  deviceId?: string
+  plan?: "monthly" | "annual" | "custom"
+  durationDays?: number
+  startsAt?: number
+  installationId?: string
   diskId?: string
-  installPath?: string
-  licenseId?: string
   features?: Record<string, boolean>
+  licenseId?: string
+  nonce?: string
 }
 
-/** Construye una licencia firmada con la clave DUMMY de E2E. */
-export function buildE2eLicense(opts: E2eLicenseOptions = {}): SignedLicense {
-  const startsAt = opts.startsAt ?? new Date()
-  const days = opts.days ?? 365
-  const expiresAt = new Date(startsAt.getTime() + days * 24 * 60 * 60 * 1000)
-  const payload: LicensePayload = {
-    schemaVersion: 1,
-    licenseId: opts.licenseId ?? newLicenseId(),
+/** Construye un token VLBA2 firmado con la clave DUMMY de E2E. */
+export function buildE2eLicenseToken(opts: E2eTokenOptions = {}): string {
+  const durationDays = opts.durationDays ?? 365
+  const plan = opts.plan ?? (durationDays === 30 ? "monthly" : durationDays === 365 ? "annual" : "custom")
+  const startsAt = opts.startsAt ?? Date.now()
+  const payload: LicenseTokenPayload = {
+    v: 2,
+    licenseId: opts.licenseId ?? `VLBA-${(globalThis.crypto.randomUUID().replace(/-/g, "")).slice(0, 12)}`,
     customerName: opts.customerName ?? "Restaurante E2E",
-    plan: opts.plan ?? "annual",
-    issuedAt: new Date().toISOString(),
-    startsAt: startsAt.toISOString(),
-    expiresAt: expiresAt.toISOString(),
-    deviceId: opts.deviceId ?? E2E_INSTALLATION_ID,
-    diskId: opts.diskId ?? E2E_DISK_ID,
-    installPath: normalizeInstallPath(opts.installPath ?? E2E_INSTALL_PATH),
+    plan,
+    durationDays,
     product: "ViewLBA-Server",
+    issuedAt: Math.min(Date.now(), startsAt),
+    startsAt,
+    expiresAt: startsAt + durationDays * 24 * 60 * 60 * 1000,
+    installationId: opts.installationId ?? E2E_INSTALLATION_ID,
+    diskId: opts.diskId ?? E2E_DISK_ID,
     features: opts.features ?? {
       "screens.multiDisplay": true,
       "branding.customLogo": true,
@@ -45,35 +46,12 @@ export function buildE2eLicense(opts: E2eLicenseOptions = {}): SignedLicense {
       "backup.selfService": true,
       "analytics.advanced": true,
     },
+    nonce: opts.nonce ?? (globalThis.crypto.randomUUID().replace(/-/g, "")).slice(0, 32),
   }
-  const signature = signLicense(payload, E2E_LICENSE_PRIVATE_KEY)
-  return { ...payload, signature }
+  return buildLicenseToken(payload, E2E_LICENSE_PRIVATE_KEY)
 }
 
-/** ZIP de licencia listo para importar (license.json + README.txt). */
-export function buildE2eLicenseZip(license: SignedLicense): Buffer {
-  return buildZip([
-    { name: "license.json", data: Buffer.from(JSON.stringify(license, null, 2), "utf8") },
-    {
-      name: "README.txt",
-      data: Buffer.from(
-        [
-          "ViewLBA — Licencia (E2E TEST)",
-          `Cliente: ${license.customerName}`,
-          `Plan: ${license.plan}`,
-          `Vence: ${license.expiresAt}`,
-          "",
-          "Fixture de test — no es una licencia real.",
-        ].join("\n"),
-        "utf8"
-      ),
-    },
-  ])
-}
-
-/** ZIP con license.json manipulado (rompe la firma). */
-export function buildTamperedE2eLicenseZip(field: "customerName" | "expiresAt" | "plan", value: string): Buffer {
-  const license = buildE2eLicense()
-  const tampered = { ...license, [field]: value }
-  return buildZip([{ name: "license.json", data: Buffer.from(JSON.stringify(tampered, null, 2), "utf8") }])
+/** "Emisor Android" de E2E: abre un código VLREQ2 con la clave X25519 DUMMY. */
+export function openE2eRequestCode(code: string) {
+  return openRequestCode(code, E2E_REQUEST_PRIVATE_KEY, {})
 }

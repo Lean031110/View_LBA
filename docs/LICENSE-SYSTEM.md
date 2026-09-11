@@ -1,238 +1,169 @@
-# ViewLBA — Sistema de Licencias (offline)
+# Sistema de Licencias v2 (token copiar/pegar)
 
-> Sistema de licenciamiento **100% offline** para ViewLBA. La licencia se vincula a
-> una instalación concreta (hardware + disco) mediante criptografía asimétrica
-> Ed25519. **Ninguna validación requiere Internet**: la única operación externa es
-> la entrega manual del archivo ZIP al cliente.
+> **Flujo único.** El sistema v1 (ZIP + license.json + Installation/Disk ID a
+> mano) fue ELIMINADO por completo en la v2.0.0. Esta página describe el
+> único flujo soportado.
 
-- Autor del diseño: ViewLBA (Leandro Bueno)
-- Contacto comercial: **52973387**
-- Planes: **TRIAL** 7 días · **MENSUAL** USD 10 / 30 días · **ANUAL** USD 100 / 365 días
-- Documentos relacionados: [LICENSE-GENERATOR.md](LICENSE-GENERATOR.md) · [LICENSE-SECURITY.md](LICENSE-SECURITY.md) · [BACKUP_RESTORE.md](BACKUP_RESTORE.md)
+## Visión general
 
----
+El cliente ve exactamente dos artefactos en **Administración → Licencia**:
 
-## 1. Arquitectura
+1. **Código de solicitud** `VLREQ2-XXXX-XXXX-…` — lo copia y envía por
+   WhatsApp al proveedor.
+2. **Token de licencia** `VLBA2-XXXX-XXXX-…` — lo pega y activa.
+
+Todo lo demás (Installation ID, Disk ID, hashes, JSON, ZIP, criptografía)
+está **oculto** y se gestiona automáticamente.
 
 ```
-┌──────────────────────────── EMISOR (fuera del producto) ─────────────────────────────┐
-│  ViewLBA License Generator (tools/license-generator · demo web · GitHub Actions)     │
-│  · Posee la CLAVE PRIVADA Ed25519 (nunca en repo/app/bundle/instalador)              │
-│  · Firma el payload canónico y empaqueta license.json + README.txt en ZIP            │
-└──────────────────────────────────────┬───────────────────────────────────────────────┘
-                                       │  entrega manual (correo/USB)
-┌──────────────────────────────────────▼───────────────────────────────────────────────┐
-│  PRODUCTO ViewLBA (servidor del restaurante, LAN)                                     │
-│  · CLAVE PÚBLICA incrustada (src/lib/licensing/public-key.ts)                         │
-│  · src/lib/licensing/*  — verificación, identidad, trial, features                    │
-│  · El SERVIDOR es la autoridad local; la TV y el panel solo consumen su estado        │
-│  · SQLite (Prisma): LicenseState + LicenseHistory                                     │
-│  · Anclas de trial FUERA de la DB: <DATA_DIR>/licensing/state.json + ~/.viewlba-      │
-│    license.json (con sello HMAC)                                                     │
-└───────────────────────────────────────────────────────────────────────────────────────┘
+CLIENTE                                 ADMIN (app Android privada)
+─────────────────────────────           ──────────────────────────
+Administración → Licencia
+[Nombre del negocio]
+(1) «Copiar código de solicitud»  ─── WhatsApp ───►  [Nueva licencia]
+                                                        pegar VLREQ2-…
+                                                        validar → ver nombre
+                                                        duración (30/365/custom)
+                                                        «Generar y copiar token»
+                    ◄────────── WhatsApp ────────────────┘
+[Token de licencia VLBA2-…]
+(2) «Activar licencia»
+════════════════════════════════════════════════════════════════
+RESULTADO: LICENCIA ACTIVA · cliente · inicio · vencimiento · días restantes
 ```
 
-### Módulos (`src/lib/licensing/`)
+## Formatos (v2, Base32)
 
-| Archivo | Responsabilidad |
-|---|---|
-| `types.ts` | Tipos, constantes (planes, contacto, duraciones) y vocabulario de auditoría |
-| `canonical.ts` | `canonicalizeLicensePayload()` — forma canónica determinista (claves ordenadas recursivamente) de TODO el payload excepto `signature` |
-| `crypto.ts` | Ed25519 con `node:crypto` (cero dependencias): `signLicense()`, `verifyLicenseSignature()`, `generateLicenseKeyPair()`, `resolveVerifierPublicKey()` |
-| `public-key.ts` | Clave **pública** de producción (única pieza criptográfica del producto) |
-| `fingerprint.ts` | Fingerprint de hardware → `INSTALLATION_ID` (`VWLB-XXXX-XXXX-XXXX-XXXX`) |
-| `disk-binding.ts` | Binding al disco → `DISK_ID` (`DSK-XXXX-XXXX-XXXX`) + normalización de rutas |
-| `storage.ts` | Anclas de trial (2 ubicaciones + HMAC), high-water anti-rollback, almacén Prisma |
-| `trial.ts` | Lógica pura del trial de 7 días + detección de retroceso de reloj |
-| `validator.ts` | `validateLicense()` — firma → esquema → fechas → binding (orden crítico) |
-| `features.ts` | Feature flags reales del producto + textos del watermark |
-| `zip.ts` | ZIP mínimo (STORE/DEFLATE) con verificación CRC32 |
-| `audit.ts` | Eventos de auditoría (usa la infraestructura `logAction` existente) |
-| `guard.ts` | `requireLicenseFeature()` — 403 en rutas admin para features premium |
-| `index.ts` | Fachada: `getInstallationIdentity()`, `getLicenseSystemState()`, `importLicenseZip()`, … |
+Ambos son **un único valor de copiar/pegar**, tolerante a WhatsApp
+(la normalización elimina espacios, saltos de línea, tabuladores y guiones;
+el alfabeto Base32 RFC 4648 —A-Z/2-7, sin padding— hace los guiones
+separadores inequívocos y admite mayúsculas/minúsculas).
 
-## 2. Formato de licencia
+### Código de solicitud `VLREQ2-…` (sealed box)
 
-`license.json` (dentro del ZIP entregado al cliente):
+Contenido CIFRADO (solo la app Android del administrador puede abrirlo):
 
 ```json
-{
-  "schemaVersion": 1,
-  "licenseId": "VLBA-1a2b3c4d5e6f",
-  "customerName": "Leandro Bueno",
-  "plan": "monthly",
-  "issuedAt": "2026-09-10T00:00:00.000Z",
-  "startsAt": "2026-09-10T00:00:00.000Z",
-  "expiresAt": "2026-10-10T00:00:00.000Z",
-  "deviceId": "VWLB-8F2A-91CD-2D31-77AA",
-  "diskId": "DSK-A5ED-432A-37DD",
-  "installPath": "C:/PantallaRestaurante",
-  "product": "ViewLBA-Server",
-  "features": { "users.management": true, "screens.multiDisplay": true },
-  "signature": "<base64url de 64 bytes — Ed25519 sobre el payload canónico>"
-}
+{ "v":2, "product":"ViewLBA-Server", "customerName":"Lo D'Leo",
+  "installationId":"VWLB-…", "diskId":"DSK-…",
+  "nonce":"…", "requestedAt":1757068800000 }
 ```
 
-- **La firma cubre TODO el payload excepto `signature`** en su forma canónica
-  (claves ordenadas recursivamente, sin espacios). Cambiar 1 byte rompe la firma.
-- `deviceId` y `diskId` son los **bindings estrictos**; `installPath` es
-  informativo (solo advertencia si difiere).
-- El ZIP contiene `license.json` + `README.txt` (instrucciones, plan, fechas,
-  Installation ID, contacto 52973387).
+Construcción: JSON canónico → sellado **X25519 efímero → HKDF-SHA256 →
+AES-256-GCM** hacia la clave pública del emisor → trama
+`"VR2" | 0x02 | ephPub(32) | iv(12) | ctLen(2BE) | ct+tag | CRC32` →
+Base32 → grupos de 4 con guiones.
 
-## 3. Identidad de la instalación
+Propiedades: **autenticado** (AEAD), **anti-tampering** (CRC32 + tag GCM),
+**anti-replay** (nonce + hash registrado por el emisor), **expirable**
+(15 días de validez), **confidencial** (nombre y binding viajan cifrados).
 
-**INSTALLATION_ID** (`VWLB-XXXX-XXXX-XXXX-XXXX`): prefijo de 8 bytes del
-SHA-256 del fingerprint de hardware. Estable ante cambios de hostname/IP/MAC.
+### Token de licencia `VLBA2-…` (firmado)
 
-| SO | Señal primaria | Fallback (composite) |
-|---|---|---|
-| Linux | `/etc/machine-id` (o `/var/lib/dbus/machine-id`) | CPU + RAM + hostname + MAC |
-| Windows | `MachineGuid` del registro | CPU + RAM + hostname + MAC |
-| macOS | `IOPlatformUUID` | CPU + RAM + hostname + MAC |
+Contenido FIRMADO con **Ed25519** (la privada vive solo en la app Android):
 
-**DISK_ID** (`DSK-XXXX-XXXX-XXXX`): prefijo de 6 bytes del SHA-256 del binding
-del disco **donde reside la instalación** (no la ruta):
+```json
+{ "v":2, "licenseId":"VLBA-ab12cd34ef56", "customerName":"Lo D'Leo",
+  "plan":"annual", "durationDays":365, "product":"ViewLBA-Server",
+  "issuedAt":…, "startsAt":…, "expiresAt":…,
+  "installationId":"VWLB-…", "diskId":"DSK-…",
+  "features":{…}, "nonce":"…" }
+```
 
-| SO | Señal |
-|---|---|
-| Linux | UUID del filesystem (`findmnt`/`lsblk`/`/dev/disk/by-uuid`) + dispositivo + fstype |
-| Windows | Número de serie del **volumen** (`vol C:`) |
-| macOS | Volume UUID (`diskutil`) |
+Construcción: JSON canónico (claves ordenadas, sin espacios, fechas epoch
+ms) → firma Ed25519 (64 B) → trama `"VT2" | 0x02 | payloadLen(2BE) |
+payload | firma | CRC32` → Base32 → guiones.
 
-La UI muestra solo los IDs cortos y la etiqueta amigable del disco ("C:");
-**nunca** hashes completos ni seriales crudos. El cliente copia el
-"bloque de solicitud" desde `Administración → Licencia` y lo envía al proveedor.
+## Rutas API
 
-## 4. Estados
-
-| Estado | Significado | TV (watermark) | Panel admin |
+| Ruta | Método | Auth | Función |
 |---|---|---|---|
-| `trial` | Prueba de 7 días activa | "VERSIÓN DE PRUEBA · ViewLBA · Quedan X días · 52973387" | Banner ámbar + premium bloqueado |
-| `active` | Licencia válida y vigente | Sin marca | Todo habilitado |
-| `grace` | Vencida dentro de `LICENSE_GRACE_HOURS` (default 0 = off) | Sin marca | Todo habilitado + aviso |
-| `expired` | Licencia comercial vencida | "LICENCIA VENCIDA · 52973387" | Modo limitado |
-| `invalid` | Firma/esquema/producto inválidos | "LICENCIA NO VÁLIDA · 52973387" | Modo limitado |
-| `mismatch` | Equipo/disco no coincide (sección 19) | "LICENCIA VINCULADA A OTRA INSTALACIÓN · 52973387" | Detalle Installation/Disk ID actual vs licencia |
-| `unlicensed` | Trial agotado sin licencia (sección 14) | "PERÍODO DE PRUEBA FINALIZADO · 52973387" | Modo limitado + importación disponible |
+| `/api/license` | GET | público/admin | Estado público (watermark/features); admin añade resumen seguro + historial. **Sin Installation/Disk ID.** |
+| `/api/license/request-code` | POST | OPERATOR+ | `{customerName}` → `{requestCode}` (se genera la identidad del equipo automáticamente, OCULTA). |
+| `/api/license/activate` | POST | ADMIN | `{token}` → validación total → resumen seguro. Rate limit 10/min/IP. |
 
-**Modo limitado** (nunca destructivo): la pantalla TV básica sigue funcionando,
-la administración esencial (contenido, transmisión, audio, ticker) sigue
-disponible y `health` responde. Se bloquean las funciones premium (sección 5).
+Las rutas v1 `/api/license/identity` y `/api/license/import` **no existen**
+(404).
 
-## 5. Feature flags (funciones REALES del producto)
+## Activación (pipeline de 12 pasos — `activateLicenseToken`)
 
-| Flag | Sección/función real | Trial | Mensual/Anual |
-|---|---|---|---|
-| `screens.multiDisplay` | Pantallas — 2ª pantalla en adelante (la 1ª funciona en trial) | ✗ | ✓ |
-| `branding.customLogo` | Logotipo | ✗ | ✓ |
-| `themes.custom` | Apariencia (colores/temas) | ✗ | ✓ |
-| `users.management` | Usuarios (crear/editar otros; la propia cuenta siempre editable) | ✗ | ✓ |
-| `backup.selfService` | Botón "Copia de seguridad" del Dashboard | ✗ | ✓ |
-| `analytics.advanced` | Métricas avanzadas del Dashboard | ✗ | ✓ |
-| `display.watermark` | Marca de agua en TV | ✓ | ✗ |
+1. **Formato**: prefijo/charset/longitud (200–4096 normalizado).
+2. **Trama**: magic/versión/CRC32 (rechazo rápido de truncados/alterados).
+3. **Firma Ed25519** sobre los bytes EXACTOS del payload.
+4. **Esquema** (zod): v=2, licenseId, plan, durationDays 1–3650, fechas,
+   binding, features, nonce.
+5. **Producto**: literal `ViewLBA-Server`.
+6. **Fechas/duración**: `expiresAt = startsAt + durationDays·día` EXACTO;
+   coherencia plan↔duración; `issuedAt` no futuro.
+7. **Binding**: installationId + diskId contra el hardware ACTUAL.
+8. **Anti-replay**: re-pegado idempotente del mismo token (200
+   `alreadyActive`); licenseId repetido con token distinto → rechazo.
+9. **Anti-downgrade**: nada que venza antes que la activa.
+10. **Guardado**: `LicenseState` (token + payload) + `LicenseHistory`.
+11. **Auditoría**: `license_activated` / `license_rejected` (sin secretos) +
+    refresco realtime de las TVs.
+12. **Respuesta**: resumen seguro (sin datos de binding ni cripto).
 
-Aplicación en **dos capas**:
-1. **UI** — `AdminApp` bloquea las secciones premium (candado en el menú +
-   panel "Requiere licencia comercial") y `Dashboard` oculta el botón de backup.
-2. **Backend** — `requireLicenseFeature()` devuelve **403** en
-   `POST /api/admin/users`, `PUT/DELETE /api/admin/users/[id]` (otros usuarios),
-   `POST /api/admin/screens` (a partir de la 2ª pantalla),
-   `POST /api/admin/backup` y `PUT /api/admin/settings` (campos premium de
-   branding/apariencia). El propio admin puede cambiar SIEMPRE su contraseña.
+Si cualquier paso falla, **no se persiste nada**.
 
-La lista de features de la licencia (`features: {...}`) puede afinar flags por
-licencia (arquitectura preparada para planes futuros — p. ej. multi-sucursal).
+## Estados y mensajes humanos
 
-## 6. Trial de 7 días
-
-- **Arranque único**: la primera evaluación sin licencia comercial escribe
-  `trialStartAt` en **dos anclas** (DATA_DIR + `~/.viewlba-license.json`).
-  Borrar una no reinicia el trial (fusión *earliest-start*). Un restore/reinstalación
-  superficial de la app tampoco (el ancla del home sobrevive).
-- **Anti-rollback de reloj**: cada evaluación actualiza `lastSeenAt`
-  (high-water). Si `now < lastSeenAt − 2h` → `clockTampered` (sticky) y la
-  evaluación se **congela** al último instante visto: volver el reloj atrás no
-  alarga el trial ni revive una licencia vencida.
-- **Anclas con sello HMAC** (`deviceIdHash + AUTH_SECRET`): la edición manual
-  del JSON se detecta (`integrityWarnings`) y **no otorga un trial nuevo**.
-- Con licencia importada el trial no arranca; si la licencia se vence, no hay
-  "segundo trial" (el estado pasa a `expired`).
-- El trial NO es un DRM militar: ver límites en [LICENSE-SECURITY.md](LICENSE-SECURITY.md).
-
-## 7. Importación de licencia
-
-`Administración → Licencia → IMPORTAR LICENCIA` (solo ADMIN, acepta `.zip` ≤ 1 MB):
-
-1. Lee el ZIP (CRC32 verificado por entrada) y extrae `license.json`.
-2. **Validación TOTAL** en orden: firma Ed25519 sobre el payload exacto →
-   esquema zod → producto → fechas → **Installation ID vs equipo actual** →
-   **Disk ID vs disco actual** → features.
-3. Regla **anti-downgrade**: no se guarda una licencia que venza antes que la
-   activa actual.
-4. **Solo si TODO pasa** se persiste en `LicenseState` (DB) + `LicenseHistory`
-   y se emite `license_imported` + refresco realtime de las TVs (el watermark
-   desaparece en segundos; el ETag de `/api/content` se invalida).
-5. Si algo falla: **422** con motivos legibles, nada se guarda, y se audita
-   `license_rejected`.
-
-### Renovaciones
-Cada renovación es una **licencia nueva firmada** (nunca se modifica la
-anterior). El historial (`LicenseHistory`) conserva todas con su vigencia
-(`LIC-… 2026-09-10 → 2026-10-10`) y marca la actual.
-
-## 8. API interna (sección 21)
-
-| Endpoint | Auth | Respuesta |
+| Estado | UI (cliente) | Watermark TV |
 |---|---|---|
-| `GET /api/license` | pública (TV/watchdog) | `{status, plan, daysLeft, watermark:{visible,lines}, features, clockTampered}` — **sin datos de cliente ni IDs de binding**. Con sesión ADMIN/OPERATOR se enriquece con licencia completa, identidad, motivos e historial. Cache 3 s (invalidado al importar). |
-| `GET /api/license/identity` | OPERATOR+ | `{installationId, diskId, diskLabel, installPath, requestBlock, bindingStrength}` |
-| `POST /api/license/import` | ADMIN (multipart `file`) | `200 {ok, message, summary}` · `422 {ok:false, reasons}` |
+| trial | PRUEBA ACTIVA | VERSIÓN DE PRUEBA · quedan N días |
+| active | LICENCIA ACTIVA | (sin marca) |
+| expired | LICENCIA VENCIDA | LICENCIA VENCIDA · renueva |
+| invalid | LICENCIA NO VÁLIDA | LICENCIA NO VÁLIDA |
+| mismatch | LICENCIA NO CORRESPONDE A ESTE EQUIPO | LICENCIA NO CORRESPONDE A ESTE EQUIPO |
+| grace | LICENCIA EN GRACIA | (sin marca) |
+| unlicensed | SIN LICENCIA | PERÍODO DE PRUEBA FINALIZADO |
 
-La TV obtiene el estado desde el backend LAN: el bundle público
-`GET /api/content` incluye `license: {status, watermark, watermarkLines}`
-(integrado al ETag para refrescar cuando cambia) — **la TV nunca valida nada por su cuenta**.
+Vencimiento y días restantes se calculan con el **reloj efectivo
+anti-rollback** (high-water de las anclas de trial, tolerancia 2 h): nunca
+se confía en el reloj del frontend.
 
-## 9. Auditoría (sección 22)
+## Persistencia (servidor)
 
-Eventos (vocabulario del requisito, sección "license" de la tabla `Log`):
-`license_imported` · `license_rejected` · `license_expired` ·
-`license_mismatch` · `trial_started` · `trial_expired` ·
-`clock_tampering_detected`. Nunca contienen secretos (`redact()` del logger +
-sin firmas/claves). Las transiciones se registran una sola vez (ancla
-`lastLoggedStatus`).
+- `LicenseState` (fila "main"): `token` (VLBA2 normalizado) +
+  `payloadJson` + `activatedAt/By`. El token se **revalida** (firma +
+  binding) en cada evaluación.
+- `LicenseHistory`: una fila por activación (licenseId, cliente, plan,
+  durationDays, fechas, binding, `current`).
+- Migración `20260912000000_license_v2_token` (recreación — en v1.2.1 se
+  rotó la clave con **cero licencias emitidas**, no hay datos que migrar).
+- Trial: anclas HMAC fuera de la DB (sin cambios respecto a v1).
 
-## 10. Backup / restore (sección 20)
+## Features
 
-- `LicenseState` y `LicenseHistory` forman parte de los backups verificados
-  (`TRACKED_TABLES` de `src/lib/backup.ts`).
-- **El binding se recalcula SIEMPRE contra el hardware/disco actual**: restaurar
-  la DB de otra instalación produce `MISMATCH` (no una licencia clonada).
-- El **trial vive en anclas fuera de la DB** → un restore de una DB vieja no
-  resetea el trial.
-- Tras `bun scripts/restore.ts --file … --confirm` se recomienda reiniciar la
-  app; la licencia se revalida automáticamente en la siguiente evaluación.
+Las features comerciales se resuelven **siempre en el backend**
+(`requireLicenseFeature` → 403). La licencia firma el mapa `features`;
+durante trial/limitado solo lo básico. La UI muestra candados, pero la
+autoridad es el servidor: ni localStorage, ni query params, ni estado de
+React desbloquean nada.
 
-## 11. Entorno
+## Claves
 
-| Variable | Default | Nota |
+| Clave | Vive en | Uso |
 |---|---|---|
-| `VIEWLBA_LICENSE_PUBLIC_KEY` | clave de producción incrustada | Solo para tests/rotación. **NUNCA una clave privada.** |
-| `LICENSE_GRACE_HOURS` | `0` (off) | Ventana de gracia tras vencimiento |
-| `DATA_DIR` | `<cwd>/data` | Ubicación de la ancla de trial nº 1 |
-| `VIEWLBA_TEST_DEVICE_FINGERPRINT` / `VIEWLBA_TEST_DISK_ID_HASH` / `VIEWLBA_TEST_INSTALL_PATH` | — | **Overrides de test: SOLO con `NODE_ENV != production`.** |
+| Ed25519 **privada** | SOLO app Android del admin (+ backup .vlbak cifrado) | Firmar tokens VLBA2 |
+| Ed25519 **pública** | Servidor (`public-key.ts` + env override) | Verificar tokens |
+| X25519 **privada** | SOLO app Android del admin (+ backup) | Abrir códigos VLREQ2 |
+| X25519 **pública** | Servidor (`public-key.ts` + env override) | Sellar códigos VLREQ2 |
 
-## 12. Tests
+Rotación: generar claves nuevas en la app (Ajustes), configurar
+`VIEWLBA_LICENSE_PUBLIC_KEY` / `VIEWLBA_REQUEST_PUBLIC_KEY` en el servidor
+(o actualizar `public-key.ts`) y reiniciar. Ver `docs/LICENSE-SECURITY.md`.
 
-- **Unitarios** (`tests/licensing/`): canonicalización, firma/verificación,
-  matriz de seguridad A–L (byte modificado, cliente/expiry/installationId/diskId
-  cambiados, otra clave, expiración), ZIP (roundtrip + CRC + DEFLATE + unzip del
-  SO), fingerprint/disk, trial (7 días, día 8, rollback, borrado de anclas,
-  reinstalación superficial, anclas ajenas, edición manual), features,
-  importación (rechazos/renovación/downgrade), máquina de estados
-  (trial→active→expired→mismatch), restore a otro disco.
-- **Integración** (`tests/integration/license-api.test.ts`): servidor real
-  aislado (puerto 3300): watermark público, gating 403, identidad 401/200,
-  importación válida/manipulada/mismatch, renovación, auditoría sin secretos.
-- **E2E** (`e2e/license.spec.ts`): flujo completo del administrador (sección 34)
-  contra el stack real, incluida la subida del ZIP por la UI.
+## Pruebas
+
+- `tests/licensing/` (10 suites, 178 tests): códec, criptografía, canonical,
+  solicitud (válida/modificada/expirada/replay/WhatsApp), token
+  (válido/modificado/firma/clave/binding/fechas/vacío/truncado/excesivo/
+  versión futura), activación (mensual/anual/custom, idempotente,
+  duplicado, downgrade, renovación, DB corrupta, rollback), máquina de
+  estados.
+- `tests/integration/license-api.test.ts` (20 tests) contra servidor real.
+- `e2e/license.spec.ts` — flujo §25 completo en UI (copia código → pega
+  token → LICENCIA ACTIVA).
+- Android (JVM, 57 tests): códec/políticas/backup + **vectores dorados**
+  que garantizan compatibilidad byte a byte TS↔Kotlin.

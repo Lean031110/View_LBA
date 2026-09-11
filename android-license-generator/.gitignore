@@ -1,0 +1,27 @@
+# Gradle
+.gradle/
+build/
+app/build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Configuración LOCAL (SDK path, keystore) — NUNCA commitear
+local.properties
+*.jks
+*.keystore
+*.apk
+*.aab
+*.vlbak
+
+# Firma por variables de entorno (CI) — sin archivos locales
+release-keystore.properties
+
+# Reportes
+app/build/reports/
+captures/
+.externalNativeBuild/
+.cxx/

@@ -3,17 +3,17 @@
  *
  * ARQUITECTURA DE AUTORIDAD:
  *  · Licencia comercial → DB SQLite (Prisma: LicenseState + LicenseHistory).
- *    Se revalida contra el hardware/disco ACTUAL en CADA evaluación → un
- *    restore/clone de DB en otra máquina da MISMATCH (sección 20).
+ *    Se guarda el token VLBA2 original + el payload decodificado; el token
+ *    se REVALIDA (firma + binding contra hardware/disco ACTUAL) en CADA
+ *    evaluación → un restore/clone de DB en otra máquina da MISMATCH.
  *  · Trial → ANCLAS de archivo FUERA de la DB (2 ubicaciones):
  *      1. <DATA_DIR>/licensing/state.json   (junto a la instalación)
  *      2. ~/.viewlba-license.json           (home del usuario, sobrevive a
  *         reinstalaciones superficiales de la app)
  *    Fusión: earliest trialStartAt / max lastSeenAt / flags sticky →
- *    borrar UNA ancla NO reinicia el trial (sección 11).
+ *    borrar UNA ancla NO reinicia el trial.
  *  · Cada ancla lleva HMAC-SHA256(deviceIdHash + AUTH_SECRET): la edición
- *    casual del JSON se detecta (integrityWarnings) — NO es un DRM militar,
- *    es resistencia a manipulación casual (documentado en LICENSE-SECURITY).
+ *    casual del JSON se detecta (integrityWarnings).
  *
  * Este módulo NO importa Prisma directamente (import dinámico) para que los
  * tests unitarios puros no arranquen la DB.
@@ -292,9 +292,10 @@ export function refreshTrialState(deviceIdHash: string, opts: RefreshTrialOption
 
 interface PrismaLicenseStateRow {
   id: string
-  licenseJson: string | null
-  importedAt: Date | null
-  importedBy: string | null
+  token: string | null
+  payloadJson: string | null
+  activatedAt: Date | null
+  activatedBy: string | null
 }
 
 interface PrismaLicenseHistoryRow {
@@ -302,12 +303,14 @@ interface PrismaLicenseHistoryRow {
   licenseId: string
   customerName: string
   plan: string
+  durationDays: number
   issuedAt: Date
   startsAt: Date
   expiresAt: Date
-  deviceId: string
+  installationId: string
   diskId: string
-  importedAt: Date
+  activatedAt: Date
+  activatedBy: string | null
   current: boolean
 }
 
@@ -321,21 +324,27 @@ export class PrismaLicenseStore implements LicenseStore {
   async getLicenseRecord(): Promise<LicenseRecord | null> {
     const db = await getPrisma()
     const row = (await db.licenseState.findUnique({ where: { id: "main" } })) as PrismaLicenseStateRow | null
-    if (!row?.licenseJson) return null
+    if (!row?.token || !row?.payloadJson) return null
     try {
-      const license = JSON.parse(row.licenseJson)
-      return { license, importedAt: (row.importedAt ?? new Date()).toISOString(), importedBy: row.importedBy }
+      const payload = JSON.parse(row.payloadJson)
+      return { token: row.token, payload, activatedAt: (row.activatedAt ?? new Date()).toISOString(), activatedBy: row.activatedBy }
     } catch {
-      return null // JSON corrupto en DB → tratar como sin licencia (se re-importa)
+      return null // JSON corrupto en DB → tratar como sin licencia (se re-activa)
     }
   }
 
   async saveLicenseRecord(record: LicenseRecord): Promise<void> {
     const db = await getPrisma()
+    const data = {
+      token: record.token,
+      payloadJson: JSON.stringify(record.payload),
+      activatedAt: new Date(record.activatedAt),
+      activatedBy: record.activatedBy,
+    }
     await db.licenseState.upsert({
       where: { id: "main" },
-      update: { licenseJson: JSON.stringify(record.license), importedAt: new Date(record.importedAt), importedBy: record.importedBy },
-      create: { id: "main", licenseJson: JSON.stringify(record.license), importedAt: new Date(record.importedAt), importedBy: record.importedBy },
+      update: data,
+      create: { id: "main", ...data },
     })
   }
 
@@ -348,11 +357,14 @@ export class PrismaLicenseStore implements LicenseStore {
         licenseId: entry.licenseId,
         customerName: entry.customerName,
         plan: entry.plan,
+        durationDays: entry.durationDays,
         issuedAt: new Date(entry.issuedAt),
         startsAt: new Date(entry.startsAt),
         expiresAt: new Date(entry.expiresAt),
-        deviceId: entry.deviceId,
+        installationId: entry.installationId,
         diskId: entry.diskId,
+        activatedAt: new Date(entry.activatedAt),
+        activatedBy: entry.activatedBy,
         current: entry.current,
       },
     })
@@ -361,21 +373,43 @@ export class PrismaLicenseStore implements LicenseStore {
   async listHistory(): Promise<LicenseHistoryEntry[]> {
     const db = await getPrisma()
     const rows = (await db.licenseHistory.findMany({
-      orderBy: { importedAt: "desc" },
+      orderBy: { activatedAt: "desc" },
       take: 50,
     })) as PrismaLicenseHistoryRow[]
     return rows.map((r) => ({
       licenseId: r.licenseId,
       customerName: r.customerName,
       plan: r.plan as LicenseHistoryEntry["plan"],
-      issuedAt: r.issuedAt.toISOString(),
-      startsAt: r.startsAt.toISOString(),
-      expiresAt: r.expiresAt.toISOString(),
-      deviceId: r.deviceId,
+      durationDays: r.durationDays,
+      issuedAt: r.issuedAt.getTime(),
+      startsAt: r.startsAt.getTime(),
+      expiresAt: r.expiresAt.getTime(),
+      installationId: r.installationId,
       diskId: r.diskId,
-      importedAt: r.importedAt.toISOString(),
+      activatedAt: r.activatedAt.getTime(),
+      activatedBy: r.activatedBy,
       current: r.current,
     }))
+  }
+
+  async findHistoryByLicenseId(licenseId: string): Promise<LicenseHistoryEntry | null> {
+    const db = await getPrisma()
+    const row = (await db.licenseHistory.findFirst({ where: { licenseId } })) as PrismaLicenseHistoryRow | null
+    if (!row) return null
+    return {
+      licenseId: row.licenseId,
+      customerName: row.customerName,
+      plan: row.plan as LicenseHistoryEntry["plan"],
+      durationDays: row.durationDays,
+      issuedAt: row.issuedAt.getTime(),
+      startsAt: row.startsAt.getTime(),
+      expiresAt: row.expiresAt.getTime(),
+      installationId: row.installationId,
+      diskId: row.diskId,
+      activatedAt: row.activatedAt.getTime(),
+      activatedBy: row.activatedBy,
+      current: row.current,
+    }
   }
 }
 
@@ -396,5 +430,8 @@ export class MemoryLicenseStore implements LicenseStore {
   }
   async listHistory(): Promise<LicenseHistoryEntry[]> {
     return this.history
+  }
+  async findHistoryByLicenseId(licenseId: string): Promise<LicenseHistoryEntry | null> {
+    return this.history.find((h) => h.licenseId === licenseId) ?? null
   }
 }

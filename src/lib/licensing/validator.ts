@@ -1,26 +1,38 @@
 /**
- * ViewLBA — Validador de licencias (núcleo de seguridad del producto).
+ * ViewLBA — Validador del token VLBA2 (núcleo de seguridad del servidor).
  *
- * ORDEN CRÍTICO de validación:
- *   1. Parse JSON estructural mínimo (objeto con "signature").
- *   2. VERIFICACIÓN DE FIRMA Ed25519 sobre la forma canónica del payload
- *      EXACTO tal como vino (sin coerción previa — cualquier modificación
- *      de 1 byte rompe la firma).
+ * ORDEN CRÍTICO de validación (idéntico al del flujo de activación):
+ *   1. Decodificación estructural de la trama (prefijo/charset/longitud/
+ *      magic/versión/CRC32) — ANTES de cualquier criptografía.
+ *   2. VERIFICACIÓN DE FIRMA Ed25519 sobre los bytes EXACTOS del payload
+ *      (sin coerción previa — modificar 1 byte rompe la firma).
  *   3. Validación semántica (zod) SOLO después de firma válida.
- *   4. Fechas (start <= now < expiry, con gracia opcional).
- *   5. Binding: deviceId (Installation ID) + diskId vs hardware ACTUAL.
- *   6. installPath: SOLO advertencia (binding opcional, no estricto).
+ *   4. Producto (ViewLBA-Server) y coherencia de fechas/duración.
+ *   5. Binding: installationId + diskId contra el hardware ACTUAL.
+ *   6. Vigencia con el reloj efectivo anti-rollback.
  *
  * Estados de salida: active | grace | expired | invalid | mismatch.
- * Solo "valid=true" si TODO pasa (sección 15: "Solo guardar si TODO pasa").
+ * Solo "valid=true" si TODO pasa.
  */
 import { z } from "zod"
-import { verifyLicenseSignature, resolveVerifierPublicKey } from "./crypto"
-import { normalizeInstallPath, DISK_ID_RE } from "./disk-binding"
+import { resolveVerifierPublicKey, verifyTokenSignature } from "./crypto"
 import { INSTALLATION_ID_RE } from "./fingerprint"
-import { LICENSE_PRODUCT, LICENSE_SCHEMA_VERSION, type InstallationIdentity, type LicenseValidationResult } from "./types"
+import { DISK_ID_RE } from "./disk-binding"
+import { decodeLicenseToken } from "./token"
+import {
+  LICENSE_PRODUCT,
+  LICENSE_SCHEMA_VERSION,
+  MAX_CUSTOM_DURATION_DAYS,
+  PLAN_DURATION_DAYS,
+  TokenDecodeError,
+  type ActivationRejectCode,
+  type InstallationIdentity,
+  type LicensePlan,
+  type LicenseTokenPayload,
+  type LicenseValidationResult,
+} from "./types"
 
-const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/
+const DAY_MS = 24 * 60 * 60 * 1000
 
 /** Ventana de gracia tras el vencimiento (horas). Default 0 = deshabilitada. */
 export function licenseGraceHours(): number {
@@ -33,157 +45,158 @@ export function licenseGraceHours(): number {
 // ---------------------------------------------------------------------------
 
 const licenseSemanticSchema = z.object({
-  schemaVersion: z.literal(LICENSE_SCHEMA_VERSION),
+  v: z.literal(LICENSE_SCHEMA_VERSION),
   licenseId: z.string().regex(/^VLBA-[0-9a-fA-F]{12}$/),
   customerName: z.string().min(1).max(200),
-  plan: z.enum(["monthly", "annual"]),
-  issuedAt: z.string().regex(ISO_DATE_RE),
-  startsAt: z.string().regex(ISO_DATE_RE),
-  expiresAt: z.string().regex(ISO_DATE_RE),
-  deviceId: z.string().regex(INSTALLATION_ID_RE),
-  diskId: z.string().regex(DISK_ID_RE),
-  installPath: z.string().min(1).max(500),
+  plan: z.enum(["monthly", "annual", "custom"]),
+  durationDays: z.number().int().min(1).max(MAX_CUSTOM_DURATION_DAYS),
   product: z.literal(LICENSE_PRODUCT),
-  features: z.record(z.string(), z.boolean()),
-  signature: z.string().min(80),
+  issuedAt: z.number().int().positive(),
+  startsAt: z.number().int().positive(),
+  expiresAt: z.number().int().positive(),
+  installationId: z.string().regex(INSTALLATION_ID_RE),
+  diskId: z.string().regex(DISK_ID_RE),
+  features: z.record(z.string().max(64), z.boolean()),
+  nonce: z.string().regex(/^[0-9a-f]{16,64}$/),
 })
 
-export interface ValidateLicenseOptions {
+export interface ValidateTokenOptions {
   /** Reloj efectivo (ms epoch) — ya ajustado por anti-rollback. */
   now?: number
   /** Clave pública alternativa (tests / rotación). Default: resuelta. */
   publicKey?: string
 }
 
-/** ¿El JSON parece una licencia firmada (estructura mínima pre-firma)? */
-function looksLikeSignedLicense(obj: unknown): obj is Record<string, unknown> {
-  return typeof obj === "object" && obj !== null && !Array.isArray(obj) && "signature" in obj && "deviceId" in obj && "expiresAt" in obj
+/** Mapea un TokenDecodeError al código de rechazo de activación. */
+export function decodeErrorToRejectCode(e: TokenDecodeError): ActivationRejectCode {
+  switch (e.code) {
+    case "bad_prefix":
+      return "bad_prefix"
+    case "bad_charset":
+      return "bad_charset"
+    case "too_short":
+      return "too_short"
+    case "too_long":
+      return "too_long"
+    case "bad_frame":
+      return "bad_frame"
+    case "bad_version":
+      return "bad_version"
+    case "bad_crc":
+      return "bad_crc"
+    case "bad_json":
+      return "bad_json"
+  }
 }
 
 /**
- * Valida una licencia (objeto parsed de license.json) contra la identidad
- * de la instalación ACTUAL. Función PURA (sin I/O de red — 100% offline).
+ * Decodifica + verifica firma + valida esquema de un token VLBA2 pegado.
+ * @throws TokenDecodeError si la TRAMA es inválida (estructural).
+ * @returns resultado con payload verificado; valid=false si firma/esquema/
+ *          producto/fechas fallan (motivos legibles es-ES).
  */
-export function validateLicense(licenseJson: unknown, identity: InstallationIdentity, opts: ValidateLicenseOptions = {}): LicenseValidationResult {
+export function verifyLicenseToken(token: string, opts: ValidateTokenOptions = {}): LicenseValidationResult & { payloadBytes?: Uint8Array } {
   const now = opts.now ?? Date.now()
   const publicKey = opts.publicKey ?? resolveVerifierPublicKey()
-  const reasons: string[] = []
 
-  // ---------- 1. Estructura mínima ----------
-  if (!looksLikeSignedLicense(licenseJson)) {
-    return { valid: false, status: "invalid", reasons: ["El archivo no tiene la estructura de una licencia ViewLBA"] }
-  }
+  // ---------- 1. Trama estructural (lanza TokenDecodeError) ----------
+  const decoded = decodeLicenseToken(token)
 
-  const license = licenseJson as Record<string, unknown>
-
-  // ---------- 2. FIRMA sobre el payload EXACTO (sin coerción) ----------
-  let signatureOk = false
-  try {
-    signatureOk = verifyLicenseSignature(license as never, publicKey)
-  } catch {
-    signatureOk = false
-  }
+  // ---------- 2. FIRMA Ed25519 sobre los bytes EXACTOS ----------
+  const signatureOk = verifyTokenSignature(decoded.payloadBytes, decoded.signature, publicKey)
   if (!signatureOk) {
-    return {
-      valid: false,
-      status: "invalid",
-      reasons: ["Firma digital inválida: la licencia fue modificada o no fue emitida por ViewLBA"],
-    }
+    return { valid: false, status: "invalid", reasons: ["El token no fue emitido por ViewLBA o fue modificado"] }
   }
 
   // ---------- 3. Semántica (la firma ya garantó integridad) ----------
-  const semantic = licenseSemanticSchema.safeParse(license)
+  const semantic = licenseSemanticSchema.safeParse(decoded.payload)
   if (!semantic.success) {
-    const first = semantic.error.issues[0]
-    const field = first?.path?.join(".") ?? "(raíz)"
-    return {
-      valid: false,
-      status: "invalid",
-      reasons: [`Campo inválido: ${field} — ${first?.message ?? "esquema de licencia incorrecto"}`],
-    }
+    return { valid: false, status: "invalid", reasons: ["El token no cumple el esquema de licencia ViewLBA (versión o campos inválidos)"] }
   }
-  const data = semantic.data
+  const data = semantic.data as LicenseTokenPayload
 
-  // ---------- 4. Coherencia de fechas ----------
-  const issuedAt = Date.parse(data.issuedAt)
-  const startsAt = Date.parse(data.startsAt)
-  const expiresAt = Date.parse(data.expiresAt)
-  if (!Number.isFinite(startsAt) || !Number.isFinite(expiresAt) || !Number.isFinite(issuedAt)) {
-    return { valid: false, status: "invalid", reasons: ["Fechas de licencia ilegibles"] }
-  }
-  if (startsAt >= expiresAt) {
+  // ---------- 4. Producto + coherencia de fechas/duración ----------
+  if (data.startsAt >= data.expiresAt) {
     return { valid: false, status: "invalid", reasons: ["Fechas incoherentes: el inicio es posterior al vencimiento"] }
   }
+  // La duración firmada debe coincidir EXACTAMENTE con las fechas firmadas
+  // (el generador emite expiresAt = startsAt + durationDays·día exacto).
+  if (data.expiresAt !== data.startsAt + data.durationDays * DAY_MS) {
+    return { valid: false, status: "invalid", reasons: ["La duración firmada no coincide con las fechas del token"] }
+  }
+  // Los planes estándar deben usar su duración exacta (el "custom" la decide
+  // el administrador dentro de los límites).
+  if (data.plan !== "custom" && data.durationDays !== PLAN_DURATION_DAYS[data.plan as Exclude<LicensePlan, "custom">]) {
+    return { valid: false, status: "invalid", reasons: ["La duración no corresponde al plan firmado"] }
+  }
+  // issuedAt no puede estar en el futuro (tolerancia 24h de desviación de reloj)
+  if (data.issuedAt > now + DAY_MS) {
+    return { valid: false, status: "invalid", reasons: ["El token tiene una fecha de emisión futura"] }
+  }
+
+  return { valid: true, status: "active", reasons: [], payload: data, payloadBytes: decoded.payloadBytes }
+}
+
+/**
+ * Validación COMPLETA contra la instalación actual (binding + vigencia).
+ * Se usa tanto en la activación como en la re-evaluación continua.
+ */
+export function validateLicenseToken(
+  token: string,
+  identity: InstallationIdentity,
+  opts: ValidateTokenOptions = {}
+): LicenseValidationResult {
+  const now = opts.now ?? Date.now()
+  const publicKey = opts.publicKey ?? resolveVerifierPublicKey()
+
+  const decoded = decodeLicenseToken(token)
+  const verified = verifyLicenseToken(token, { now, publicKey })
+  if (!verified.valid) return verified
+  const data = verified.payload!
 
   // ---------- 5. Binding contra el hardware ACTUAL ----------
-  const detail: LicenseValidationResult["detail"] = {
-    expectedInstallationId: identity.installationId,
-    foundInstallationId: data.deviceId,
-    expectedDiskId: identity.diskId,
-    foundDiskId: data.diskId,
-  }
-  const licenseMeta = {
-    licenseId: data.licenseId,
-    customerName: data.customerName,
-    plan: data.plan,
-    issuedAt: data.issuedAt,
-    startsAt: data.startsAt,
-    expiresAt: data.expiresAt,
-    deviceId: data.deviceId,
-    diskId: data.diskId,
-    installPath: data.installPath,
-    features: data.features,
-  }
-  const deviceMatch = data.deviceId.toUpperCase() === identity.installationId.toUpperCase()
+  const deviceMatch = data.installationId.toUpperCase() === identity.installationId.toUpperCase()
   const diskMatch = data.diskId.toUpperCase() === identity.diskId.toUpperCase()
   if (!deviceMatch || !diskMatch) {
-    const mismatchReasons: string[] = []
-    if (!deviceMatch) mismatchReasons.push("La licencia está vinculada a otra instalación (Installation ID no coincide)")
-    if (!diskMatch) mismatchReasons.push("La licencia está vinculada a otro disco (Disk ID no coincide)")
-    return { valid: false, status: "mismatch", reasons: mismatchReasons, detail, license: licenseMeta }
+    const reasons: string[] = []
+    if (!deviceMatch) reasons.push("La licencia está vinculada a otro equipo")
+    if (!diskMatch) reasons.push("La licencia está vinculada a otro disco")
+    return { valid: false, status: "mismatch", reasons, payload: data }
   }
 
-  // ---------- 6. installPath: SOLO advertencia (binding opcional) ----------
-  const licensePathNorm = normalizeInstallPath(data.installPath)
-  if (licensePathNorm !== identity.installPathNormalized) {
-    detail.installPathWarning = `La licencia se emitió para la ruta "${data.installPath}" pero la instalación actual está en "${identity.installPath}" (informativo; el binding real es equipo+disco)`
-  }
-
-  // ---------- 7. Vigencia (con reloj efectivo anti-rollback) ----------
+  // ---------- 6. Vigencia (con reloj efectivo anti-rollback) ----------
   const graceMs = licenseGraceHours() * 60 * 60 * 1000
-  let status: LicenseValidationResult["status"]
-  if (now < startsAt) {
+  if (now < data.startsAt) {
     return {
       valid: false,
       status: "invalid",
-      reasons: [`La licencia aún no está vigente (comienza el ${data.startsAt})`],
-      detail,
-      license: licenseMeta,
+      reasons: [`La licencia aún no está vigente (comienza el ${formatDay(data.startsAt)})`],
+      payload: data,
     }
   }
-  if (now >= expiresAt) {
-    status = now < expiresAt + graceMs && graceMs > 0 ? "grace" : "expired"
+  if (now >= data.expiresAt) {
+    const status = now < data.expiresAt + graceMs && graceMs > 0 ? "grace" : "expired"
     return {
-      valid: false,
+      valid: status === "grace",
       status,
-      reasons: [status === "grace" ? `Licencia vencida (en período de gracia hasta ${new Date(expiresAt + graceMs).toISOString()})` : "Licencia vencida"],
-      detail,
-      license: licenseMeta,
+      reasons: [status === "grace" ? `Licencia vencida (en período de gracia hasta ${formatDay(data.expiresAt + graceMs)})` : "Licencia vencida"],
+      payload: data,
     }
   }
-  status = "active"
 
-  return {
-    valid: true,
-    status,
-    reasons: [],
-    detail,
-    license: licenseMeta,
-  }
+  return { valid: true, status: "active", reasons: [], payload: data }
 }
 
 /** Días restantes de una licencia activa (techo 0, con reloj efectivo). */
-export function licenseDaysLeft(expiresAtIso: string, now = Date.now()): number {
-  const ms = Date.parse(expiresAtIso) - now
-  return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)))
+export function licenseDaysLeft(expiresAtMs: number, now = Date.now()): number {
+  const ms = expiresAtMs - now
+  return Math.max(0, Math.ceil(ms / DAY_MS))
+}
+
+/** Fecha "DD/MM/YYYY" legible (para mensajes humanos). */
+export function formatDay(ms: number): string {
+  const d = new Date(ms)
+  const dd = String(d.getUTCDate()).padStart(2, "0")
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0")
+  return `${dd}/${mm}/${d.getUTCFullYear()}`
 }

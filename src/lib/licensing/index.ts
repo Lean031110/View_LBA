@@ -1,40 +1,56 @@
 /**
- * ViewLBA — Fachada del sistema de licenciamiento (API interna del servidor).
+ * ViewLBA — Fachada del sistema de licenciamiento v2 (API interna).
  *
- * Funciones públicas (sección 9 del requisito):
- *   getInstallationIdentity() · getCurrentLicense() · validateLicense()
- *   getLicenseStatus() · getTrialStatus() · getFeatureAvailability()
- *   importLicenseZip()
+ * Funciones públicas:
+ *   getInstallationIdentity() · getLicenseSystemState() · getLicenseStatus()
+ *   getTrialStatus() · getCurrentLicense() · getFeatureAvailability()
+ *   getLicenseHistory() · buildLicenseRequestCode() · activateLicenseToken()
+ *
+ * FLUJO (cero ZIP, cero JSON visible, cero Installation/Disk ID en la UI):
+ *   cliente copia código  →  admin genera token en Android  →  cliente pega
+ *   token  →  activateLicenseToken() valida TODO  →  LICENCIA ACTIVA.
  *
  * TODO es 100% OFFLINE: ninguna de estas funciones hace llamadas de red.
  * La TV consulta el estado vía GET /api/license (LAN) — nunca valida sola.
  */
 import { analyzeTrial, effectiveTime } from "./trial"
-import { getDeviceFingerprint, deriveInstallationId, INSTALLATION_ID_RE } from "./fingerprint"
-import { deriveDiskId, getDiskIdHashFor, diskLabelOf, normalizeInstallPath, resolveInstallPath, DISK_ID_RE } from "./disk-binding"
-import { validateLicense, licenseDaysLeft } from "./validator"
+import { getDeviceFingerprint, deriveInstallationId } from "./fingerprint"
+import { deriveDiskId, getDiskIdHashFor, diskLabelOf, normalizeInstallPath, resolveInstallPath } from "./disk-binding"
+import { validateLicenseToken, verifyLicenseToken, licenseDaysLeft, formatDay, decodeErrorToRejectCode } from "./validator"
 import { resolveFeatures } from "./features"
-import { readZip, findZipEntry } from "./zip"
-import { refreshTrialState, readTrialAnchors, PrismaLicenseStore, MemoryLicenseStore } from "./storage"
+import { refreshTrialState, readTrialAnchors, writeTrialAnchors, PrismaLicenseStore, MemoryLicenseStore } from "./storage"
 import { logLicenseEvent } from "./audit"
+import { buildRequestCode, type BuildRequestCodeInput } from "./request-code"
+import { normalizeLicenseToken } from "./token"
+import { TokenDecodeError } from "./types"
 import {
   CONTACT_PHONE,
+  type ActivationResult,
   type FeatureAvailability,
-  type ImportResult,
   type InstallationIdentity,
   type LicenseHistoryEntry,
   type LicenseRecord,
   type LicenseStatus,
   type LicenseStore,
+  type LicenseSummary,
+  type LicenseTokenPayload,
   type LicenseValidationResult,
-  type MergedTrialState,
-  type SignedLicense,
   type TrialResult,
 } from "./types"
 
 export * from "./types"
-export { INSTALLATION_ID_RE, DISK_ID_RE, deriveInstallationId, deriveDiskId }
+export { INSTALLATION_ID_RE, deriveInstallationId } from "./fingerprint"
+export { DISK_ID_RE, deriveDiskId } from "./disk-binding"
 export { resolveFeatures, FEATURE_KEYS, FEATURE_LABELS } from "./features"
+export {
+  buildRequestCode,
+  openRequestCode,
+  normalizeRequestCode,
+  REQUEST_CODE_MAX_AGE_DAYS,
+  REQUEST_CUSTOMER_NAME_MIN,
+  REQUEST_CUSTOMER_NAME_MAX,
+} from "./request-code"
+export { buildLicenseToken, decodeLicenseToken, normalizeLicenseToken } from "./token"
 
 // ---------------------------------------------------------------------------
 // Época de estado (invalidación del cache público de /api/license)
@@ -42,7 +58,7 @@ export { resolveFeatures, FEATURE_KEYS, FEATURE_LABELS } from "./features"
 
 let stateEpoch = 0
 
-/** Invalida los caches derivados del estado (lo llama importLicenseZip). */
+/** Invalida los caches derivados del estado (lo llama activateLicenseToken). */
 export function bumpLicenseStateEpoch(): void {
   stateEpoch += 1
 }
@@ -53,12 +69,12 @@ export function licenseStateEpoch(): number {
 }
 
 // ---------------------------------------------------------------------------
-// Identidad de instalación
+// Identidad de instalación (interna — JAMÁS expuesta al cliente)
 // ---------------------------------------------------------------------------
 
 let identityCache: { key: string; identity: InstallationIdentity } | null = null
 
-/** Identidad ACTUAL de la instalación (fingerprint + disco + ruta). */
+/** Identidad ACTUAL de la instalación (fingerprint + disco). */
 export async function getInstallationIdentity(): Promise<InstallationIdentity> {
   const installPath = resolveInstallPath()
   const cacheKey = `${installPath}|${process.env.VIEWLBA_TEST_DEVICE_FINGERPRINT ?? ""}|${process.env.VIEWLBA_TEST_DISK_ID_HASH ?? ""}`
@@ -76,7 +92,6 @@ export async function getInstallationIdentity(): Promise<InstallationIdentity> {
     diskLabel: diskLabelOf(binding),
     diskBindingMethod: binding.method,
     installPath,
-    installPathNormalized: normalizeInstallPath(installPath),
   }
   identityCache = { key: cacheKey, identity }
   return identity
@@ -99,20 +114,9 @@ export interface LicenseSystemState {
   /** Reloj efectivo (ms epoch, anti-rollback). */
   effectiveNow: number
   clockTampered: boolean
-  /** Metadatos de la licencia activa (null si no hay/válida). */
-  license: {
-    licenseId: string
-    customerName: string
-    plan: "monthly" | "annual"
-    issuedAt: string
-    startsAt: string
-    expiresAt: string
-    deviceId: string
-    diskId: string
-    installPath: string
-    features: Record<string, boolean>
-  } | null
-  /** Validación completa (solo admin). */
+  /** Payload de la licencia guardada (null si no hay/válida). */
+  license: LicenseTokenPayload | null
+  /** Validación completa (solo admin interno). */
   validation: LicenseValidationResult | null
   /** Días restantes (licencia o trial). */
   daysLeft: number
@@ -126,6 +130,8 @@ export interface GetLicenseStateOptions {
   identity?: InstallationIdentity
   /** Desactiva la auditoría de transiciones (tests puros). */
   silent?: boolean
+  /** Clave pública alternativa (tests). */
+  publicKey?: string
 }
 
 async function resolveStore(store?: LicenseStore): Promise<LicenseStore> {
@@ -135,6 +141,7 @@ async function resolveStore(store?: LicenseStore): Promise<LicenseStore> {
 /**
  * Estado COMPLETO del sistema de licencias (evaluación autoritativa).
  * El backend es la autoridad local: la UI/TV solo consumen el resultado.
+ * El token guardado se REVALIDA (firma + binding) en cada evaluación.
  */
 export async function getLicenseSystemState(opts: GetLicenseStateOptions = {}): Promise<LicenseSystemState> {
   const now = opts.now ?? Date.now()
@@ -158,32 +165,34 @@ export async function getLicenseSystemState(opts: GetLicenseStateOptions = {}): 
   const merged = refresh.merged
   const effectiveNow = effectiveTime(now, merged.lastSeenAt, merged.clockTampered)
 
-  // 3) Validación de la licencia contra el hardware ACTUAL (siempre se
+  // 3) Validación del token guardado contra el hardware ACTUAL (siempre se
   //    recalcula → un restore/clone en otro disco da MISMATCH)
   let validation: LicenseValidationResult | null = null
   if (record) {
-    validation = validateLicense(record.license, identity, { now: effectiveNow })
+    try {
+      validation = validateLicenseToken(record.token, identity, { now: effectiveNow, publicKey: opts.publicKey })
+    } catch {
+      // Token corrupto en DB (decodificación imposible) → inválido
+      validation = { valid: false, status: "invalid", reasons: ["La licencia guardada no se puede leer (datos corruptos)"] }
+    }
   }
 
   // 4) Resolución de estado global
   let status: LicenseStatus
   let reasons: string[] = []
-  let licenseMeta: LicenseSystemState["license"] = null
+  let licenseMeta: LicenseTokenPayload | null = null
   let daysLeft = 0
 
   if (validation?.valid) {
     status = validation.status === "grace" ? "grace" : "active"
-    licenseMeta = validation.license ?? null
+    licenseMeta = validation.payload ?? null
     daysLeft = licenseDaysLeft(licenseMeta!.expiresAt, effectiveNow)
   } else if (validation) {
     // invalid | mismatch | expired | grace (invalid por fechas)
     status = validation.status
     reasons = validation.reasons
-    licenseMeta = validation.license ?? null
+    licenseMeta = validation.payload ?? null
     daysLeft = 0
-    if (validation.status === "expired" && validation.license) {
-      daysLeft = 0
-    }
   } else {
     // Sin licencia comercial → trial (agotado = unlicensed)
     const trial = refresh.analysis
@@ -203,7 +212,6 @@ export async function getLicenseSystemState(opts: GetLicenseStateOptions = {}): 
     const transition = events.find((e) => e.status === status)
     if (transition && merged.lastLoggedStatus !== status) {
       // persistir el estado ya registrado para no repetir el evento
-      const { writeTrialAnchors } = await import("./storage")
       writeTrialAnchors(identity.deviceIdHash, {
         trialStartAt: merged.trialStartAt,
         lastSeenAt: merged.lastSeenAt,
@@ -259,18 +267,39 @@ export async function getFeatureAvailability(opts: GetLicenseStateOptions = {}):
   return (await getLicenseSystemState(opts)).features
 }
 
-/** Historial de licencias importadas (DB LicenseHistory). */
+/** Historial de licencias activadas (DB LicenseHistory). */
 export async function getLicenseHistory(opts: { store?: LicenseStore } = {}): Promise<LicenseHistoryEntry[]> {
   const store = await resolveStore(opts.store)
   return store.listHistory().catch(() => [])
 }
 
 // ---------------------------------------------------------------------------
-// Importación de licencia (ZIP → validación TOTAL → guardado)
+// Código de solicitud (POST /api/license/request-code)
 // ---------------------------------------------------------------------------
 
-export interface ImportLicenseOptions {
-  /** Actor admin que importa (auditoría). */
+/**
+ * Construye el código de solicitud VLREQ2 del ESTE equipo con el nombre del
+ * negocio indicado. La identidad (installationId/diskId) se genera aquí —
+ * el cliente NUNCA la copia a mano ni la ve.
+ */
+export async function buildLicenseRequestCode(input: Omit<BuildRequestCodeInput, "installationId" | "diskId"> & { identity?: InstallationIdentity }): Promise<string> {
+  const identity = input.identity ?? (await getInstallationIdentity())
+  return buildRequestCode({
+    customerName: input.customerName,
+    installationId: identity.installationId,
+    diskId: identity.diskId,
+    now: input.now,
+    requestPublicKey: input.requestPublicKey,
+    nonce: input.nonce,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Activación de licencia (POST /api/license/activate)
+// ---------------------------------------------------------------------------
+
+export interface ActivateLicenseOptions {
+  /** Actor admin que activa (auditoría). */
   actor?: { uid: string; name: string } | null
   now?: number
   store?: LicenseStore
@@ -281,101 +310,158 @@ export interface ImportLicenseOptions {
   silent?: boolean
 }
 
+function summaryOf(payload: LicenseTokenPayload, daysLeft: number): LicenseSummary {
+  return {
+    licenseId: payload.licenseId,
+    customerName: payload.customerName,
+    plan: payload.plan,
+    durationDays: payload.durationDays,
+    issuedAt: payload.issuedAt,
+    startsAt: payload.startsAt,
+    expiresAt: payload.expiresAt,
+    daysLeft,
+    features: payload.features,
+  }
+}
+
+const PLAN_LABEL: Record<string, string> = { monthly: "Mensual", annual: "Anual", custom: "Personalizada" }
+
 /**
- * Importa una licencia desde el ZIP entregado al cliente:
- *  1. Lee el ZIP (CRC verificado) y extrae license.json.
- *  2. Valida firma, esquema, producto, fechas, Installation ID y Disk ID
- *     contra el hardware ACTUAL (sección 15: SOLO guardar si TODO pasa).
- *  3. Regla anti-downgrade: no acortar la vigencia de una licencia activa.
- *  4. Persiste licencia + historial y notifica a las pantallas (realtime).
+ * Activa una licencia desde el token VLBA2 pegado por el cliente.
+ *
+ * Pipeline (TODO debe pasar; si algo falla NO se persiste NADA):
+ *   1.  formato (prefijo/charset/longitud)
+ *   2.  trama (magic/versión/CRC32)
+ *   3.  firma Ed25519
+ *   4.  esquema (zod)
+ *   5.  producto
+ *   6.  fechas/duración
+ *   7.  binding (installationId + diskId vs hardware ACTUAL)
+ *   8.  anti-replay/duplicado (licenseId)
+ *   9.  anti-downgrade (no acortar una licencia activa)
+ *   10. guardar licencia + historial
+ *   11. auditoría
+ *   12. resumen seguro (sin datos de binding)
  */
-export async function importLicenseZip(zipBuffer: Buffer, opts: ImportLicenseOptions = {}): Promise<ImportResult> {
+export async function activateLicenseToken(token: string, opts: ActivateLicenseOptions = {}): Promise<ActivationResult> {
   const now = opts.now ?? Date.now()
   const identity = opts.identity ?? (await getInstallationIdentity())
   const store = opts.store ?? new PrismaLicenseStore()
   const actorLabel = opts.actor?.name ?? "sistema"
 
-  const reject = async (reasons: string[], metaExtra: Record<string, unknown> = {}): Promise<ImportResult> => {
+  const reject = async (code: NonNullable<ActivationResult["code"]>, reason: string, metaExtra: Record<string, unknown> = {}): Promise<ActivationResult> => {
     if (!opts.silent) {
       await logLicenseEvent("license_rejected", {
         actor: opts.actor ?? null,
-        details: reasons[0],
-        meta: { reasons, actor: actorLabel, ...metaExtra },
+        details: reason,
+        meta: { code, reason, actor: actorLabel, ...metaExtra },
       })
     }
-    return { ok: false, reasons }
+    return { ok: false, code, reason }
   }
 
-  // ---------- 1. ZIP ----------
-  let entries
+  // ---------- 0. Entrada ----------
+  if (typeof token !== "string" || token.trim().length === 0) {
+    return reject("empty_token", "Pega el token de licencia que te envió el proveedor")
+  }
+  if (token.length > 8192) {
+    return reject("too_long", "El token pegado es demasiado largo — no parece un token ViewLBA")
+  }
+
+  // ---------- 1-2. Trama estructural ----------
+  let validation: LicenseValidationResult
   try {
-    entries = readZip(zipBuffer)
+    validation = verifyLicenseToken(token, { now, publicKey: opts.publicKey })
   } catch (e) {
-    return reject([`El ZIP de la licencia es inválido o está corrupto: ${(e as Error).message}`])
-  }
-  const licenseEntry = findZipEntry(entries, "license.json")
-  if (!licenseEntry) {
-    return reject(["El ZIP no contiene license.json — usa el archivo entregado por el proveedor (ViewLBA-License-….zip)"])
-  }
-
-  let licenseJson: unknown
-  try {
-    licenseJson = JSON.parse(licenseEntry.data.toString("utf8"))
-  } catch {
-    return reject(["license.json no es un JSON válido"])
+    if (e instanceof TokenDecodeError) {
+      return reject(decodeErrorToRejectCode(e), e.message)
+    }
+    return reject("bad_frame", "El token no se puede interpretar")
   }
 
-  // ---------- 2. Validación TOTAL ----------
-  const validation = validateLicense(licenseJson, identity, { now, publicKey: opts.publicKey })
+  // ---------- 3-6. Firma / esquema / producto / fechas ----------
   if (!validation.valid) {
-    // IMPORTANTE: no persistir NADA si algo falla
-    return reject(validation.reasons, {
+    return reject("bad_signature", validation.reasons[0] ?? "El token no es válido")
+  }
+  const payload = validation.payload!
+
+  // ---------- 7. Binding contra el hardware ACTUAL ----------
+  const deviceMatch = payload.installationId.toUpperCase() === identity.installationId.toUpperCase()
+  const diskMatch = payload.diskId.toUpperCase() === identity.diskId.toUpperCase()
+  if (!deviceMatch || !diskMatch) {
+    return reject("binding_mismatch", "El token de licencia NO corresponde a este equipo — solicita uno nuevo para esta instalación", {
       expected: { installationId: identity.installationId, diskId: identity.diskId },
-      found: { installationId: validation.detail?.foundInstallationId, diskId: validation.detail?.foundDiskId },
+      found: { installationId: payload.installationId, diskId: payload.diskId },
     })
   }
-  const license = licenseJson as SignedLicense
 
-  // ---------- 3. Anti-downgrade ----------
+  // Vigencia al momento de activar (con reloj efectivo)
+  if (payload.startsAt > now) {
+    return reject("not_started", `La licencia comienza el ${formatDay(payload.startsAt)} — actívala a partir de esa fecha`)
+  }
+  if (payload.expiresAt <= now) {
+    return reject("already_expired", "La licencia está vencida — solicita una renovación")
+  }
+
+  // ---------- 8. Anti-replay / duplicado ----------
+  const normalized = normalizeLicenseToken(token)!
   const current = await store.getLicenseRecord().catch(() => null)
+
   if (current) {
-    const currentValidation = validateLicense(current.license, identity, { now, publicKey: opts.publicKey })
-    const currentActive = currentValidation.valid || currentValidation.status === "grace"
-    if (currentActive) {
-      const currentExpiry = Date.parse(current.license.expiresAt)
-      const newExpiry = Date.parse(license.expiresAt)
-      if (newExpiry < currentExpiry && current.license.licenseId !== license.licenseId) {
-        return reject([
-          "La nueva licencia vence ANTES que la actual activa (downgrade no permitido). Solicita una licencia con vigencia igual o superior.",
-        ])
+    // Re-activación idempotente del MISMO token (el cliente lo pegó dos veces)
+    if (current.token.replace(/-/g, "") === normalized) {
+      return {
+        ok: true,
+        alreadyActive: true,
+        summary: summaryOf(current.payload, licenseDaysLeft(current.payload.expiresAt, now)),
       }
+    }
+    // Mismo licenseId con token distinto → colisión, rechazar
+    if (current.payload.licenseId === payload.licenseId) {
+      return reject("duplicate_license", "Ya existe una licencia con este identificador — usa el token más reciente que te envió el proveedor")
     }
   }
 
-  // ---------- 4. Persistencia (todo pasó) ----------
-  const importedAt = new Date(now).toISOString()
-  await store.saveLicenseRecord({ license, importedAt, importedBy: actorLabel })
+  const historyHit = await store.findHistoryByLicenseId(payload.licenseId).catch(() => null)
+  if (historyHit) {
+    return reject("duplicate_license", "Este token ya fue activado antes en este servidor — solicita una emisión nueva (renovación)")
+  }
+
+  // ---------- 9. Anti-downgrade ----------
+  if (current) {
+    const currentValidation = validateLicenseToken(current.token, identity, { now, publicKey: opts.publicKey })
+    const currentActive = currentValidation.valid || currentValidation.status === "grace"
+    if (currentActive && payload.expiresAt < current.payload.expiresAt && current.payload.licenseId !== payload.licenseId) {
+      return reject("downgrade", "La nueva licencia vence ANTES que la actual activa — solicita una renovación con vigencia igual o superior")
+    }
+  }
+
+  // ---------- 10. Persistencia (todo pasó) ----------
+  const activatedAt = new Date(now).toISOString()
+  await store.saveLicenseRecord({ token: normalized, payload, activatedAt, activatedBy: actorLabel })
   await store
     .appendHistory({
-      licenseId: license.licenseId,
-      customerName: license.customerName,
-      plan: license.plan,
-      issuedAt: license.issuedAt,
-      startsAt: license.startsAt,
-      expiresAt: license.expiresAt,
-      deviceId: license.deviceId,
-      diskId: license.diskId,
-      importedAt,
+      licenseId: payload.licenseId,
+      customerName: payload.customerName,
+      plan: payload.plan,
+      durationDays: payload.durationDays,
+      issuedAt: payload.issuedAt,
+      startsAt: payload.startsAt,
+      expiresAt: payload.expiresAt,
+      installationId: payload.installationId,
+      diskId: payload.diskId,
+      activatedAt: now,
+      activatedBy: actorLabel,
       current: true,
     })
     .catch(() => {})
 
-  // ---------- 5. Auditoría + refresco realtime de las TVs ----------
+  // ---------- 11. Auditoría + refresco realtime de las TVs ----------
   if (!opts.silent) {
-    await logLicenseEvent("license_imported", {
+    await logLicenseEvent("license_activated", {
       actor: opts.actor ?? null,
-      details: `${license.customerName} · ${license.plan} · vence ${license.expiresAt.slice(0, 10)}`,
-      meta: { licenseId: license.licenseId, plan: license.plan, expiresAt: license.expiresAt },
+      details: `${payload.customerName} · ${PLAN_LABEL[payload.plan] ?? payload.plan} · ${payload.durationDays} días · vence ${formatDay(payload.expiresAt)}`,
+      meta: { licenseId: payload.licenseId, plan: payload.plan, durationDays: payload.durationDays, expiresAt: payload.expiresAt },
     })
     try {
       const { notifyContentUpdate } = await import("@/lib/realtime")
@@ -386,25 +472,29 @@ export async function importLicenseZip(zipBuffer: Buffer, opts: ImportLicenseOpt
   }
   bumpLicenseStateEpoch()
 
+  // ---------- 12. Resumen seguro ----------
   return {
     ok: true,
-    reasons: [],
-    summary: {
-      licenseId: license.licenseId,
-      customerName: license.customerName,
-      plan: license.plan,
-      startsAt: license.startsAt,
-      expiresAt: license.expiresAt,
-      daysLeft: licenseDaysLeft(license.expiresAt, now),
-    },
+    summary: summaryOf(payload, licenseDaysLeft(payload.expiresAt, now)),
   }
 }
 
-// Re-exporta utilidades usadas por el generador/tests
+// Re-exporta utilidades usadas por tests/e2e
 export { MemoryLicenseStore, PrismaLicenseStore } from "./storage"
-export { generateLicenseKeyPair, signLicense, verifyLicenseSignature, resolveVerifierPublicKey, newLicenseId, randomHex, sha256Hex } from "./crypto"
-export { canonicalizeLicensePayload, stripSignature } from "./canonical"
-export { buildZip, readZip, findZipEntry, crc32 } from "./zip"
-export { validateLicense, licenseDaysLeft } from "./validator"
-export { normalizeInstallPath } from "./disk-binding"
+export {
+  generateLicenseKeyPair,
+  generateRequestKeyPair,
+  signTokenPayload,
+  verifyTokenSignature,
+  sealRequestPayload,
+  openSealedRequest,
+  resolveVerifierPublicKey,
+  resolveRequestPublicKey,
+  newLicenseId,
+  randomHex,
+  sha256Hex,
+} from "./crypto"
+export { canonicalize, sortKeysDeep } from "./canonical"
+export { crc32, base32Encode, base32DecodeStrict, formatWithDashes, normalizeTokenInput } from "./codec"
+export { validateLicenseToken, verifyLicenseToken, licenseDaysLeft, formatDay, licenseGraceHours } from "./validator"
 export { CONTACT_PHONE }

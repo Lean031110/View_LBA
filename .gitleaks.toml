@@ -5,10 +5,11 @@
 # tests, válidos solo en entornos efímeros de E2E/CI) y los placeholders
 # documentados de ejemplo.
 #
-# LICENSING: la clave de firma E2E (e2e/fixtures/licensing/) es DUMMY —
-# solo verifica contra VIEWLBA_LICENSE_PUBLIC_KEY del entorno E2E, jamás
-# contra la clave pública de PRODUCCIÓN del producto. La clave privada
-# REAL vive fuera del repo (docs/LICENSE-SECURITY.md).
+# LICENSING v2: las claves E2E (Ed25519 + X25519, en e2e/fixtures/licensing/)
+# son DUMMY — solo firman/sellan contra las claves públicas DUMMY de los
+# entornos E2E/CI, jamás contra las de PRODUCCIÓN (public-key.ts). Las claves
+# privadas REALES viven SOLO en la app Android del emisor y su backup cifrado
+# (docs/LICENSE-SECURITY.md).
 [allowlist]
   description = "Fixtures de tests con secretos DUMMY (no reales) y placeholders documentados"
   paths = [
@@ -22,5 +23,5 @@
     '''(^|/)\.github/workflows/ci\.yml$''',
     '''(^|/)e2e/fixtures/licensing/.*$''',
     '''(^|/)tests/licensing/crypto\.test\.ts$''',
-    '''(^|/)tools/license-generator/README\.md$''',
+    '''(^|/)\.github/workflows/.*\.yml$''',
   ]

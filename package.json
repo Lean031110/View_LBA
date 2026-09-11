@@ -1,6 +1,6 @@
 {
   "name": "viewlba",
-  "version": "1.2.1",
+  "version": "2.0.0",
   "description": "ViewLBA — Plataforma profesional de señalización digital para restaurantes: pantalla TV con transmisión en vivo, panel de administración y servidor de streaming RTMP 100% LAN.",
   "license": "MIT",
   "author": "Lean031110",
@@ -27,9 +27,7 @@
     "db:push:force": "prisma db push --accept-data-loss",
     "db:backup": "bun scripts/backup.ts",
     "db:restore": "bun scripts/restore.ts",
-    "media:gc": "bun scripts/media-gc.ts",
-    "license:generate": "bun tools/license-generator/cli.ts",
-    "license:keys": "bun tools/license-generator/cli.ts keys"
+    "media:gc": "bun scripts/media-gc.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

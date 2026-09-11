@@ -1,67 +1,84 @@
-# Seguridad — Dónde NO está la clave privada y matriz de ataques
+# Seguridad — Dónde NO están las claves privadas y matriz de ataques
 
-Documento vivo de las garantías verificadas. Fuente de verdad adicional: `docs/LICENSE-SECURITY.md` (§ por §) y el job de gitleaks en CI.
+Documento vivo de las garantías verificadas. Fuente de verdad adicional:
+`docs/LICENSE-SECURITY.md` y el job de gitleaks en CI.
 
-## Dónde NO está la clave privada (verificado)
+## Dónde NO están las claves privadas (verificado)
 
 | Lugar | Estado |
 |---|---|
-| Repo git (historial completo escaneado por gitleaks en cada CI) | ✗ no está |
-| Frontend / bundle del navegador | ✗ (solo constantes de features en cliente) |
+| Repo git (historial completo escaneado por gitleaks en cada CI) | ✗ no están |
+| Servidor ViewLBA (bundle/standalone) — SOLO hay públicas | ✗ |
+| Frontend / bundle del navegador | ✗ |
 | Pantalla TV | ✗ (la TV solo consume `/api/content` público) |
-| Instaladores `.exe` / `.deb` / AppImage | ✗ (job de release ejecuta gitleaks + validaciones de empaquetado) |
-| Logs / auditoría | ✗ (`redact()` + nunca se registran firmas ni claves completas) |
+| Instaladores `.exe` / `.deb` / AppImage | ✗ |
+| APK del generador (análisis de strings en CI) | ✗ |
+| Logs / auditoría | ✗ (`redact()`; jamás se registran claves ni firmas) |
 | Tests / fixtures | ✗ (claves DUMMY de test — nunca válidas en producción) |
-| Artifacts de workflows | ✗ (el workflow aborta si el ZIP contiene fragmento de clave) |
-| Wiki | ✗ (esta wiki documenta PROCEDIMIENTOS, nunca material de clave) |
+| Wiki / docs | ✗ (se documentan PROCEDIMIENTOS, nunca material de clave) |
+| GitHub Secrets | ✗ (los secrets solo firman el APK, no son claves de licencias) |
 
-La app no tiene ninguna ruta de código que lea una clave privada del entorno por defecto: `signLicense()` solo se invoca desde el generador y los tests, con la clave como **argumento explícito**.
+Dónde SÍ están: la **DB cifrada (SQLCipher)** de la app Android del
+administrador — con la master key envuelta por **Android Keystore**
+(AES-256-GCM, biometría) y por el **PIN** (PBKDF2, 150k) — y su
+**backup `.vlbak`** (AES-256-GCM con contraseña).
 
-## Matriz de ataques y mitigaciones
+## Matriz de ataques y mitigaciones (v2)
 
 | Ataque | Mitigación | Resultado observado |
 |---|---|---|
-| Editar `license.json` del ZIP | Firma Ed25519 sobre payload canónico | `invalid` (test B: 1 byte → FAIL) |
-| Re-firmar con clave propia | La pública incrustada no coincide | `invalid` (test G) |
-| Copiar el ZIP a otro restaurante | Binding Installation/Disk ID recalculado en runtime | `mismatch` (tests E/F) |
+| Editar el token VLBA2 (1 byte) | Firma Ed25519 sobre bytes exactos + CRC32 | Rechazo (test) |
+| Re-firmar con clave propia | La pública del servidor no coincide | `invalid` (test) |
+| Alterar el código de solicitud | Tag AES-GCM + CRC32 | "no se puede abrir" (test) |
+| Abrir solicitud con otro emisor | ECDH → clave distinta → tag inválido | null (test) |
+| Copiar el token a otro restaurante | Binding recalculado contra hardware | `mismatch` (tests) |
 | Restaurar DB de otro equipo | Binding recalculado en cada evaluación | `mismatch` |
-| Regresar el reloj | High-water `lastSeenAt` + `clockTampered` sticky | Congelado (test específico) |
+| Re-pegar un token ya activo | Idempotencia (`alreadyActive`) sin duplicar | 200 OK (test) |
+| Re-usar una solicitud (replay) | Hash registrado en el emisor | Rechazo → «Renovar» (test) |
+| Renovación que acorta | Anti-downgrade + acción administrativa | Rechazo (test) |
+| Token truncado/excesivo/versión futura | Validación estructural estricta | `bad_*` (tests) |
+| Regresar el reloj | High-water `lastSeenAt` + `clockTampered` sticky | Congelado (test) |
 | Borrar anclas de trial | Doble ancla + fusión earliest-start | Trial NO renace (test) |
-| Editar anclas a mano | Sello HMAC-SHA256 por `deviceIdHash` | `integrityWarnings`, sin trial nuevo |
-| API: importar sin permiso | `POST /api/license/import` exige ADMIN | 401/403 |
-| API: leer identidad sin permiso | `GET /api/license/identity` exige OPERATOR+ | 401/403 |
-| Escuchar el endpoint público | Solo estado/watermark/features | Sin datos de cliente ni IDs |
-| Zip bomb / ZIP gigante | Límites: 1 MB subida, ≤100 entradas, ≤10 MB/entrada, CRC | Rechazo temprano |
-| Downgrade por importación | Anti-downgrade de vigencia | Rechazo (test) |
+| Activar sin permiso | `POST /api/license/activate` exige ADMIN + rate limit | 401/403/429 |
+| Leer identidad técnica | La ruta `/identity` **no existe**; `/api/license` no expone binding | 404 / sin datos |
 | Fuerza bruta de login admin | rate-limit existente del proyecto | Bloqueo |
 | Fuga de secretos en git | gitleaks bloqueante en CI (push/PR/release) | Build rojo |
+| Claves en fuentes del generador | grep anti-material + análisis del APK en CI | Build rojo |
 
-## Verificación de empaquetado (sección 28/29 — antes de cada release)
+## Verificación de empaquetado (antes de cada release)
 
 ```bash
 # 1) Ningún secreto en el historial (bloqueante en CI):
 bunx gitleaks detect --source . -v
 
-# 2) La clave privada NO aparece en el árbol de fuentes:
-rg -l "VIEWLBA_LICENSE_PRIVATE_KEY" src/ public/ installer/ mini-services/ || echo "OK: solo docs/tools"
+# 2) Sin material de clave en las fuentes del generador:
+rg -iE "BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY" android-license-generator/app/src/ || echo "OK"
 
-# 3) El bundle/instalador no contiene clave privada ni licencias reales:
-strings <payload-del-instalador> | rg -i "private|BEGIN|seed|license.json" || echo "OK"
+# 3) El APK no contiene material de clave (CI lo ejecuta):
+unzip -p app-release.apk classes.dex | strings | rg "PRIVATE KEY" || echo "OK"
 ```
 
-`.gitignore` cubre: `tools/license-generator/{out,history,keys,*.key}` y `data/licensing/` — jamás commiteados.
+`.gitignore` cubre `android-license-generator/` (keystores, APKs, `.vlbak`,
+`local.properties`) y `data/licensing/` — jamás commiteados.
 
-## Límites honestos del diseño (§ "Aviso de alcance")
+## Límites honestos del diseño
 
-El objetivo real es **impedir la copia casual y la manipulación trivial**, con verificación 100% offline — NO es un DRM "militar":
+El objetivo real es **impedir la copia casual y la manipulación trivial**,
+con verificación 100% offline — NO es un DRM "militar":
 
-- Un atacante con control total de su equipo puede, en el peor caso, degradar la experiencia localmente.
-- Falsificar el estado del trial exige localizar AMBAS anclas, entender el formato HMAC y conocer el `AUTH_SECRET` local — esfuerzo deliberado, respuesta comercial/legal.
-- VMs clonadas de la misma imagen pueden colisionar en machine-id (caso raro; el Disk ID diferencia).
-- La rotación de claves invalida las licencias anteriores (ver [Mantenimiento-y-Rotación](Mantenimiento-y-Rotación.md)).
+- Un atacante con control total de su equipo puede, en el peor caso,
+  degradar la experiencia localmente.
+- Falsificar el estado del trial exige localizar AMBAS anclas, entender el
+  formato HMAC y conocer el `AUTH_SECRET` local.
+- Un teléfono del administrador con bootloader desbloqueado + ataque
+  dirigido podría comprometer la bóveda (mitigado con StrongBox cuando
+  existe + backups cifrados).
+- La rotación de claves invalida los tokens anteriores (ver
+  [Mantenimiento-y-Rotación](Mantenimiento-y-Rotación.md)).
 
 ## Contacto
 
-Cualquier incidente de seguridad, sospecha de licencia falsificada o fuga de material: **52973387**.
+Cualquier incidente de seguridad, sospecha de licencia falsificada o fuga
+de material: **52973387**.
 
 Siguiente: [Mantenimiento-y-Rotación](Mantenimiento-y-Rotación.md).

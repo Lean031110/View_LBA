@@ -1,37 +1,42 @@
 /**
- * Tests: criptografía Ed25519 de licencias (sección 27).
+ * Tests: criptografía del sistema v2 (Ed25519 firma + X25519 sellado).
  * Claves efímeras generadas EN RUNTIME — nunca claves reales en el repo.
  */
 import { describe, expect, it } from "bun:test"
 import {
   generateLicenseKeyPair,
-  signLicense,
-  verifyLicenseSignature,
+  generateRequestKeyPair,
+  signTokenPayload,
+  verifyTokenSignature,
+  sealRequestPayload,
+  openSealedRequest,
   isValidRawKey,
   newLicenseId,
   randomHex,
   sha256Hex,
 } from "@/lib/licensing/crypto"
-import { canonicalizeLicensePayload } from "@/lib/licensing/canonical"
-import { makeSignedLicense, makeIdentity } from "./helpers"
+import { canonicalize } from "@/lib/licensing/canonical"
+import { makeTokenPayload, makeIdentity } from "./helpers"
+import type { LicenseTokenPayload } from "@/lib/licensing/types"
 
-const basePayload = {
-  schemaVersion: 1,
+const basePayload: LicenseTokenPayload = {
+  v: 2,
   licenseId: "VLBA-aaaaaaaaaaaa",
-  customerName: "Leandro Bueno",
+  customerName: "Lo D'Leo",
   plan: "monthly",
-  issuedAt: "2026-09-10T00:00:00.000Z",
-  startsAt: "2026-09-10T00:00:00.000Z",
-  expiresAt: "2026-10-10T00:00:00.000Z",
-  deviceId: "VWLB-0094-6114-A3A4-8905",
-  diskId: "DSK-A5ED-432A-37DD",
-  installPath: "c:/pantallarestaurante",
+  durationDays: 30,
   product: "ViewLBA-Server",
+  issuedAt: 1757068800000,
+  startsAt: 1757068800000,
+  expiresAt: 1759660800000,
+  installationId: "VWLB-0094-6114-A3A4-8905",
+  diskId: "DSK-A5ED-432A-37DD",
   features: { "users.management": true },
+  nonce: "0123456789abcdef",
 }
 
-describe("generateLicenseKeyPair", () => {
-  it("produce claves Ed25519 crudas válidas (base64url, 32 bytes)", () => {
+describe("generateLicenseKeyPair (Ed25519)", () => {
+  it("produce claves crudas válidas (base64url, 32 bytes)", () => {
     const { publicKey, privateKey } = generateLicenseKeyPair()
     expect(isValidRawKey(publicKey)).toBe(true)
     expect(isValidRawKey(privateKey)).toBe(true)
@@ -45,68 +50,115 @@ describe("generateLicenseKeyPair", () => {
   })
 })
 
-describe("signLicense / verifyLicenseSignature", () => {
-  it("ida y vuelta: firma sobre payload canónico y verificación OK", () => {
+describe("generateRequestKeyPair (X25519)", () => {
+  it("produce claves crudas válidas (base64url, 32 bytes)", () => {
+    const { publicKey, privateKey } = generateRequestKeyPair()
+    expect(isValidRawKey(publicKey)).toBe(true)
+    expect(isValidRawKey(privateKey)).toBe(true)
+  })
+})
+
+describe("signTokenPayload / verifyTokenSignature (Ed25519)", () => {
+  it("ida y vuelta: firma sobre bytes canónicos y verificación OK", () => {
     const key = generateLicenseKeyPair()
-    const signature = signLicense(basePayload, key.privateKey)
-    expect(typeof signature).toBe("string")
-    // 64 bytes → base64url sin padding = 86 chars
-    expect(signature.length).toBe(86)
-    const license = { ...basePayload, signature }
-    expect(verifyLicenseSignature(license, key.publicKey)).toBe(true)
+    const signature = signTokenPayload(basePayload, key.privateKey)
+    expect(signature.length).toBe(64)
+    const payloadBytes = new TextEncoder().encode(canonicalize(basePayload as unknown as Record<string, unknown>))
+    expect(verifyTokenSignature(payloadBytes, signature, key.publicKey)).toBe(true)
   })
 
   it("la firma cubre TODO el payload: cambiar 1 campo rompe la verificación", () => {
     const key = generateLicenseKeyPair()
-    const signature = signLicense(basePayload, key.privateKey)
-    const license = { ...basePayload, signature }
-    expect(verifyLicenseSignature({ ...license, customerName: "Otra Persona" }, key.publicKey)).toBe(false)
-    expect(verifyLicenseSignature({ ...license, expiresAt: "2027-10-10T00:00:00.000Z" }, key.publicKey)).toBe(false)
-    expect(verifyLicenseSignature({ ...license, deviceId: "VWLB-1111-2222-3333-4444" }, key.publicKey)).toBe(false)
-    expect(verifyLicenseSignature({ ...license, plan: "annual" }, key.publicKey)).toBe(false)
+    const signature = signTokenPayload(basePayload, key.privateKey)
+    const canonical = (p: LicenseTokenPayload) => new TextEncoder().encode(canonicalize(p as unknown as Record<string, unknown>))
+    expect(verifyTokenSignature(canonical({ ...basePayload, customerName: "Otra Persona" }), signature, key.publicKey)).toBe(false)
+    expect(verifyTokenSignature(canonical({ ...basePayload, expiresAt: basePayload.expiresAt + 1 }), signature, key.publicKey)).toBe(false)
+    expect(verifyTokenSignature(canonical({ ...basePayload, installationId: "VWLB-1111-2222-3333-4444" }), signature, key.publicKey)).toBe(false)
+    expect(verifyTokenSignature(canonical({ ...basePayload, plan: "annual", durationDays: 365 }), signature, key.publicKey)).toBe(false)
   })
 
   it("verificar con OTRA clave pública → false (licencia de otro emisor)", () => {
     const issuer = generateLicenseKeyPair()
     const attacker = generateLicenseKeyPair()
-    const signature = signLicense(basePayload, issuer.privateKey)
-    const license = { ...basePayload, signature }
-    expect(verifyLicenseSignature(license, attacker.publicKey)).toBe(false)
+    const signature = signTokenPayload(basePayload, issuer.privateKey)
+    const payloadBytes = new TextEncoder().encode(canonicalize(basePayload as unknown as Record<string, unknown>))
+    expect(verifyTokenSignature(payloadBytes, signature, attacker.publicKey)).toBe(false)
   })
 
-  it("payload re-serializado con otro orden de claves → verificación OK (canónico)", () => {
+  it("firma de longitud incorrecta → false sin lanzar", () => {
     const key = generateLicenseKeyPair()
-    const signature = signLicense(basePayload, key.privateKey)
-    const reordered = {
-      signature,
-      product: "ViewLBA-Server",
-      features: { "users.management": true },
-      installPath: "c:/pantallarestaurante",
-      diskId: "DSK-A5ED-432A-37DD",
-      deviceId: "VWLB-0094-6114-A3A4-8905",
-      expiresAt: "2026-10-10T00:00:00.000Z",
-      startsAt: "2026-09-10T00:00:00.000Z",
-      issuedAt: "2026-09-10T00:00:00.000Z",
-      plan: "monthly",
-      customerName: "Leandro Bueno",
-      licenseId: "VLBA-aaaaaaaaaaaa",
-      schemaVersion: 1,
-    }
-    expect(verifyLicenseSignature(reordered, key.publicKey)).toBe(true)
-  })
-
-  it("firma inválida/malformada → false sin lanzar", () => {
-    const key = generateLicenseKeyPair()
-    const license = { ...basePayload, signature: "AAAA-invalida-pero-larga-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
-    expect(verifyLicenseSignature(license, key.publicKey)).toBe(false)
-    expect(verifyLicenseSignature({ ...basePayload, signature: "" }, key.publicKey)).toBe(false)
-    expect(verifyLicenseSignature({ ...basePayload, signature: 12345 }, key.publicKey)).toBe(false)
+    const payloadBytes = new TextEncoder().encode(canonicalize(basePayload as unknown as Record<string, unknown>))
+    expect(verifyTokenSignature(payloadBytes, new Uint8Array(32), key.publicKey)).toBe(false)
+    expect(verifyTokenSignature(payloadBytes, new Uint8Array(64), key.publicKey)).toBe(false)
   })
 
   it("clave malformada → lanza error claro (firmante), false (verificador)", () => {
-    expect(() => signLicense(basePayload, "no-es-una-clave")).toThrow()
-    const license = { ...basePayload, signature: signLicense(basePayload, generateLicenseKeyPair().privateKey) }
-    expect(verifyLicenseSignature(license, "clave-publica-malformada")).toBe(false)
+    expect(() => signTokenPayload(basePayload, "no-es-una-clave")).toThrow()
+    const payloadBytes = new TextEncoder().encode("x")
+    expect(verifyTokenSignature(payloadBytes, new Uint8Array(64), "clave-publica-malformada")).toBe(false)
+  })
+
+  it("integración: makeTokenPayload + firma + verificación canónica coherentes", () => {
+    const key = generateLicenseKeyPair()
+    const identity = makeIdentity()
+    const payload = makeTokenPayload(identity, { plan: "annual", durationDays: 365 })
+    const signature = signTokenPayload(payload, key.privateKey)
+    const payloadBytes = new TextEncoder().encode(canonicalize(payload as unknown as Record<string, unknown>))
+    expect(verifyTokenSignature(payloadBytes, signature, key.publicKey)).toBe(true)
+  })
+})
+
+describe("sealRequestPayload / openSealedRequest (X25519 + HKDF + AES-256-GCM)", () => {
+  it("ida y vuelta: sellar hacia la pública y abrir con la privada", () => {
+    const pair = generateRequestKeyPair()
+    const json = '{"customerName":"Lo D\'Leo","v":2}'
+    const sealed = sealRequestPayload(json, pair.publicKey)
+    expect(sealed.ephemeralPub.length).toBe(32)
+    expect(sealed.iv.length).toBe(12)
+    expect(sealed.ciphertext.length).toBeGreaterThan(16)
+    expect(openSealedRequest(sealed, pair.privateKey)).toBe(json)
+  })
+
+  it("cada sellado usa una clave efímera DISTINTA (ciphertexts distintos)", () => {
+    const pair = generateRequestKeyPair()
+    const json = '{"a":1}'
+    const a = sealRequestPayload(json, pair.publicKey)
+    const b = sealRequestPayload(json, pair.publicKey)
+    expect(Buffer.compare(Buffer.from(a.ephemeralPub), Buffer.from(b.ephemeralPub))).not.toBe(0)
+    expect(Buffer.compare(Buffer.from(a.ciphertext), Buffer.from(b.ciphertext))).not.toBe(0)
+    // ambos abren bien
+    expect(openSealedRequest(a, pair.privateKey)).toBe(json)
+    expect(openSealedRequest(b, pair.privateKey)).toBe(json)
+  })
+
+  it("manipular el ciphertext → tag GCM inválido → null", () => {
+    const pair = generateRequestKeyPair()
+    const sealed = sealRequestPayload('{"x":1}', pair.publicKey)
+    const tampered = new Uint8Array(sealed.ciphertext)
+    tampered[0] ^= 0x01
+    expect(openSealedRequest({ ...sealed, ciphertext: tampered }, pair.privateKey)).toBeNull()
+  })
+
+  it("manipular el IV → null", () => {
+    const pair = generateRequestKeyPair()
+    const sealed = sealRequestPayload('{"x":1}', pair.publicKey)
+    const badIv = new Uint8Array(sealed.iv)
+    badIv[0] ^= 0x01
+    expect(openSealedRequest({ ...sealed, iv: badIv }, pair.privateKey)).toBeNull()
+  })
+
+  it("abrir con la clave privada de OTRO par → null (solo el emisor lee)", () => {
+    const right = generateRequestKeyPair()
+    const wrong = generateRequestKeyPair()
+    const sealed = sealRequestPayload('{"secreto":"nombre"}', right.publicKey)
+    expect(openSealedRequest(sealed, wrong.privateKey)).toBeNull()
+  })
+
+  it("clave malformada → null (verificador) / throw (sellado)", () => {
+    const pair = generateRequestKeyPair()
+    const sealed = sealRequestPayload('{"x":1}', pair.publicKey)
+    expect(openSealedRequest(sealed, "clave-malformada")).toBeNull()
+    expect(() => sealRequestPayload('{"x":1}', "clave-malformada")).toThrow()
   })
 })
 
@@ -125,20 +177,5 @@ describe("helpers", () => {
     expect(sha256Hex("viewlba")).toBe(sha256Hex("viewlba"))
     expect(sha256Hex("viewlba")).toMatch(/^[0-9a-f]{64}$/)
     expect(sha256Hex("viewlba")).not.toBe(sha256Hex("viewlbA"))
-  })
-})
-
-describe("integración firma canónica (roundtrip completo)", () => {
-  it("makeSignedLicense + verifyLicenseSignature + canonical son coherentes", () => {
-    const key = generateLicenseKeyPair()
-    const identity = makeIdentity()
-    const license = makeSignedLicense(identity, key)
-    expect(verifyLicenseSignature(license, key.publicKey)).toBe(true)
-
-    // el canónico firmado NO incluye signature
-    const { signature, ...payload } = license
-    const canonical = canonicalizeLicensePayload(payload as unknown as Record<string, unknown>)
-    expect(canonical).not.toContain("signature")
-    expect(canonical.length).toBeGreaterThan(100)
   })
 })

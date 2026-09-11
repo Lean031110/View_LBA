@@ -1,16 +1,21 @@
 /**
- * E2E fixtures — par de claves Ed25519 DUMMY para el sistema de licencias.
+ * E2E fixtures — pares de claves DUMMY para el sistema de licencias v2.
  *
- * ⚠⚠ ESTA CLAVE PRIVADA ES UN FIXTURE DE TEST, NO UN SECRETO REAL ⚠⚠
- *  · Solo verifica contra VIEWLBA_LICENSE_PUBLIC_KEY de los entornos E2E/CI
- *    (que se fija a la clave pública DUMMY de este archivo).
- *  · La clave pública de PRODUCCIÓN (src/lib/licensing/public-key.ts) es
- *    DISTINTA → licencias firmadas aquí NUNCA pasarán validación en el
+ * ⚠⚠ ESTAS CLAVES PRIVADAS SON FIXTURES DE TEST, NO SON SECRETOS REALES ⚠⚠
+ *  · Solo firman/abren contra VIEWLBA_LICENSE_PUBLIC_KEY y
+ *    VIEWLBA_REQUEST_PUBLIC_KEY de los entornos E2E/CI (que se fijan a las
+ *    claves públicas DUMMY de este archivo).
+ *  · Las claves públicas de PRODUCCIÓN (src/lib/licensing/public-key.ts) son
+ *    DISTINTAS → tokens firmados aquí NUNCA pasarán validación en el
  *    producto real.
  *  · Ningún valor de producción (clientes, claves reales) aparece aquí.
  */
-export const E2E_LICENSE_PUBLIC_KEY = "DEYlcmsRR7oWGjm7E72KhO2G5BzgirmO5w0mmsVtz6w"
-export const E2E_LICENSE_PRIVATE_KEY = "h5qPUbRexSuabP26k5s0JU4LahOjFFmfU7VvrMDvXWw"
+export const E2E_LICENSE_PUBLIC_KEY = "GDEuTLCbpriQyXbECGbffdgTa52f-YHPjp-lVhvjxd0"
+export const E2E_LICENSE_PRIVATE_KEY = "JBFSwaQlHUUSK2TaynCVSfzMUD7qENFOXCPSjlKGgsQ"
+
+/** Par X25519 DUMMY: el "emisor Android" de E2E abre los códigos VLREQ2. */
+export const E2E_REQUEST_PUBLIC_KEY = "qWlCO6xJt2e_AZjNxDZ2olv_DiJBNuLHNBGSLm87pjE"
+export const E2E_REQUEST_PRIVATE_KEY = "l8JtCDu6UfduLjXZHJh2ax6v8ulxR5g2qt42osgecIk"
 
 /** Override de fingerprint de hardware para E2E (64 hex). */
 export const E2E_DEVICE_FINGERPRINT = "00946114a3a48905be6f60d95f945a1b29f3f2b261e32f30521afed84407f8e7"

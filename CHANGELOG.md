@@ -5,6 +5,80 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato está basado en [Keep a Changelog](https://keepachangelog.com/es/1.1.0/),
 y este proyecto adhiere a [SemVer](https://semver.org/lang/es/).
 
+## [2.0.0] — 2026-09-11 — Sistema de licencias v2: token copiar/pegar + generador Android
+
+### Cambiado (ROMPE el flujo v1 — migración limpia)
+
+- **Reemplazo COMPLETO del sistema de activación de licencias**: el flujo
+  ZIP + `license.json` + Installation ID/Disk ID a mano **desaparece**. El
+  cliente ahora solo ve, en Administración → Licencia:
+  1. «Copiar código de solicitud» (`VLREQ2-…`, la identidad del equipo viaja
+     CIFRADA dentro del código — nunca visible);
+  2. campo «Token de licencia» + «Activar licencia» (`VLBA2-…`);
+  3. estado humano (PRUEBA ACTIVA / LICENCIA ACTIVA / LICENCIA VENCIDA /
+     LICENCIA NO VÁLIDA / LICENCIA NO CORRESPONDE A ESTE EQUIPO), cliente,
+     inicio, «Vence el DD/MM/YYYY» y «Restan X días».
+- **Nuevas rutas API**: `POST /api/license/request-code` (genera el código
+  sellado con la identidad OCULTA), `POST /api/license/activate` (pipeline
+  de 12 pasos: formato → trama → firma Ed25519 → esquema → producto →
+  fechas exactas → binding → anti-replay idempotente → anti-downgrade →
+  guardado → auditoría → resumen seguro). ELIMINADAS `/api/license/identity`
+  e `/api/license/import` (404).
+- **Formatos v2** (Base32 RFC 4648 sin padding — guiones separadores
+  inequívocos, tolerante a WhatsApp, case-insensitive):
+  - `VLREQ2-…`: sealed box X25519 efímero → HKDF-SHA256 → AES-256-GCM con
+    nonce, timestamp y CRC32; expira a los 15 días; solo la app del
+    administrador puede abrirlo (nombre y Disk ID viajan cifrados).
+  - `VLBA2-…`: payload JSON canónico firmado Ed25519 (licenseId, cliente,
+    plan monthly/annual/custom + durationDays exacto, fechas epoch ms,
+    binding, features, nonce) + CRC32.
+- **Prisma**: migración `20260912000000_license_v2_token` (recreación de
+  `LicenseState`/`LicenseHistory` — cero licencias v1 emitidas, sin impacto).
+
+### Añadido
+
+- **`android-license-generator/`** — app Android PRIVADA del administrador
+  (Kotlin, minSdk 26): Nueva licencia (pegar VLREQ2 → validar → duración →
+  generar → copiar token), Historial (búsqueda por cliente/licenseId,
+  filtros, renovación, detalle), Backup `.vlbak` (crear/restaurar/verificar
+  integridad), Ajustes (importar/rotar claves, cambiar PIN).
+  - **DB local cifrada** con SQLCipher 4.6.1; master key con doble envoltura:
+    Android Keystore AES-256-GCM (biometría, `setUserAuthenticationRequired`)
+    y PIN (PBKDF2-SHA256 150k). PIN + biometría + auto-bloqueo 60 s.
+  - **Anti-replay** (hash de solicitud registrado), **anti-downgrade**
+    (recorte solo con acción administrativa explícita), licenseId único,
+    auto-verificación de firma tras emitir.
+  - `allowBackup=false` + data extraction rules: nada sale al cloud.
+- **CI Android** (`.github/workflows/android-license-generator.yml`): JDK 17
+  + SDK 35 fijos, lint, tests JVM, gitleaks + grep anti-claves en fuentes,
+  build release firmado con secrets, análisis del artifact, checksum
+  SHA-256 y APK `ViewLBA-License-Generator-v1.0.0.apk`.
+- **Compatibilidad TS↔Kotlin garantizada** por vectores dorados generados
+  por el mismo código del servidor (`scripts/gen-golden-vectors.ts`) y
+  verificados en `CrossCompatTest` (JVM).
+
+### Eliminado (flujo v1 — cero dead code)
+
+- `tools/license-generator/` (CLI), `license-demo/` (servidor web demo),
+  `.github/workflows/license-generator.yml`.
+- `src/lib/licensing/zip.ts` y todo el flujo ZIP; rutas identity/import.
+- Tests v1 (zip/import-flow/demo-server) — sustituidos por las suites v2.
+
+### Verificado
+
+- Servidor: 553 tests unit/integración PASS (licensing 178 + integración 20
+  + E2E spec del flujo §25: copiar código → pegar token → LICENCIA ACTIVA).
+- Android: 57 tests JVM PASS + lint PASS + APK release compilado y escaneado
+  (0 rastros de material de claves) + vectores dorados byte a byte.
+- gitleaks limpio (allowlist solo de fixtures DUMMY).
+
+### Rotación de claves (corte limpio)
+
+- Se generó un par NUEVO de claves Ed25519 (firma) y X25519 (solicitudes)
+  para producción: las públicas van en `public-key.ts`; las privadas se
+  entregan SOLO al administrador (fuera de banda) para importarlas en la app
+  Android. Impacto: **cero** (no existían licencias activas).
+
 ## [1.2.1] — 2026-09-11 — Rotación de clave de firma Ed25519 (producción)
 
 ### Cambiado
