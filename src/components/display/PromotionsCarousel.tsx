@@ -4,15 +4,25 @@ import { useEffect, useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import type { PromotionDTO } from "@/lib/types"
 
+/** Transiciones declarativas del motor (tema): variantes framer-motion. */
+const THEME_TRANSITIONS: Record<string, { initial: { opacity: number; x?: string; scale?: number }; exit: { opacity: number; x?: string; scale?: number } }> = {
+  fade: { initial: { opacity: 0 }, exit: { opacity: 0 } },
+  slide: { initial: { opacity: 0, x: "-3%" }, exit: { opacity: 0, x: "3%" } },
+  zoom: { initial: { opacity: 0, scale: 0.94 }, exit: { opacity: 0, scale: 1.04 } },
+}
+
 /** OFERTAS Y PROMOCIONES — carrusel automático con transiciones suaves. */
 export default function PromotionsCarousel({
   promotions,
   animationsEnabled,
   animationSpeed,
+  themeTransition = "slide",
 }: {
   promotions: PromotionDTO[]
   animationsEnabled: boolean
   animationSpeed: number
+  /** v3.1 THEMES: transición del carrusel (fade | slide | zoom). */
+  themeTransition?: "fade" | "slide" | "zoom"
 }) {
   const [index, setIndex] = useState(0)
 
@@ -37,8 +47,12 @@ export default function PromotionsCarousel({
 
   return (
     <section
-      className="flex flex-1 flex-col min-h-0 rounded-[1.2vh] border border-white/10 overflow-hidden"
-      style={{ background: "color-mix(in srgb, var(--tv-surface) 92%, transparent)" }}
+      className="tv-card flex flex-1 flex-col min-h-0 border border-white/10 overflow-hidden"
+      style={{
+        background: "color-mix(in srgb, var(--tv-surface) 92%, transparent)",
+        borderRadius: "var(--tv-card-radius, 1.2vh)",
+        boxShadow: "var(--tv-card-shadow, none)",
+      }}
       aria-label="Ofertas y promociones"
     >
       {/* Encabezado */}
@@ -57,9 +71,9 @@ export default function PromotionsCarousel({
         <AnimatePresence mode="wait">
           <motion.div
             key={current.id}
-            initial={animationsEnabled ? { opacity: 0, x: "-3%" } : false}
-            animate={{ opacity: 1, x: 0 }}
-            exit={animationsEnabled ? { opacity: 0, x: "3%" } : undefined}
+            initial={animationsEnabled ? (THEME_TRANSITIONS[themeTransition] ?? THEME_TRANSITIONS.slide).initial : false}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            exit={animationsEnabled ? (THEME_TRANSITIONS[themeTransition] ?? THEME_TRANSITIONS.slide).exit : undefined}
             transition={{ duration: 0.65 / Math.max(animationSpeed, 0.25), ease: [0.22, 1, 0.36, 1] }}
             className="absolute inset-0 flex"
           >

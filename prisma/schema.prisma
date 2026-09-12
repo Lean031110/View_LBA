@@ -205,6 +205,10 @@ model Settings {
   showSchedule   Boolean @default(true)
   showTicker     Boolean @default(true)
 
+  // v3.1 THEMES: tema visual activo (id de paquete; "default" = integrado).
+  // La resolución SIEMPRE recae en Default si el id no existe/falla.
+  activeThemeId  String  @default("default")
+
   updatedAt DateTime @updatedAt
 }
 
@@ -238,6 +242,36 @@ model LicenseHistory {
   activatedAt   DateTime @default(now())
   activatedBy   String?
   current       Boolean  @default(false)
+}
+
+// ============ THEMES (v3.1 — paquetes .vtheme declarativos) ============
+// Tema importado y VALIDADO (el pipeline de importación garantiza que el
+// manifest/theme.json cumplen el schema y que los assets son de tipos
+// permitidos). Los temas integrados (default/classic/neon) NO tienen fila
+// aquí: viven en código (src/lib/themes/builtin.ts) y son inmutables.
+// dir = subdirectorio AISLADO bajo data/themes/<dir>/ (nunca rutas absolutas).
+model Theme {
+  id          String   @id @default(cuid())
+  // Identificador del paquete (manifest.id): slug [a-z0-9-]{3,64}
+  themeId     String   @unique
+  name        String
+  author      String   @default("")
+  version     String   @default("1.0.0")
+  description String   @default("")
+  // manifest.json íntegro (validado en importación)
+  manifestJson String
+  // theme.json íntegro (validado en importación) — la fuente de verdad del
+  // aspecto declarativo; NO se ejecuta, solo se interpreta.
+  themeJson    String
+  // Subdirectorio aislado de assets (relativo a THEME_DIR, sin traversal)
+  dir          String   @unique
+  // Assets validados: JSON [{name, bytes, width?, height?}] (auditable)
+  assetsJson   String   @default("[]")
+  source       String   @default("imported") // imported
+  installedAt  DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([installedAt])
 }
 
 // ============ AUDIT LOG ============

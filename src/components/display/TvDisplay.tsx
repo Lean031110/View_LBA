@@ -17,6 +17,7 @@ import SocialLinks from "./SocialLinks"
 import NewsTicker from "./NewsTicker"
 import ScreenPicker from "./ScreenPicker"
 import TrialWatermark from "./TrialWatermark"
+import ThemeBackground from "./ThemeBackground"
 import { WifiOff } from "lucide-react"
 
 const SCREEN_KEY = "signage.screenCode"
@@ -421,6 +422,22 @@ export default function TvDisplay() {
   }
 
   // ---------- Tema / variables CSS ----------
+  // v3.1 THEMES: el motor de la TV interpreta el tema activo (resuelto por
+  // el servidor con fallback a Default) — paleta/altura de tarjetas/tipos/
+  // estilos. Los colores base siguen viniendo de settings (la activación del
+  // tema los sincroniza), y el resto del spec se aplica aquí.
+  const theme = content?.theme ?? null
+  const FONT_STACKS: Record<string, string> = {
+    display: 'var(--font-bebas), "Arial Narrow", Impact, sans-serif',
+    serif: 'Georgia, "Times New Roman", serif',
+    sans: 'var(--font-geist-sans), system-ui, sans-serif',
+    mono: 'var(--font-geist-mono), "Courier New", monospace',
+  }
+  const SHADOWS: Record<string, string> = {
+    none: "none",
+    soft: "0 1vh 2.4vh rgba(0,0,0,0.38)",
+    glow: "0 0 1.4vh var(--tv-glow), 0 0 3.2vh var(--tv-glow)",
+  }
   const cssVars = {
     ["--tv-primary" as string]: s?.primaryColor ?? "#f5a623",
     ["--tv-accent" as string]: s?.accentColor ?? "#e8452c",
@@ -429,6 +446,12 @@ export default function TvDisplay() {
     ["--tv-glow" as string]: `color-mix(in srgb, ${s?.primaryColor ?? "#f5a623"} 32%, transparent)`,
     ["--fscale" as string]: String(s?.fontScale ?? 1),
     ["--anim-speed" as string]: String(s?.animationSpeed ?? 1),
+    // v3.1: tipografías del tema (lista blanca del motor)
+    ["--tv-heading-family" as string]: FONT_STACKS[theme?.spec.typography.heading ?? "display"] ?? FONT_STACKS.display,
+    ["--tv-body-family" as string]: FONT_STACKS[theme?.spec.typography.body ?? "sans"] ?? FONT_STACKS.sans,
+    // v3.1: tarjetas del tema
+    ["--tv-card-radius" as string]: `${(theme?.spec.cards.radius ?? 12) * 0.1}vh`,
+    ["--tv-card-shadow" as string]: SHADOWS[theme?.spec.cards.shadow ?? "soft"] ?? SHADOWS.soft,
   } as React.CSSProperties
 
   // ---------- Pantalla de carga / error ----------
@@ -464,6 +487,9 @@ export default function TvDisplay() {
 
   return (
     <div className={`tv-root ${cursorHidden ? "tv-cursor-hidden" : ""} ${showPicker ? "" : ""}`} style={cssVars}>
+      {/* ====== FONDO DEL TEMA (v3.1 — capa declarativa del motor) ====== */}
+      <ThemeBackground theme={theme} animationsEnabled={s?.animationsEnabled ?? true} />
+
       {/* ====== CABECERA: Fecha/Hora · Horario del día · Logo ====== */}
       <header
         className="flex items-center justify-between gap-[2vw] px-[1.6vw] border-b border-white/8"
@@ -476,6 +502,7 @@ export default function TvDisplay() {
           showDay={s!.showDay}
           timezone={s!.timezone}
           language={s!.language}
+          themeStyle={theme?.spec.clock.style ?? "classic"}
         />
         {s!.showSchedule && (
           <div className="flex-1 flex justify-center min-w-0">
@@ -503,6 +530,7 @@ export default function TvDisplay() {
               promotions={activePromos}
               animationsEnabled={s!.animationsEnabled}
               animationSpeed={s!.animationSpeed}
+              themeTransition={theme?.spec.carousel.transition ?? "slide"}
             />
           )}
           {s!.showDish && (
@@ -532,6 +560,7 @@ export default function TvDisplay() {
           speed={s!.tickerSpeed}
           paused={s!.tickerPaused}
           restaurantName={s!.restaurantName}
+          themeStyle={theme?.spec.ticker.style ?? "classic"}
         />
       )}
 

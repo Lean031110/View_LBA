@@ -58,6 +58,19 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   "analytics.advanced": "Métricas avanzadas del panel",
 }
 
+/**
+ * §18 (misión 3.1): etiquetas de features FUTURAS — no tienen gating
+ * todavía (sin marketplace), pero si una licencia emitida las trae, la
+ * sección Licencia las muestra. Arquitectura extensible sin inventar
+ * funciones inexistentes.
+ */
+export const FUTURE_FEATURE_LABELS: Record<string, string> = {
+  "themes.standard": "Temas estándar (preparado)",
+  "themes.premium": "Temas premium (preparado)",
+  "multiDisplay": "Multi-pantalla avanzada (preparado)",
+  "advancedAnimations": "Animaciones avanzadas (preparado)",
+}
+
 export interface ResolveFeaturesInput {
   /** Estado global resuelto (trial/active/expired/...). */
   status: LicenseStatus

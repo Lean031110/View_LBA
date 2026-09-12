@@ -9,10 +9,12 @@ interface ClockProps {
   showDay: boolean
   timezone: string
   language: string
+  /** v3.1 THEMES: estilo del reloj (classic | digital | neon). */
+  themeStyle?: "classic" | "digital" | "neon"
 }
 
 /** Reloj TV: hora + fecha + día, se actualiza cada segundo de forma sutil. */
-export default function Clock({ clockFormat, showDate, showSeconds, showDay, timezone, language }: ClockProps) {
+export default function Clock({ clockFormat, showDate, showSeconds, showDay, timezone, language, themeStyle = "classic" }: ClockProps) {
   const [now, setNow] = useState<Date>(new Date())
 
   useEffect(() => {
@@ -47,7 +49,7 @@ export default function Clock({ clockFormat, showDate, showSeconds, showDay, tim
     : null
 
   return (
-    <div className="flex flex-col justify-center" aria-label="Fecha y hora actual">
+    <div className={`flex flex-col justify-center tv-clock-${themeStyle}`} aria-label="Fecha y hora actual">
       {dayStr && (
         <span
           className="tv-font-display leading-none font-bold"
@@ -65,7 +67,7 @@ export default function Clock({ clockFormat, showDate, showSeconds, showDay, tim
         </span>
       )}
       <span
-        className="tv-font-display leading-none text-white"
+        className="tv-font-display tv-clock-time leading-none text-white"
         style={{ fontSize: "calc(4.3vh * var(--fscale, 1))", letterSpacing: "0.03em" }}
       >
         {timeStr}

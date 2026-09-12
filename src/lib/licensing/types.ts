@@ -198,6 +198,21 @@ export type FeatureKey =
   | "backup.selfService"
   | "analytics.advanced"
 
+/**
+ * Features FUTURAS (§18 de la misión 3.1 — «preparar, sin marketplace»):
+ * la arquitectura de features del token (Record<string, boolean> validado)
+ * ya las ADMITE — un token que las incluya las persiste y se muestran en la
+ * sección Licencia. Cuando se implementen de verdad (marketplace, etc.) se
+ * suman a FEATURE_KEYS/COMMERCIAL_FEATURES y adquieren gating real.
+ */
+export const FUTURE_FEATURE_KEYS = [
+  "themes.standard",
+  "themes.premium",
+  "multiDisplay",
+  "advancedAnimations",
+] as const
+export type FutureFeatureKey = (typeof FUTURE_FEATURE_KEYS)[number]
+
 export interface FeatureAvailability {
   flags: Record<FeatureKey, boolean>
   watermark: boolean

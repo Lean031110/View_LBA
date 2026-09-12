@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button"
 import { useToast } from "@/hooks/use-toast"
 import { getJSON } from "../api"
 import type { FeatureKey } from "@/lib/licensing/types"
-import { FEATURE_LABELS } from "@/lib/licensing/features"
+import { FEATURE_LABELS, FUTURE_FEATURE_LABELS } from "@/lib/licensing/features"
 
 /**
  * Sección Licencia (v2 — flujo copiar/pegar).
@@ -445,6 +445,16 @@ export default function LicenseSection(props: Record<string, unknown>) {
                   </div>
                 )
               })}
+            {/* §18 misión 3.1: features FUTURAS presentes en el token (si el
+                emisor las incluyó) — mostradas sin gating todavía */}
+            {(Object.keys(FUTURE_FEATURE_LABELS) as string[])
+              .filter((k) => data.features?.[k] === true)
+              .map((key) => (
+                <div key={key} className="flex items-center gap-2.5 rounded-lg border border-white/8 bg-white/[0.02] px-3 py-2">
+                  <Check size={14} className="text-emerald-400/70 shrink-0" />
+                  <span className="text-sm text-white/60">{FUTURE_FEATURE_LABELS[key]}</span>
+                </div>
+              ))}
           </div>
           <p className="text-xs text-white/35 mt-3">
             {active

@@ -42,8 +42,12 @@ export default function DishOfTheDay({
       initial={animationsEnabled ? { opacity: 0, y: "1.5vh" } : false}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.7 / Math.max(animationSpeed, 0.25), delay: animationsEnabled ? 0.25 : 0 }}
-      className="relative shrink-0 rounded-[1.2vh] border border-white/10 overflow-hidden"
-      style={{ background: "color-mix(in srgb, var(--tv-surface) 92%, transparent)" }}
+      className="tv-card relative shrink-0 border border-white/10 overflow-hidden"
+      style={{
+        background: "color-mix(in srgb, var(--tv-surface) 92%, transparent)",
+        borderRadius: "var(--tv-card-radius, 1.2vh)",
+        boxShadow: "var(--tv-card-shadow, none)",
+      }}
       aria-label="Sugerencias del día"
     >
       <div className="relative" style={{ height: "calc(10.5vh * var(--fscale, 1))", minHeight: 74 }}>

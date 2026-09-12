@@ -35,14 +35,26 @@ export interface BackupResult {
 }
 
 /** Tablas verificadas en backups/restores (exportadas para tests y docs). */
-export const TRACKED_TABLES = ["User", "Screen", "Promotion", "Dish", "Schedule", "SocialLink", "TickerMessage", "Settings", "Log", "LicenseState", "LicenseHistory"] as const
+export const TRACKED_TABLES = ["User", "Screen", "Promotion", "Dish", "Schedule", "SocialLink", "TickerMessage", "Settings", "Log", "LicenseState", "LicenseHistory", "Theme"] as const
+
+/**
+ * Tablas que PUEDEN faltar en backups pre-3.1 ( backwards compatible:
+ * restaurar un backup anterior a los temas no debe fallar solo por la tabla
+ * nueva; si existe, se verifica como el resto).
+ */
+export const OPTIONAL_TABLES = new Set(["Theme"])
+
+/** Falla la verificación si una tabla OBLIGATORIA falta o es ilegible. */
+function tablesOk(tables: Record<string, number>): boolean {
+  return Object.entries(tables).every(([t, n]) => n >= 0 || OPTIONAL_TABLES.has(t))
+}
 
 /** Ejecuta un backup verificado y aplica la retención. */
 export async function createBackup(): Promise<BackupResult> {
   const dir = resolveBackupDir()
   await mkdir(dir, { recursive: true })
   const db = new PrismaClient()
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 23)
   const file = join(dir, `pantalla-restaurante-${stamp}.db`)
 
   try {
@@ -66,7 +78,7 @@ export async function createBackup(): Promise<BackupResult> {
           tables[t] = -1 // tabla ausente en el backup
         }
       }
-      const ok = integrity === "ok" && Object.values(tables).every((n) => n >= 0)
+      const ok = integrity === "ok" && tablesOk(tables)
 
       // 3) Retención: borrar los más allá de BACKUP_RETENTION
       const retentionDeleted = await applyRetention(dir)
@@ -137,7 +149,7 @@ export async function restoreBackup(backupFile: string): Promise<RestoreResult> 
         tables[t] = -1
       }
     }
-    if (integrity !== "ok" || Object.values(tables).some((n) => n < 0)) {
+    if (integrity !== "ok" || !tablesOk(tables)) {
       return { ok: false, restoredFrom: source, safetyCopy: null, integrity, tables, error: "El backup NO pasa la verificación — no se restaura nada" }
     }
   } finally {
@@ -147,7 +159,7 @@ export async function restoreBackup(backupFile: string): Promise<RestoreResult> 
   // 2) Copia de seguridad de la DB actual (por si hay que volver atrás)
   const dir = resolveBackupDir()
   await mkdir(dir, { recursive: true })
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 23)
   const safetyCopy = join(dir, `pre-restore-${stamp}.db`)
   await copyFile(target, safetyCopy).catch(() => null)
 
