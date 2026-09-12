@@ -58,7 +58,7 @@ jobs:
           python-version: "3.12"
 
       - name: Dependencias de construcción
-        run: pip install --require-hashes=false "reportlab==4.4.9" "pillow==11.3.0"
+        run: pip install "reportlab==4.4.9" "pillow==11.3.0"
 
       - name: Poppler (validación de PDF)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils

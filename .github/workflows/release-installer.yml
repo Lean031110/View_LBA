@@ -493,7 +493,7 @@ jobs:
       - name: "Manual de Usuario (construir + validar §29)"
         run: |
           set -euo pipefail
-          pip install --require-hashes=false "reportlab==4.4.9" "pillow==11.3.0"
+          pip install "reportlab==4.4.9" "pillow==11.3.0"
           sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils
           python3 scripts/build_customer_manual.py
           PDF=$(find dist/manual -name "ViewLBA-Manual-Usuario-v*.pdf" | head -1)
