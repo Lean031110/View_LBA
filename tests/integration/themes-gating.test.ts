@@ -109,13 +109,21 @@ beforeAll(async () => {
     body: JSON.stringify({ email: ADMIN.email, password: ADMIN.password }),
   })
   adminCookie = (loginRes.headers.get("set-cookie") ?? "").split(";")[0]
-})
+}, 240_000)
 
 afterAll(async () => {
   if (app?.pid) {
+    // esperar a que el proceso (y su grupo) muera de verdad: bun reporta
+    // los procesos colgantes como fallo «(unnamed)» si quedan vivos
+    const died = new Promise<void>((r) => app!.once("exit", () => r()))
     try {
       process.kill(-app.pid, "SIGKILL")
-    } catch {}
+    } catch {
+      try {
+        app.kill("SIGKILL")
+      } catch {}
+    }
+    await Promise.race([died, new Promise<void>((r) => setTimeout(r, 3000))])
   }
   if (tmpDir) rmSync(tmpDir, { recursive: true, force: true })
 })

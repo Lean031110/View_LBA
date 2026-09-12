@@ -4,6 +4,7 @@
  * Regla: TODO rechazo debe ser ThemeError tipado (REJECT SAFE, sin crash).
  */
 import { describe, it, expect } from "bun:test"
+import { deflateRawSync } from "node:zlib"
 import { readZip, writeZip, crc32Of, validateEntryName } from "@/lib/themes/zip"
 import { ThemeError } from "@/lib/themes/types"
 import { writeEvilZip, zeros, makePng } from "./helpers"
@@ -174,8 +175,7 @@ describe("ZIP reader — §12 límites y bombas", () => {
     // 70 MB de zeros: DEFLATE los deja en ~70 KB (comprimido > umbral de
     // 64 KB) con ratio ~1000× — patrón inequívoco de ZIP bomb.
     const bomb = zeros(70 * 1024 * 1024)
-    const { deflateRawSync } = require("node:zlib") as typeof import("node:zlib")
-    const compressed = deflateRawSync(bomb)
+        const compressed = deflateRawSync(bomb)
     expect(compressed.length).toBeGreaterThan(64 * 1024) // garantiza que el chequeo aplica
     const buf = writeEvilZip([{ name: "bomb.bin", data: compressed, method: 8, lieUncompressed: bomb.length }])
     expectReject(buf, "bomb_suspected", "ratio ~1000×")

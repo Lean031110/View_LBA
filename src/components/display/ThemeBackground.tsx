@@ -18,6 +18,9 @@ function ThemeBackgroundImpl({ theme, animationsEnabled }: { theme: PublicTheme 
   const effect = theme.spec.background.effect
   const bgImage = theme.backgroundImageUrl
 
+  // Default puro (efecto none + sin imagen de fondo): ni montamos la capa
+  if (effect === "none" && !bgImage) return null
+
   return (
     <div
       className={`tv-theme-bg${effect !== "none" ? ` tv-theme-bg-${effect}` : ""}${animationsEnabled ? "" : " tv-anim-off"}`}

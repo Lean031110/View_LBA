@@ -483,6 +483,29 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # v3.1 §28: el Manual de Usuario (PDF) se genera desde EL MISMO commit
+      # del tag — mismo script determinista del workflow customer-manual.yml.
+      - name: Python para el Manual de Usuario
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: "Manual de Usuario (construir + validar §29)"
+        run: |
+          set -euo pipefail
+          pip install --require-hashes=false "reportlab==4.4.9" "pillow==11.3.0"
+          sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils
+          python3 scripts/build_customer_manual.py
+          PDF=$(find dist/manual -name "ViewLBA-Manual-Usuario-v*.pdf" | head -1)
+          test -n "$PDF"
+          PAGES=$(pdfinfo "$PDF" | awk '/^Pages:/ {print $2}')
+          [[ "$PAGES" -gt 0 ]] || { echo "✗ el manual no tiene páginas"; exit 1; }
+          pdftotext "$PDF" manual.txt
+          for REQUIRED in "ViewLBA" "7 días" "10 USD" "100 USD" "52973387" "Activar" "Licencia" "Temas"; do
+            grep -qF "$REQUIRED" manual.txt || { echo "::error::falta '$REQUIRED' en el manual"; exit 1; }
+          done
+          echo "✓ Manual de Usuario validado ($PAGES páginas, textos §29 presentes)"
+
       - name: Descargar artefactos validados
         uses: actions/download-artifact@v4
         with:
@@ -512,19 +535,21 @@ jobs:
         run: |
           cd artifacts
           # re-computar sobre los archivos REALES con sus nombres finales
-          # (incluye el APK del generador Android — TODOS los binarios del release)
-          find . -type f \( -name "*.exe" -o -name "*.deb" -o -name "*.AppImage" -o -name "ViewLBA-License-Generator-v*.apk" \) -print0 \
+          # (incluye el APK del generador Android y el Manual de Usuario — TODOS
+          # los binarios/documentos del release)
+          find . ../dist/manual -type f \( -name "*.exe" -o -name "*.deb" -o -name "*.AppImage" -o -name "ViewLBA-License-Generator-v*.apk" -o -name "ViewLBA-Manual-Usuario-v*.pdf" \) -print0 \
             | while IFS= read -r -d '' f; do b=$(basename "$f"); sha256sum "$f" | awk -v b="$b" '{print $1 "  " b}'; done > ../SHA256SUMS.txt
           cat ../SHA256SUMS.txt
-          # sanity: 4+ entradas (exe, deb, CLI appimage [+ GUI appimage] + APK)
+          # sanity: 5+ entradas (exe, deb, CLI appimage [+ GUI appimage] + APK + manual)
           LINES=$(wc -l < ../SHA256SUMS.txt)
-          [[ "$LINES" -ge 4 ]] || { echo "✗ menos de 4 binarios en el release"; exit 1; }
+          [[ "$LINES" -ge 5 ]] || { echo "✗ menos de 5 binarios/documentos en el release"; exit 1; }
 
       - name: Crear Release (SOLO artefactos ya validados — cero recompilación)
         uses: softprops/action-gh-release@v2
         with:
           files: |
             SHA256SUMS.txt
+            dist/manual/ViewLBA-Manual-Usuario-v*.pdf
             artifacts/**/ViewLBA-Server-Setup-*.exe
             artifacts/**/ViewLBA-Server-*-x86_64.deb
             artifacts/**/ViewLBA-Server-*-x86_64.AppImage

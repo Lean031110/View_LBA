@@ -248,6 +248,7 @@ export default function ThemesSection({ license }: { license: LicensePanelInfo |
         {themes.map((t) => (
           <Card
             key={t.id}
+            data-theme-card={t.id}
             className={`bg-white/[0.03] border transition-colors ${t.active ? "border-emerald-500/40" : "border-white/10 hover:border-white/25"} ${t.broken ? "border-red-500/40" : ""}`}
           >
             <CardHeader className="pb-2">

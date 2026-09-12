@@ -97,6 +97,18 @@ segundos**. Todo por la red local: el sistema funciona **sin depender de Interne
   premium (multi-pantalla, logotipo, usuarios…) desbloqueadas solo con licencia válida.
   Emisión con la app Android privada del administrador. Ver
   [docs/LICENSE-SYSTEM.md](docs/LICENSE-SYSTEM.md) y la [wiki](docs/wiki/).
+- 🎨 **Temas de pantalla TV** (v3.1) — gestor de temas en Administración con importación de
+  paquetes **`.vtheme`** 100 % declarativos (nunca código), vista previa, aplicación al instante
+  (realtime a todas las TVs) y restauración del tema predeterminado. Tres temas oficiales
+  integrados — **Default** (siempre disponible, fallback garantizado), **Classic** (elegante
+  oscuro/dorado) y **Neon** (tecnológico cian/magenta) — con pipeline de importación de 21
+  validaciones de seguridad (path traversal, ZIP bomb, symlinks, MIME falso…). Requiere licencia
+  completa; el trial lo visualiza bloqueado. Ver
+  [docs/THEMES.md](docs/THEMES.md) y [docs/THEME_SECURITY.md](docs/THEME_SECURITY.md).
+- 📘 **Manual de Usuario para clientes** (v3.1) — PDF profesional en español (16 capítulos:
+  instalación, prueba de 7 días, activación por WhatsApp, temas con capturas reales, backup,
+  problemas frecuentes), generado de forma determinista y **validado en CI** (textos y branding
+  obligatorios). Ver [docs/CUSTOMER-MANUAL.md](docs/CUSTOMER-MANUAL.md).
 
 ## 🏗️ Arquitectura
 
@@ -244,18 +256,22 @@ reconectar — sin tocar nada.
 ```bash
 bun run lint        # ESLint — 0 errores · 0 warnings
 bun run typecheck   # TypeScript estricto
-bun test            # 589 tests: unit + realtime + pairing + recovery + installer + pipeline
+bun test            # 725 tests: unit + realtime + pairing + recovery + installer +
+                    # pipeline + temas (parser ZIP/validator/importer 21 pasos/
+                    # store/backup con DB real) + gating HTTP de trial
 bun run build       # Build de producción (standalone)
-bun run test:e2e    # E2E Playwright (37 specs: auth, contenido, pantallas,
-                    # pairing, streaming con ffmpeg real, offline, seguridad)
+bun run test:e2e    # E2E Playwright (52 tests: auth, contenido, pantallas,
+                    # pairing, streaming con ffmpeg real, offline, seguridad,
+                    # temas §22: importar/aplicar/persistir/eliminar/realtime)
 ```
 
-CI en GitHub Actions: 5 jobs requeridos (quality · integration · e2e · security
-con gitleaks y audit crítico bloqueantes · android-license-generator con lint,
-tests JVM, fuzz, escaneo anti-claves y **APK firmado y verificado**
-(apksigner v1+v2+v3, zipalign, badging, análisis del binario) — el job quality
-ejecuta lint, tipos, tests (incluido el pipeline de streaming con ffmpeg
-publicando por RTMP real), el gate de coherencia de versión (`/VERSION`) y el
+CI en GitHub Actions: 6 workflows requeridos (quality · integration · e2e ·
+security con gitleaks y audit crítico bloqueantes · android-license-generator
+con lint, tests JVM, fuzz, escaneo anti-claves y **APK firmado y verificado**
+(apksigner v1+v2+v3, zipalign, badging, análisis del binario) ·
+customer-manual con el PDF del manual validado) — el job quality ejecuta lint,
+tipos, tests (incluido el pipeline de streaming con ffmpeg publicando por RTMP
+real y las suites de temas), el gate de coherencia de versión (`/VERSION`) y el
 build standalone en cada push/PR. La versión vive en `/VERSION` (única fuente
 de verdad: package.json, CHANGELOG y Gradle derivan de ella).
 
