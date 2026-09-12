@@ -5,6 +5,63 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato está basado en [Keep a Changelog](https://keepachangelog.com/es/1.1.0/),
 y este proyecto adhiere a [SemVer](https://semver.org/lang/es/).
 
+## [3.1.0] — 2026-09-12 — Temas de pantalla + Manual de usuario + release comercial
+
+### Añadido
+
+- **Sistema de Temas TV** (misión «Release Final de Producción», §6–§24):
+  nueva sección **🎨 Temas de Pantalla** en Administración con
+  importación de paquetes `.vtheme`, activación, vista previa, eliminación
+  (el tema predeterminado no se puede borrar) y restauración. Solo
+  disponible con licencia completa (`themes.custom`); durante la prueba
+  muestra «Los temas de pantalla están disponibles con una licencia
+  completa».
+- **Formato `.vtheme`** (ZIP estructurado y DECLARATIVO):
+  `manifest.json` + `theme.json` + `assets/`. Un tema NO puede contener
+  código (JS/shell/ejecutables rechazados); solo JSON, imágenes raster
+  validadas por magic bytes y límites estrictos. Validación de importación
+  de 21 pasos: extensión, ZIP, tamaño, nº de archivos, path traversal,
+  rutas absolutas, symlinks, manifest, schema, tipos, tamaños, assets,
+  formatos, duplicados, compatibilidad, etc. (ver `docs/THEME_SECURITY.md`).
+- **Tres temas oficiales**: `ViewLBA Default` (integrado, siempre
+  funciona, sin archivos externos), `ViewLBA Classic` (elegante oscuro
+  profesional) y `ViewLBA Neon` (moderno tecnológico con brillos y
+  animaciones suaves). Classic y Neon se distribuyen como
+  `themes/ViewLBA-Classic.vtheme` y `themes/ViewLBA-Neon.vtheme`.
+- **Motor de temas en la TV**: paleta, tipografías (lista blanca),
+  estilo de reloj, estilo de ticker, transiciones del carrusel y fondos
+  decorativos declarativos — todo renderizado internamente por ViewLBA
+  (cero JavaScript de terceros en el paquete). Propagación realtime:
+  aplicar un tema en Administración → las TVs conectadas lo reciben al
+  instante vía `content:update`. Si un tema activo falla → la TV vuelve
+  automáticamente a Default.
+- **Seguridad de temas probada**: suite de tests adversariales
+  (traversal `../../`, ZIP bomb, symlinks, MIME falso, duplicados,
+  imágenes gigantes, manifest inválido, JSON malformado, unicode,
+  extensión falsa, archivos ejecutables…) — todo termina en REJECT
+  SAFE sin crash (`tests/themes/`).
+- **Gestión de trial/licencia**: trial no puede importar/aplicar temas;
+  si una licencia completa vence, los temas instalados NO se borran (modo
+  restringido de gestión, el tema activo se mantiene de forma segura).
+- **`features` de licencia** preparadas para el futuro: `themes.standard`,
+  `themes.premium`, `multiDisplay`, `advancedAnimations` (arquitectura
+  extensible, sin marketplace todavía).
+- **Manual de Usuario ViewLBA** (PDF profesional en español, para
+  CLIENTES): 16 capítulos — qué es, instalación (Windows/Linux/Docker),
+  primer arranque, prueba de 7 días, activación por WhatsApp, precios
+  (10 USD mensual / 100 USD anual, contacto 52973387), administración,
+  pantalla TV, temas con capturas reales, backup, solución de problemas.
+  Generado por `scripts/build_customer_manual.py` con capturas reales del
+  sistema y validado en CI (`.github/workflows/customer-manual.yml`):
+  número de páginas > 0, textos obligatorios y branding verificados.
+
+### Cambiado
+
+- `versionCode` Android: 3 → **4** (monótono, nunca se reutiliza el 3
+  publicado en v3.0.0). APK: `ViewLBA-License-Generator-v3.1.0.apk`.
+- Los backups incluyen las filas de temas (`Theme` en
+  `TRACKED_TABLES`); restaurar revalida los paquetes antes de usarlos.
+
 ## [3.0.0] — 2026-09-12 — Release de producción: APK firmado + pipeline de release verificable
 
 ### Arreglado (BLOQUEANTE de producción)

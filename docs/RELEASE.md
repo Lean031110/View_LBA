@@ -9,18 +9,21 @@
 | `ViewLBA-Server-CLI-<ver>-x86_64.AppImage` | Linux (headless) | `installer/package/appimage.sh` |
 | `ViewLBA-Server-Setup-<ver>.exe` | Windows (GUI NSIS, obligatorio) | `cargo tauri build --bundles nsis --ci` (desde `C:\v`) |
 | `ViewLBA-License-Generator-v<ver>.apk` | Android (app privada del admin, **FIRMADO**) | job `build-android` (action `.github/actions/android-apk`) |
+| `ViewLBA-Manual-Usuario-v<ver>.pdf` | Manual para CLIENTES (v3.1+) | `scripts/build_customer_manual.py` (ReportLab, determinista) |
+| `themes/ViewLBA-{Classic,Neon}.vtheme` | Temas oficiales (repo + doc) | `scripts/build-vtheme.ts` (exportación de `builtin.ts`) |
 | `LicenseGenerator-SHA256SUMS.txt` + `LicenseGenerator-VERIFY.txt` | Android | evidencia: apksigner v1+v2+v3, badging, checksum |
-| `SHA256SUMS.txt` | todos | release job (re-computado sobre los subidos, APK incluido) |
+| `SHA256SUMS.txt` | todos | release job (re-computado sobre los subidos, APK + manual incluidos) |
 | `manifest-{linux,windows}.json` | todos | `installer/package/build-manifest.ts` (commit ↔ binario) |
 
 Todos con `SHA256SUMS` verificable. El payload es **completamente offline**:
 la red se usa SOLO durante el build (deps, Bun, NSSM, herramientas de Tauri);
 el instalador final funciona sin Internet.
 
-**Versión única de verdad**: el archivo `/VERSION` de la raíz (3.0.0).
+**Versión única de verdad**: el archivo `/VERSION` de la raíz (3.1.0).
 `package.json`, `CHANGELOG.md` y el `versionName` de Gradle se sincronizan
 con él (gate en CI: `bun scripts/check-version.ts`). El `versionCode`
-Android es monótono (`VERSION_CODE` en `gradle.properties`). Los tags
+Android es monótono (`VERSION_CODE` en `gradle.properties`, **nunca se
+reutiliza un código ya publicado**: v1.0.0→1, v3.0.0→3, v3.1.0→4). Los tags
 `-rc.N`/`-beta.N` se publican como prerelease y su versión viaja en el tag.
 
 **Firma Android (3.0.0+)**: el APK se firma en CI con el keystore de
@@ -61,9 +64,18 @@ El workflow `.github/workflows/release-installer.yml` (4 jobs):
    + branding + checksum. El APK solo se publica si TODO verifica. Para
    tags finales, gate extra: tag == `/VERSION`.
 4. **release**: **NO recompila nada**. `needs: [build-linux, build-windows,
-   build-android]` → gitleaks → valida el conjunto completo
+   build-android]` → gitleaks → **Manual de Usuario (v3.1+)**: re-ejecuta el
+   MISMO script determinista del commit del tag + validación §29 (páginas > 0
+   y textos obligatorios) → valida el conjunto completo
    (exe+deb+CLI AppImage+APK firmado) → `SHA256SUMS.txt` consolidado
-   (incluye el APK) → publica el GitHub Release (prerelease para `-rc`/`-beta`).
+   (incluye el APK y el manual) → publica el GitHub Release (prerelease para
+   `-rc`/`-beta`).
+
+   Además corre por cada push a main / PR / tag: **customer-manual.yml**
+   (construcción + validación del PDF por separado) y **ci.yml** (quality +
+   integration + e2e + security — ahora con las suites de temas de
+   `tests/themes/` + `tests/integration/themes-gating.test.ts` +
+   `e2e/themes.spec.ts`).
 
 Versiones EXACTAS (reproducible — nunca `latest`): Bun build `1.4.2`
 (setup-bun, sin el input `cache` no soportado), Bun del payload `1.3.14`,

@@ -3,6 +3,7 @@ import { createHash } from "crypto"
 import { db } from "@/lib/db"
 import type { ContentBundle, PublicSettings } from "@/lib/types"
 import { getLicenseSystemState } from "@/lib/licensing"
+import { resolveActiveTheme } from "@/lib/themes"
 
 /**
  * GET /api/content — bundle público para las pantallas TV (sin datos sensibles).
@@ -24,6 +25,13 @@ async function contentVersionStamp(): Promise<string> {
   const licenseStamp = licenseState
     ? `${licenseState.status}|${licenseState.daysLeft}|${licenseState.features.watermark ? 1 : 0}`
     : "unknown"
+  // v3.1 THEMES: sello del tema activo + tabla de temas (importar/eliminar/
+  // activar invalidan el bundle de la TV).
+  const [settingsRow, themeAgg] = await Promise.all([
+    db.settings.findUnique({ where: { id: "main" }, select: { activeThemeId: true } }),
+    db.theme.aggregate({ _count: true, _max: { updatedAt: true } }).catch(() => null),
+  ])
+  const themeStamp = `${settingsRow?.activeThemeId ?? "default"}|${themeAgg?._count ?? "x"}|${themeAgg?._max?.updatedAt?.toISOString() ?? "x"}`
   const row = (await db.$queryRawUnsafe(
     `SELECT
       (SELECT COUNT(*) FROM Settings) AS c0, (SELECT MAX(updatedAt) FROM Settings) AS m0,
@@ -38,7 +46,7 @@ async function contentVersionStamp(): Promise<string> {
   // NOTA: Prisma mapea COUNT(*) a BigInt → replacer stringify-safe
   return createHash("sha256")
     .update(
-      JSON.stringify([licenseStamp, r.c0, r.m0, r.c1, r.m1, r.c2, r.m2, r.c3, r.m3, r.c4, r.m4, r.c5, r.m5, r.c6, r.m6], (_k, v) =>
+      JSON.stringify([licenseStamp, themeStamp, r.c0, r.m0, r.c1, r.m1, r.c2, r.m2, r.c3, r.m3, r.c4, r.m4, r.c5, r.m5, r.c6, r.m6], (_k, v) =>
         typeof v === "bigint" ? v.toString() : v
       )
     )
@@ -113,8 +121,13 @@ export async function GET(req: NextRequest) {
     // de ETag (arriba), no en cada poll barato 304.
     const licenseState = await getLicenseSystemState().catch(() => null)
 
+    // v3.1 THEMES: tema activo resuelto (fallback DURO a Default §14 —
+    // si el tema falta/corrupto la TV siempre recibe el Default).
+    const theme = await resolveActiveTheme()
+
     const bundle: ContentBundle = {
       settings: publicSettings,
+      theme,
       promotions: promotions.map((p) => ({ ...p, startDate: p.startDate?.toISOString() ?? null, endDate: p.endDate?.toISOString() ?? null })),
       dishes: dishes.map((d) => ({ ...d, date: d.date?.toISOString() ?? null })),
       schedules,

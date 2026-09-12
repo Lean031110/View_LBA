@@ -1,0 +1,114 @@
+name: Customer Manual
+
+# ============================================================================
+# Manual de Usuario ViewLBA (PDF para CLIENTES) — misión §28.
+#
+# Construye el PDF con ReportLab (determinista: mismos assets commiteados +
+# misma versión → mismo PDF) y lo VALIDA:
+#   · abre correctamente (pdfinfo)
+#   · número de páginas > 0
+#   · textos obligatorios (§29): ViewLBA · 7 días · 10 USD · 100 USD ·
+#     52973387 · Activar · Licencia · Temas
+#   · versión de /VERSION presente
+#   · branding (metadatos de autor/título)
+#
+# El PDF del GitHub Release se genera DESDE EL MISMO COMMIT del tag (job
+# release de release-installer.yml re-ejecuta este mismo script).
+# ============================================================================
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - "scripts/build_customer_manual.py"
+      - "scripts/render-logos.ts"
+      - "docs/manual/**"
+      - "public/logo.svg"
+      - "public/logo-mark.svg"
+      - "VERSION"
+  pull_request:
+    paths:
+      - "scripts/build_customer_manual.py"
+      - "scripts/render-logos.ts"
+      - "docs/manual/**"
+      - "public/logo.svg"
+      - "public/logo-mark.svg"
+      - "VERSION"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: customer-manual-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: "PDF: construir y validar"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python (versión exacta)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Dependencias de construcción
+        run: pip install "reportlab==4.4.9" "pillow==11.3.0"
+
+      - name: Poppler (validación de PDF)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils
+
+      - name: Construir el Manual de Usuario
+        run: python3 scripts/build_customer_manual.py
+
+      - name: "Validar: el PDF abre y tiene páginas"
+        run: |
+          set -euo pipefail
+          PDF=$(find dist/manual -name "ViewLBA-Manual-Usuario-v*.pdf" | head -1)
+          test -n "$PDF" || { echo "✗ no se generó el PDF"; exit 1; }
+          PAGES=$(pdfinfo "$PDF" | awk '/^Pages:/ {print $2}')
+          echo "→ páginas: $PAGES"
+          [[ "$PAGES" -gt 0 ]] || { echo "✗ el PDF no tiene páginas"; exit 1; }
+          SIZE=$(stat -c%s "$PDF")
+          [[ "$SIZE" -gt 50000 ]] || { echo "✗ PDF sospechosamente pequeño ($SIZE bytes)"; exit 1; }
+
+      - name: "Validar: textos obligatorios (§29)"
+        run: |
+          set -euo pipefail
+          PDF=$(find dist/manual -name "ViewLBA-Manual-Usuario-v*.pdf" | head -1)
+          pdftotext "$PDF" manual.txt
+          for REQUIRED in "ViewLBA" "7 días" "10 USD" "100 USD" "52973387" "Activar" "Licencia" "Temas"; do
+            if grep -qF "$REQUIRED" manual.txt; then
+              echo "✓ texto obligatorio: $REQUIRED"
+            else
+              echo "::error::falta el texto obligatorio '$REQUIRED' en el manual"
+              exit 1
+            fi
+          done
+
+      - name: "Validar: versión actual y branding"
+        run: |
+          set -euo pipefail
+          PDF=$(find dist/manual -name "ViewLBA-Manual-Usuario-v*.pdf" | head -1)
+          VERSION=$(cat VERSION)
+          # nombre del archivo con la versión del commit/tag
+          [[ "$PDF" == *"v$VERSION.pdf" ]] || { echo "::error::el nombre del PDF no lleva la versión $VERSION"; exit 1; }
+          # la versión aparece dentro del manual
+          grep -qF "$VERSION" manual.txt || { echo "::error::la versión $VERSION no aparece en el texto"; exit 1; }
+          # branding: metadatos del PDF
+          pdfinfo "$PDF" | grep -q "Author:.*ViewLBA" || { echo "::error::falta branding (Author)"; exit 1; }
+          pdfinfo "$PDF" | grep -q "Title:.*ViewLBA" || { echo "::error::falta branding (Title)"; exit 1; }
+          echo "✓ versión y branding verificados"
+
+      - name: Subir artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: viewlba-customer-manual
+          path: dist/manual/*.pdf
+          retention-days: 14
+          if-no-files-found: error

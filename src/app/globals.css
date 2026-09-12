@@ -136,6 +136,8 @@
   background: var(--tv-bg, #0b0b0f);
   display: grid;
   grid-template-rows: auto 1fr auto auto;
+  isolation: isolate; /* v3.1: contexto de apilamiento para el fondo del tema (z-index -1) */
+  font-family: var(--tv-body-family, var(--font-geist-sans)), system-ui, sans-serif;
 }
 
 .tv-font-display {
@@ -344,4 +346,128 @@
   .tv-main > div {
     min-height: 0;
   }
+}
+
+/* ============================================================
+   v3.1 THEMES — motor declarativo de la TV
+   Un tema .vtheme NUNCA trae CSS: estos estilos los genera el MOTOR
+   a partir de valores validados (docs/THEME_SECURITY.md).
+   ============================================================ */
+
+/* Tipografías del motor (lista blanca: display/serif/sans/mono) */
+.tv-font-display {
+  font-family: var(--tv-heading-family, var(--font-bebas)), "Arial Narrow", Impact, sans-serif;
+}
+
+/* Radio de tarjetas + sombra del tema (variables del motor) */
+.tv-card {
+  border-radius: var(--tv-card-radius, 1.2vh);
+}
+
+/* ---- Fondos decorativos declarativos (§13: sin JS del paquete) ---- */
+.tv-theme-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.tv-theme-bg-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.35; /* discreto: complementa, nunca compite con el contenido */
+}
+
+/* Degradado elegante radial (Classic) */
+.tv-theme-bg-gradient::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 90% 65% at 50% 0%, color-mix(in srgb, var(--tv-primary) 14%, transparent) 0%, transparent 70%),
+    radial-gradient(ellipse 70% 55% at 50% 100%, color-mix(in srgb, var(--tv-accent) 10%, transparent) 0%, transparent 65%);
+}
+
+/* Retícula tecnológica sutil */
+.tv-theme-bg-grid::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--tv-primary) 7%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--tv-primary) 7%, transparent) 1px, transparent 1px);
+  background-size: 5.5vh 5.5vh;
+  mask-image: radial-gradient(ellipse 85% 75% at 50% 45%, #000 35%, transparent 78%);
+}
+
+/* Auroras de neón pulsantes (Neon) — GPU-only, 24/7 seguro */
+.tv-theme-bg-glow::before,
+.tv-theme-bg-glow::after {
+  content: "";
+  position: absolute;
+  width: 55%;
+  height: 55%;
+  border-radius: 50%;
+  filter: blur(8vh);
+  will-change: transform, opacity;
+  animation: tv-theme-glow calc(14s / var(--anim-speed, 1)) ease-in-out infinite;
+}
+.tv-theme-bg-glow::before {
+  top: -18%;
+  left: -12%;
+  background: color-mix(in srgb, var(--tv-primary) 22%, transparent);
+}
+.tv-theme-bg-glow::after {
+  bottom: -20%;
+  right: -12%;
+  background: color-mix(in srgb, var(--tv-accent) 18%, transparent);
+  animation-delay: calc(-7s / var(--anim-speed, 1));
+}
+
+@keyframes tv-theme-glow {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+    opacity: 0.75;
+  }
+  50% {
+    transform: translate(4%, 3%) scale(1.12);
+    opacity: 1;
+  }
+}
+
+/* Respeto por las animaciones desactivadas del Settings (§9 accesible) */
+.tv-anim-off .tv-theme-bg-glow::before,
+.tv-anim-off .tv-theme-bg-glow::after {
+  animation: none;
+}
+
+/* ---- Estilos del reloj (classic | digital | neon) ---- */
+.tv-clock-digital .tv-clock-time {
+  font-family: var(--font-geist-mono), "Courier New", monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+}
+
+.tv-clock-neon .tv-clock-time {
+  font-variant-numeric: tabular-nums;
+  color: var(--tv-primary);
+  text-shadow:
+    0 0 0.7vh var(--tv-glow),
+    0 0 1.6vh var(--tv-glow);
+}
+
+/* ---- Estilos del ticker (classic | neon) ---- */
+.tv-ticker-neon {
+  box-shadow:
+    0 -0.4vh 1.2vh color-mix(in srgb, var(--tv-primary) 30%, transparent),
+    0 -0.15vh 0 0 var(--tv-primary) inset;
+}
+
+.tv-ticker-neon .tv-ticker-track span.tv-font-display {
+  text-shadow: 0 0 0.5vh color-mix(in srgb, var(--tv-primary) 45%, transparent);
 }

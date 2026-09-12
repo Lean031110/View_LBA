@@ -20,6 +20,7 @@ import BrandingSection from "./sections/BrandingSection"
 import AudioSection from "./sections/AudioSection"
 import ScreensSection from "./sections/ScreensSection"
 import AppearanceSection from "./sections/AppearanceSection"
+import ThemesSection from "./sections/ThemesSection"
 import UsersSection from "./sections/UsersSection"
 import LogsSection from "./sections/LogsSection"
 import LicenseSection from "./sections/LicenseSection"
@@ -56,6 +57,9 @@ const SECTIONS = [
   { id: "audio", label: "Audio", icon: Volume2, roles: ["ADMIN", "OPERATOR"] },
   { id: "screens", label: "Pantallas", icon: MonitorPlay, roles: ["ADMIN", "OPERATOR", "VIEWER"] },
   { id: "appearance", label: "Apariencia", icon: Palette, roles: ["ADMIN", "OPERATOR"] },
+  // v3.1 THEMES: gestor de temas de pantalla (gated themes.custom — el
+  // tema ACTIVO se sigue mostrando en TV; aquí se gestiona importar/aplicar)
+  { id: "themes", label: "Temas de Pantalla", icon: Palette, roles: ["ADMIN", "OPERATOR"] },
   { id: "users", label: "Usuarios", icon: Users, roles: ["ADMIN"] },
   // FASE 4: auditoría sin VIEWER (el backend también exige OPERATOR+)
   { id: "logs", label: "Registros", icon: ScrollText, roles: ["ADMIN", "OPERATOR"] },
@@ -63,7 +67,11 @@ const SECTIONS = [
   { id: "license", label: "Licencia", icon: ShieldCheck, roles: ["ADMIN", "OPERATOR"] },
 ] as const
 
-/** Secciones bloqueadas durante trial/limitado (mapeadas a flags REALES). */
+/** Secciones bloqueadas durante trial/limitado (mapeadas a flags REALES).
+ *  OJO: «themes» NO está aquí — ThemesSection gestiona su propio candado
+ *  interno (§17: durante el trial se VISUALIZA el gestor con el aviso
+ *  «Los temas de pantalla están disponibles con una licencia completa»;
+ *  el backend sigue rechazando importar/aplicar con 403). */
 const PREMIUM_SECTIONS: Record<string, string> = {
   branding: "branding.customLogo",
   appearance: "themes.custom",
@@ -71,7 +79,7 @@ const PREMIUM_SECTIONS: Record<string, string> = {
 }
 
 /** Estado de licencia para el panel (banner + gating de premium). */
-interface LicensePanelInfo {
+export interface LicensePanelInfo {
   status: "trial" | "active" | "expired" | "invalid" | "mismatch" | "grace" | "unlicensed"
   daysLeft: number
   features: Record<string, boolean>
@@ -184,6 +192,7 @@ export default function AdminApp() {
     audio: AudioSection,
     screens: ScreensSection,
     appearance: AppearanceSection,
+    themes: ThemesSection,
     users: UsersSection,
     logs: LogsSection,
     license: LicenseSection,

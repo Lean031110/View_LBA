@@ -5,6 +5,7 @@
  * supervisores). El script guarda una copia pre-restore de la DB actual.
  */
 import { restoreBackup } from "../src/lib/backup"
+import { purgeInvalidThemes } from "../src/lib/themes"
 
 const args = process.argv.slice(2)
 const file = args.find((a) => !a.startsWith("--")) ?? args.find((a) => a.startsWith("--file="))?.split("=")[1]
@@ -26,6 +27,22 @@ if (r.ok) {
   console.log(`  Integridad: ${r.integrity}`)
   const tablas = Object.entries(r.tables).map(([t, n]) => `${t}=${n}`).join(" ")
   console.log(`  Tablas: ${tablas}`)
+
+  // v3.1 THEMES (§19): revalidar los temas restaurados contra el disco
+  // ACTUAL — los paquetes cuyos archivos falten o estén corruptos se purgan
+  // (nunca se ejecuta nada de un tema: solo se re-parsea su JSON validado).
+  try {
+    const purged = await purgeInvalidThemes()
+    if (purged.length > 0) {
+      console.log(`  Temas purgados por revalidación (archivos ausentes/corruptos): ${purged.join(", ")}`)
+      console.log("  ▶ Si el tema activo estaba entre ellos, el sistema vuelve a ViewLBA Default (§14).")
+    } else {
+      console.log("  Temas instalados: todos revalidados OK")
+    }
+  } catch {
+    console.log("  Temas: no se pudieron revalidar (la app los revalidará al arrancar)")
+  }
+
   console.log("\n▶ REINICIA ahora la app y los mini-servicios (realtime/stream) para que recarguen la DB.")
   console.log("▶ LICENCIA: al reiniciar, la licencia restaurada se revalida contra el hardware/disco actual (MISMATCH si proviene de otra instalación).")
 } else {

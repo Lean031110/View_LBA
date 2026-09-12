@@ -2,17 +2,20 @@
 
 import { useEffect, useRef, useState } from "react"
 
-/** TICKER — franja blanca con texto en movimiento continuo (izquierda → derecha). */
+/** TICKER — franja con texto en movimiento continuo (izquierda → derecha). */
 export default function NewsTicker({
   messages,
   speed = 55, // px por segundo
   paused = false,
   restaurantName,
+  themeStyle = "classic",
 }: {
   messages: string[]
   speed?: number
   paused?: boolean
   restaurantName?: string
+  /** v3.1 THEMES: estilo del ticker (classic | neon). */
+  themeStyle?: "classic" | "neon"
 }) {
   const trackRef = useRef<HTMLDivElement>(null)
   const [duration, setDuration] = useState(40)
@@ -69,16 +72,27 @@ export default function NewsTicker({
 
   return (
     <div
-      className={`relative overflow-hidden bg-white ${paused ? "tv-ticker-paused" : ""}`}
-      style={{ height: "calc(4.6vh * var(--fscale, 1))", minHeight: "30px" }}
+      className={`relative overflow-hidden ${themeStyle === "neon" ? "" : "bg-white"} tv-ticker-${themeStyle} ${paused ? "tv-ticker-paused" : ""}`}
+      style={{
+        height: "calc(4.6vh * var(--fscale, 1))",
+        minHeight: "30px",
+        background: themeStyle === "neon" ? "color-mix(in srgb, var(--tv-bg) 88%, #000)" : undefined,
+      }}
       role="marquee"
       aria-label="Información en movimiento"
     >
       {/* Etiqueta fija a la izquierda */}
       {restaurantName && (
         <div
-          className="absolute inset-y-0 left-0 z-10 flex items-center px-[1.2vw] tv-font-display text-white shrink-0"
-          style={{ background: "var(--tv-primary)", fontSize: "calc(2vh * var(--fscale, 1))", letterSpacing: "0.12em", clipPath: "polygon(0 0, 100% 0, calc(100% - 1.2vh) 100%, 0 100%)" }}
+          className="absolute inset-y-0 left-0 z-10 flex items-center px-[1.2vw] tv-font-display shrink-0"
+          style={{
+            background: "var(--tv-primary)",
+            color: themeStyle === "neon" ? "#05060e" : "#fff",
+            fontSize: "calc(2vh * var(--fscale, 1))",
+            letterSpacing: "0.12em",
+            clipPath: "polygon(0 0, 100% 0, calc(100% - 1.2vh) 100%, 0 100%)",
+            boxShadow: themeStyle === "neon" ? "0 0 1.6vh var(--tv-glow)" : undefined,
+          }}
         >
           {restaurantName.toUpperCase()}
         </div>
@@ -86,8 +100,11 @@ export default function NewsTicker({
       <div className="h-full flex items-center" style={{ paddingLeft: restaurantName ? "14vw" : 0 }}>
         <div
           ref={trackRef}
-          className="tv-ticker-track text-neutral-900"
-          style={{ ["--ticker-duration" as string]: `${duration}s` }}
+          className={`tv-ticker-track ${themeStyle === "neon" ? "text-white" : "text-neutral-900"}`}
+          style={{
+            ["--ticker-duration" as string]: `${duration}s`,
+            background: themeStyle === "neon" ? "color-mix(in srgb, var(--tv-bg) 88%, #000)" : undefined,
+          }}
         >
           <span className="inline-flex items-center">{renderCopy()}</span>
           <span className="inline-flex items-center" aria-hidden>

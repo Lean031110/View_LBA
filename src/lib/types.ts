@@ -1,5 +1,9 @@
 /** Tipos compartidos cliente/servidor */
 
+import type { PublicTheme, ThemeSpec } from "@/lib/themes/types"
+
+export type { PublicTheme, ThemeSpec }
+
 export interface PublicSettings {
   restaurantName: string
   logoUrl: string | null
@@ -106,6 +110,8 @@ export interface TickerMessageDTO {
 
 export interface ContentBundle {
   settings: PublicSettings
+  /** Tema TV activo (resuelto con fallback a Default — §14). */
+  theme: PublicTheme
   promotions: PromotionDTO[]
   dishes: DishDTO[]
   schedules: ScheduleDTO[]

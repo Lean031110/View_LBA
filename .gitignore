@@ -77,3 +77,7 @@ data/licensing/
 # Tests de integración de licencias (sandbox: TMPDIR relativo crea ./tmp)
 /tmp/
 backups/*.db
+
+# v3.1 Temas — almacenamiento de temas importados (runtime, NO commitear:
+# los temas oficiales viven en themes/*.vtheme y en el código)
+data/themes/
