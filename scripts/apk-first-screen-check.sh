@@ -307,7 +307,18 @@ fi
 screenshot "05-wrong-pin-rejected"
 log "✓ PIN incorrecto rechazado (sigue bloqueada)"
 
-# ── 6. Limpieza final ───────────────────────────────────────────────────
+# ── 6. Diagnóstico: logcat de la app (éxito O fallo) ────────────────────
+# El fix defensivo de MasterKeyVault registra en ViewLBA-Vault cualquier
+# fallo criptográfico inesperado (p.ej. el pbkdf2 que tiraba la app con un
+# PIN incorrecto) — se captura SIEMPRE para poder auditarlo.
+log "Capturando logcat de la app (diagnóstico)…"
+adb logcat -d | grep -E "ViewLBA-Vault|AndroidRuntime|FATAL" \
+  > "$EVIDENCE_DIR/logcat-app.txt" 2>/dev/null || true
+if [ -s "$EVIDENCE_DIR/logcat-app.txt" ]; then
+  echo "  (hallazgos en logcat-app.txt: $(grep -c . "$EVIDENCE_DIR/logcat-app.txt") líneas)"
+fi
+
+# ── 7. Limpieza final ───────────────────────────────────────────────────
 adb uninstall "$PKG" >/dev/null 2>&1 || true
 echo ""
 echo "══════════════════════════════════════════════════════════════════"
