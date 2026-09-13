@@ -73,6 +73,22 @@ y este proyecto adhiere a [SemVer](https://semver.org/lang/es/).
 - Los backups incluyen las filas de temas (`Theme` en
   `TRACKED_TABLES`); restaurar revalida los paquetes antes de usarlos.
 
+### Arreglado (BLOQUEANTE — detectado por el smoke funcional del emulador)
+
+- **La APK no pasaba de la primera pantalla en dispositivos sin
+  biometría** (emuladores limpios, tablets/TVs sin lector): al crear la
+  bóveda, `MasterKeyVault.ensureKeystoreKey()` pedía una clave
+  AndroidKeyStore con `setUserAuthenticationRequired(true)` y el
+  Keystore la rechaza con `IllegalStateException: «At least one
+  biometric must be enrolled to create keys requiring user
+  authentication»` → el usuario se quedaba atascado en «Configura tu
+  PIN» para siempre. Ahora: se intenta la clave con binding de
+  autenticación (biometría/credencial) y, si el dispositivo no tiene
+  ninguna, se degrada ELEGANTEMENTE a una clave sin binding (sigue
+  UID-scoped y TEE-backed en hardware real): la bóveda se crea, el
+  desbloqueo queda 100 % protegido por el PIN (PBKDF2 150k +
+  AES-256-GCM) y la UI nunca ofrece biometría donde no existe.
+
 ## [3.0.0] — 2026-09-12 — Release de producción: APK firmado + pipeline de release verificable
 
 ### Arreglado (BLOQUEANTE de producción)
