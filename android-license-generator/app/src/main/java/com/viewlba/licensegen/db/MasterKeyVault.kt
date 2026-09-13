@@ -247,26 +247,47 @@ class MasterKeyVault(private val context: Context) {
                 it.setInvalidatedByBiometricEnrollment(true)
             }.build())
             generator.generateKey()
-        } catch (e: IllegalStateException) {
+        } catch (e: Exception) {
             // Dispositivo SIN biometría inscrita NI credencial de bloqueo
             // (típico: emuladores limpios y equipos sin lector). El
             // AndroidKeyStore rechaza claves con setUserAuthenticationRequired
             // (true) en ese caso: «At least one biometric must be enrolled to
-            // create keys requiring user authentication».
+            // create keys requiring user authentication for every use».
+            //
+            // NOTA: según la capa (KeyStore2/ProviderException) el rechazo
+            // llega como IllegalStateException U otra envoltura cuyo
+            // .message EMBEDE el toString del original (p.ej.
+            // «java.lang.IllegalStateException: At least one biometric…»)
+            // → se captura Exception y se FILTRA POR MENSAJE (biometric/
+            // fingerprint/enrolled); cualquier otro error se re-lanza.
             //
             // Degradación ELEGANTE (el vault DEBE poder crearse siempre):
-            // clave SIN binding de autenticación — sigue siendo UID-scoped
-            // (solo esta app puede usarla) y TEE/StrongBox-backed cuando el
-            // hardware lo soporta. En estos dispositivos la UI nunca ofrece
-            // desbloqueo biométrico (BiometricManager.canAuthenticate !=
-            // SUCCESS) y el acceso queda 100 % protegido por el PIN
-            // (envoltura B: PBKDF2 150k + AES-256-GCM).
+            // clave SIN binding de autenticación ni requisito de
+            // dispositivo desbloqueado (en un equipo sin biometría NI
+            // bloqueo, el dispositivo está siempre «desbloqueado» — el
+            // requisito no aporta nada). La clave sigue UID-scoped (solo
+            // esta app puede usarla) y TEE/StrongBox-backed cuando el
+            // hardware lo soporta. En estos dispositivos la UI nunca
+            // ofrece desbloqueo biométrico (BiometricManager
+            // .canAuthenticate != SUCCESS) y el acceso queda 100 %
+            // protegido por el PIN (envoltura B: PBKDF2 150k +
+            // AES-256-GCM).
             val msg = (e.message ?: "").lowercase()
             check("biometric" in msg || "fingerprint" in msg || "enrolled" in msg) {
                 "AndroidKeyStore: $e"
             }
-            generator.init(baseSpec().build())
-            generator.generateKey()
+            val fallback = KeyGenParameterSpec.Builder(
+                KEY_ALIAS,
+                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+            )
+            fallback.setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            fallback.setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            fallback.setKeySize(256)
+            // Generador NUEVO: evita cualquier estado residual del primer
+            // intento fallido en la misma instancia.
+            val retry = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+            retry.init(fallback.build())
+            retry.generateKey()
         }
     }
 
