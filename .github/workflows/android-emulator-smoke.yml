@@ -4,15 +4,22 @@ name: Android Emulator Smoke
 #
 # Job SEPARADO del pipeline de release (el emulador puede ser inestable en
 # CI): NO bloquea la publicación de artifacts, pero produce EVIDENCIA de
-# instalación real (install → launch → pm list → screenshot → logcat →
-# uninstall). El pipeline bloqueante de validación binaria (apksigner,
+# instalación real. El pipeline bloqueante de validación binaria (apksigner,
 # zipalign, badging) vive en .github/actions/android-apk.
 #
-# Se dispara: manualmente (workflow_dispatch) y en cada tag v* (RC y final).
+# DESDE v3.1.0: además de «el proceso está vivo», verifica FUNCIONALMENTE
+# que la APK PASA LA PRIMERA PANTALLA (configuración del PIN) con un PIN
+# de ejemplo, llega a HOME, persiste el vault y se desbloquea de nuevo
+# (más control negativo: un PIN incorrecto NO desbloquea).
+# Ver scripts/apk-first-screen-check.sh.
+#
+# Se dispara: manualmente (workflow_dispatch), en cada tag v* (RC y final)
+# y en cada push a main (regresión funcional del APK visible de inmediato).
 
 on:
   push:
     tags: ["v*"]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -24,7 +31,7 @@ concurrency:
 
 jobs:
   smoke:
-    name: "Emulador API 35: install · launch · evidencia"
+    name: "Emulador API 35: install · PRIMERA PANTALLA (PIN) · HOME · unlock"
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -66,8 +73,12 @@ jobs:
           rm -rf "$ANDROID_HOME/system-images"/* || true
           df -h / | tail -1
 
-      # Instalación/lanzanmiento en emulador REAL API 35
-      - name: "Emulador: instalar, lanzar y evidenciar"
+      # Instalación + verificación FUNCIONAL en emulador REAL API 35:
+      # la APK debe pasar la primera pantalla (PIN de ejemplo) → HOME →
+      # relanzamiento → desbloqueo → HOME. PIN INCORRECTO → rechazado.
+      # El script es AUTOCONTENIDO (una sola línea: la action ejecuta cada
+      # línea del script en un `sh -c` aparte — ver NOTA CRÍTICA de abajo).
+      - name: "Emulador: instalar, pasar la primera pantalla (PIN) y evidenciar"
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -83,22 +94,15 @@ jobs:
           # → cada línea es AUTOCONTENIDA, con rutas literales y la versión
           #   expandida por GitHub (${{ env.APK_VERSION }}) en tiempo de parse.
           script: |
-            adb install -r android-license-generator/app/build/outputs/apk/release/ViewLBA-License-Generator-v${{ env.APK_VERSION }}.apk
-            adb shell pm list packages | grep com.viewlba.licensegen
-            adb shell am start -n com.viewlba.licensegen/.ui.MainActivity
-            sleep 12
-            adb shell pidof com.viewlba.licensegen
-            adb exec-out screencap -p > /tmp/viewlba-smoke.png
-            ls -la /tmp/viewlba-smoke.png
-            adb shell dumpsys activity activities | grep -m1 topResumedActivity || echo "(dumpsys sin topResumedActivity — informativo)"
+            bash scripts/apk-first-screen-check.sh 131313 android-license-generator/app/build/outputs/apk/release/ViewLBA-License-Generator-v${{ env.APK_VERSION }}.apk
             adb logcat -d | grep -E "FATAL EXCEPTION" | tail -20 || echo "sin FATAL EXCEPTION en logcat (correcto)"
-            adb uninstall com.viewlba.licensegen
 
-      - name: "Subir evidencia (screenshot)"
+      - name: "Subir evidencia (screenshots del flujo PIN + UI dumps)"
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: viewlba-emulator-evidence
-          path: /tmp/viewlba-smoke.png
+          path: |
+            /tmp/viewlba-first-screen/
           retention-days: 30
           if-no-files-found: ignore

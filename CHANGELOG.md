@@ -9,6 +9,17 @@ y este proyecto adhiere a [SemVer](https://semver.org/lang/es/).
 
 ### Añadido
 
+- **Smoke funcional del primer arranque de la APK** (`scripts/
+  apk-first-screen-check.sh`): el emulador de CI ya no comprueba solo
+  «el proceso está vivo» — ahora verifica que la APK **pasa la primera
+  pantalla** con un PIN de ejemplo (131313): configuración del PIN →
+  «Crear bóveda» → HOME (botón «Nueva licencia»), relanzamiento →
+  desbloqueo con el mismo PIN → HOME, y control negativo (un PIN
+  incorrecto NO desbloquea). Corre sobre `uiautomator` (coordenadas por
+  resource-id, estables ante idioma/resolución) y sube screenshots de
+  cada paso como evidencia. El smoke corre también en cada push a
+  `main` (regresión funcional visible de inmediato).
+
 - **Sistema de Temas TV** (misión «Release Final de Producción», §6–§24):
   nueva sección **🎨 Temas de Pantalla** en Administración con
   importación de paquetes `.vtheme`, activación, vista previa, eliminación
