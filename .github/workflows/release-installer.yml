@@ -3,26 +3,37 @@ name: Release Installers
 # ============================================================================
 # Build + Release de los instaladores oficiales de ViewLBA Server.
 #
-# ARQUITECTURA (3 jobs — separación de responsabilidades):
-#   build-linux   → payload de producción (bundle-server, guards + smoke REAL)
-#                   → .deb (OBLIGATORIO) → AppImage GUI (opcional, aislado)
-#                   → AppImage CLI (verificado en ejecución) → artefactos
-#   build-windows → payload (mismos guards) → Setup.exe NSIS → validaciones
+# v3.2 — INSTALADORES NATIVOS Y SIMPLES (feedback real del usuario):
+#   · Windows: Setup.exe con NSIS puro (sin Tauri, sin Rust). Instala TODO
+#     (el runtime bun va DENTRO del paquete: no hace falta node ni bun),
+#     registra y ARRANCA el servicio (NSSM incluido), crea accesos en el
+#     escritorio y una bandeja con clic derecho Iniciar/Detener.
+#   · Linux: .deb con dpkg-deb puro (sin Tauri). Instala TODO (runtime bun
+#     incluido), registra y ARRANCA el servicio systemd, credenciales
+#     generadas en la máquina, accesos en el escritorio/menú.
+#   · VERIFICACIÓN REAL: el .deb se INSTALA en el runner (systemd activo +
+#     /api/health 200 + start/stop + purge) y el Setup.exe se instala en
+#     silencioso en el runner de Windows (servicio + health + desinstalar).
+#     Nada se publica sin esa evidencia.
+#
+# Arquitectura (4 jobs):
+#   build-linux   → payload (bundle-server + smoke REAL) → .deb → VALIDACIÓN
+#                   REAL (dpkg -i) → AppImage CLI → artefactos
+#   build-windows → payload (mismos guards) → Setup.exe NSIS → VALIDACIÓN
+#                   REAL (/S + servicio + health + uninstall) → artefactos
+#   build-android → APK firmado (action compuesto android-apk)
 #   release       → NO recompila NADA: descarga artefactos ya validados,
 #                   gitleaks, SHA256SUMS.txt y publica el GitHub Release.
 #
 # REPRODUCIBILIDAD (versiones EXACTAS — nunca "latest"):
 #   · Bun del build:        1.4.2     (oven-sh/setup-bun, input soportado)
 #   · Bun del payload:      1.3.14    (runtime DISTRIBUIDO dentro del paquete)
-#   · tauri-cli (cargo):    2.11.4    (--locked, versión exacta)
-#   · NSSM:                 2.24
+#   · NSSM:                 2.24      (incluido en el payload de Windows)
 #
-# EL PAYLOAD ES DE PRODUCCIÓN (BUILD deps ≠ RUNTIME deps): ~450 MB frente a
-# los 1284 MB de la V1 (que rompían NSIS por rutas >260 y ahogaban linuxdeploy).
-# Los guards de installer/package/payload.ts fallan ANTES de empaquetar.
-#
-# Offline: la red se usa SOLO durante el build (deps, bun, nssm, herramientas
-# de Tauri). El instalador final funciona sin Internet.
+# EL PAYLOAD ES DE PRODUCCIÓN (BUILD deps ≠ RUNTIME deps): ~450 MB. Los
+# guards de installer/package/payload.ts fallan ANTES de empaquetar.
+# Offline: la red se usa SOLO durante el build. El instalador final
+# funciona sin Internet.
 # ============================================================================
 
 on:
@@ -41,12 +52,11 @@ env:
   # Versiones EXACTAS (determinismo — ver cabecera).
   BUILD_BUN: "1.4.2"
   PAYLOAD_BUN: "1.3.14"
-  TAURI_CLI: "2.11.4"
 
 jobs:
   # ------------------------------------------------------------------ Linux
   build-linux:
-    name: "Linux: payload + .deb + AppImages"
+    name: "Linux: payload + .deb nativo + AppImage CLI (validación REAL)"
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -56,10 +66,8 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUILD_BUN }}
-          # NOTA: el input `cache` NO está soportado por la versión actual de
-          # setup-bun@v2 (warning "Unexpected input(s) 'cache'") — no usarlo.
 
-      - name: Dependencias del repo (entorno de build — completo aquí, PODADO en el payload)
+      - name: Dependencias del repo (entorno de build — PODADO en el payload)
         run: bun install --frozen-lockfile
 
       - name: Dependencias de mini-services (entorno de build)
@@ -79,10 +87,6 @@ jobs:
           echo "VERSION=$V" >> "$GITHUB_ENV"
           echo "→ versión: $V"
 
-      - name: Inyectar versión en Tauri
-        run: |
-          bun -e 'const fs=require("fs");const f="installer/gui/src-tauri/tauri.conf.json";const j=JSON.parse(fs.readFileSync(f,"utf8"));j.version=process.argv[1];fs.writeFileSync(f,JSON.stringify(j,null,2)+"\n")' "$VERSION"
-
       - name: "Payload de producción (bundle-server: createProductionPayload + guards)"
         run: bun installer/package/bundle-server.ts --platform=linux --version="$VERSION" --bun-version="${PAYLOAD_BUN}"
 
@@ -90,98 +94,78 @@ jobs:
       - name: Smoke del payload (migrate + arranque + health + mini-services + SIGTERM)
         run: bash installer/package/smoke-payload.sh dist/release/linux/ViewLBA-Server
 
-      # HIGIENE DE DISCO (evidencia del run 34429251587: ENOSPC — "tar: stdout:
-      # write error" en dpkg-deb + linuxdeploy muriendo a mitad de AppDir).
-      # El entorno de build (node_modules 1.1GB + .next espejo ~800MB) YA NO
-      # se necesita: el payload lleva SU PROPIO runtime y node_modules podado.
-      - name: "Liberar disco: entorno de build fuera (node_modules + .next)"
+      # ------------------------------------------------ .deb NATIVO (dpkg-deb)
+      # Sin Tauri, sin Rust, sin linuxdeploy: un .deb clásico que instala el
+      # servicio systemd, genera credenciales y crea los accesos directos.
+      - name: "Construir .deb nativo (dpkg-deb: payload + postinst + shortcuts)"
+        run: bun installer/linux/build-deb.ts --staging=dist/release/linux/ViewLBA-Server --version="$VERSION" --out=dist/release/linux/out
+
+      # VALIDACIÓN REAL: instalar el .deb EN ESTE RUNNER (systemd presente) y
+      # demostrar que el servidor queda EN EJECUCIÓN con health 200. Nada de
+      # «estructura correcta»: instalación de verdad, como la del usuario.
+      - name: "VALIDACIÓN REAL: dpkg -i → servicio activo + health + start/stop + purge"
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          DEB="dist/release/linux/out/ViewLBA-Server-$VERSION-x86_64.deb"
+          test -s "$DEB" || { echo "✗ falta el .deb"; exit 1; }
+
+          echo "→ instalando el .deb (postinst: systemd + DB + admin + arranque)…"
+          sudo dpkg -i "$DEB"
+
+          echo "→ servicio activo:"
+          systemctl is-active pantalla-restaurante.service
+          systemctl is-enabled pantalla-restaurante.target
+
+          echo "→ health (hasta 120 s — primer arranque + migraciones):"
+          ok=""
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:3000/api/health > /tmp/health.json 2>/dev/null; then ok=1; break; fi
+            sleep 2
+          done
+          [[ -n "$ok" ]] || { echo "✗ /api/health sin respuesta"; sudo viewlba-server logs || true; exit 1; }
+          cat /tmp/health.json; echo
+
+          echo "→ credenciales + accesos:"
+          sudo test -s /opt/viewlba-server/CREDENCIALES.txt
+          test -f /usr/share/applications/viewlba-panel.desktop
+          test -f /usr/share/applications/viewlba-start.desktop
+          test -x /usr/bin/viewlba-server
+          sudo viewlba-server status | grep -E "pantalla-restaurante" | head -3
+
+          echo "→ ciclo stop/start (los botones del usuario):"
+          sudo viewlba-server stop   || true
+          sleep 2
+          systemctl is-active pantalla-restaurante.service || true  # puede quedar activando/apagando
+          for i in $(seq 1 15); do
+            st=$(systemctl is-active pantalla-restaurante.service || true)
+            [[ "$st" == "inactive" || "$st" == "failed" ]] && break
+            sleep 2
+          done
+          sudo viewlba-server start
+          for i in $(seq 1 30); do
+            systemctl is-active --quiet pantalla-restaurante.service && break
+            sleep 2
+          done
+          systemctl is-active pantalla-restaurante.service
+          echo "✓ ciclo stop/start correcto"
+
+          echo "→ purge (desinstalación completa):"
+          sudo dpkg --purge viewlba-server > /dev/null 2>&1 || sudo dpkg --purge viewlba-server
+          # tras purge, los servicios deben desaparecer
+          if systemctl list-unit-files | grep -q "^pantalla-restaurante"; then
+            echo "::warning::unidades residuales tras purge"
+          fi
+          sudo rm -rf /var/lib/pantalla-restaurante /opt/pantalla-restaurante 2>/dev/null || true
+          echo "✓ .deb VALIDADO en un Linux real (instalación + servicio + health + control + purge)"
+
+      - name: "Liberar disco (entorno de build fuera — el .deb ya está validado)"
         run: |
           rm -rf node_modules .next mini-services/realtime-service/node_modules mini-services/stream-service/node_modules
           rm -rf /tmp/viewlba-bundle /tmp/viewlba-smoke-* /tmp/pre.txt
           df -h / | tail -1
 
-      # ---- Tauri (GUI) ----
-      - name: Dependencias de sistema para Tauri (Linux)
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev build-essential curl wget file \
-            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
-            libgdk-pixbuf-2.0-dev shared-mime-info \
-            gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav
-
-      - name: Rust toolchain (stable, exacta)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-
-      - name: tauri-cli (versión EXACTA + lockfile)
-        run: cargo install tauri-cli --version "${TAURI_CLI}" --locked
-
-      - name: "Sidecar → src-tauri/binaries (sufijo target de Tauri)"
-        run: |
-          mkdir -p installer/gui/src-tauri/binaries
-          cp dist/release/linux/ViewLBA-Server/viewlba-installer \
-             installer/gui/src-tauri/binaries/viewlba-installer-x86_64-unknown-linux-gnu
-
-      # Misma estructura que los globs de tauri.conf (relativos a src-tauri).
-      # cp -a (SIN -L): el staging ya está desreferenciado; preserva el symlink
-      # bunx→bun (88 MB menos en deb/AppImage).
-      - name: "Payload → src-tauri/resources"
-        run: |
-          mkdir -p installer/gui/src-tauri/resources
-          cp -a dist/release/linux/ViewLBA-Server/resources/server installer/gui/src-tauri/resources/server
-          cp -a dist/release/linux/ViewLBA-Server/runtime installer/gui/src-tauri/resources/runtime
-          cp dist/release/linux/ViewLBA-Server/manifest.json installer/gui/src-tauri/resources/
-          # aserciones del contrato (fallan antes de compilar Tauri)
-          test -f installer/gui/src-tauri/resources/server/package.json
-          test -f installer/gui/src-tauri/resources/server/.next/standalone/server.js
-          test -d installer/gui/src-tauri/resources/server/node_modules/prisma
-          test -d installer/gui/src-tauri/resources/server/node_modules/@prisma/engines
-          test -x installer/gui/src-tauri/resources/runtime/bun
-          test -f installer/gui/src-tauri/resources/manifest.json
-
-      # .deb y .AppImage SEPARADOS: un fallo de linuxdeploy/AppImage NO puede
-      # tumbar el .deb (prioridad de la misión). El deb es OBLIGATORIO.
-      - name: "Construir .deb (OBLIGATORIO — sin linuxdeploy)"
-        working-directory: installer/gui/src-tauri
-        run: cargo tauri build --bundles deb --ci
-        env:
-          TAURI_BUNDLER_TOOLS_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # El .deb se copa a zona segura INMEDIATAMENTE (luego se libera target/)
-      - name: "Respaldar .deb a out/ (antes de liberar Rust)"
-        run: |
-          set -euo pipefail
-          mkdir -p dist/release/linux/out
-          DEB_SRC=$(ls installer/gui/src-tauri/target/release/bundle/deb/*.deb | head -1)
-          test -s "$DEB_SRC" || { echo "✗ el build del .deb no produjo archivo"; exit 1; }
-          cp "$DEB_SRC" "dist/release/linux/out/ViewLBA-Server-$VERSION-x86_64.deb"
-          ls -la dist/release/linux/out/
-
-      # AppImage GUI — MANUAL y determinista (installer/package/appimage-gui.sh):
-      # tauri-bundler mete el sidecar en usr/bin y linuxdeploy muere con
-      # "Failed to run ldd" (binarios standalone de bun). El script arma el
-      # AppDir propio (sidecar en usr/lib/…/bin — reproducido y verificado)
-      # y llama linuxdeploy DIRECTO con los mismos plugins. Aislado del .deb
-      # (continue-on-error: el AppImage GUI es opcional según la misión).
-      - name: "Construir AppImage GUI (manual — linuxdeploy directo, aislado)"
-        continue-on-error: true
-        run: bash installer/package/appimage-gui.sh dist/release/linux/ViewLBA-Server installer/gui/src-tauri/target/release/viewlba-installer-gui "$VERSION"
-
-      # HIGIENE DE DISCO (2ª fase): Rust target (~2.5GB) + resources duplicados
-      # ya cumplieron su función — el .deb está respaldado en out/ y el AppImage
-      # GUI (si se construyó) ya quedó en out/ con su nombre público.
-      - name: "Liberar Rust + resources (los bundles ya están en out/)"
-        run: |
-          set -uo pipefail
-          if [[ ! -s "dist/release/linux/out/ViewLBA-Server-$VERSION-x86_64.AppImage" ]]; then
-            echo "::warning::AppImage GUI no construido (opcional) — el .deb y el CLI siguen siendo válidos"
-          fi
-          rm -rf installer/gui/src-tauri/target installer/gui/src-tauri/resources installer/gui/src-tauri/binaries
-          rm -rf ~/.cargo/registry/cache ~/.cargo/registry/src
-          df -h / | tail -1
-
-      # ---- CLI AppImage (headless — el mismo payload, sin linuxdeploy) ----
+      # ---- CLI AppImage (headless — appimagetool directo, sin linuxdeploy) ----
       - name: AppImage CLI (headless, appimagetool directo)
         run: bash installer/package/appimage.sh dist/release/linux/ViewLBA-Server
 
@@ -195,41 +179,27 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN=1 "$IMG" --cli preflight < /dev/null | tee /tmp/pre.txt
           grep -q "systemd" /tmp/pre.txt || echo "::warning::preflight sin menciones de systemd"
 
-      # ---- Validación de artefactos (§14: fallar si falta/corrupto) ----
-      # El .deb (y el AppImage GUI si existe) YA están en out/ con su nombre
-      # público (respaldados antes de liberar Rust). Aquí se VALIDAN.
-      - name: "Validar artefactos (.deb con dpkg-deb + CLI AppImage + nombres)"
+      # ---- Validación final de artefactos (§14) ----
+      - name: "Validar artefactos finales (.deb + CLI AppImage + nombres)"
         run: |
           set -euo pipefail
           OUT=dist/release/linux/out
           DEB_OUT="$OUT/ViewLBA-Server-$VERSION-x86_64.deb"
-
-          # Validación REAL del .deb: metadata + contenido + payload dentro
           test -s "$DEB_OUT" || { echo "✗ .deb vacío o ausente"; exit 1; }
           dpkg-deb --info "$DEB_OUT" > /tmp/deb-info.txt
           dpkg-deb --contents "$DEB_OUT" > /tmp/deb-contents.txt
-          grep -q "Package: " /tmp/deb-info.txt
-          grep -q "usr/lib/" /tmp/deb-contents.txt
-          grep -q "resources/server/package.json" /tmp/deb-contents.txt \
-            || { echo "✗ el .deb NO contiene el payload del servidor"; exit 1; }
-          grep -q "resources/server/node_modules/prisma" /tmp/deb-contents.txt \
-            || { echo "✗ el .deb NO contiene el node_modules de runtime"; exit 1; }
+          grep -q "Package: viewlba-server" /tmp/deb-info.txt
+          grep -q "opt/viewlba-server/viewlba-installer" /tmp/deb-contents.txt \
+            || { echo "✗ el .deb NO contiene el sidecar del installer"; exit 1; }
+          grep -q "opt/viewlba-server/runtime/bun" /tmp/deb-contents.txt \
+            || { echo "✗ el .deb NO contiene el runtime bun (autosuficiencia)"; exit 1; }
+          grep -q "usr/share/applications/viewlba-panel.desktop" /tmp/deb-contents.txt \
+            || { echo "✗ el .deb NO crea accesos directos"; exit 1; }
+          grep -q "DEBIAN/postinst" /tmp/deb-contents.txt
           echo "✓ .deb validado (dpkg-deb --info/--contents): $(du -h "$DEB_OUT" | cut -f1)"
-
-          # AppImage GUI: SOLO si se construyó (opcional — respaldado antes)
-          APPIMG_OUT="$OUT/ViewLBA-Server-$VERSION-x86_64.AppImage"
-          if [[ -s "$APPIMG_OUT" ]]; then
-            echo "✓ AppImage GUI incluido: $(du -h "$APPIMG_OUT" | cut -f1)"
-          else
-            rm -f "$APPIMG_OUT"
-            echo "::warning::AppImage GUI no construido (opcional) — el .deb y el CLI siguen siendo válidos"
-          fi
-
-          # CLI AppImage con nombre versionado
           CLI_OUT="$OUT/ViewLBA-Server-CLI-$VERSION-x86_64.AppImage"
           test -s dist/release/linux/ViewLBA-Server-CLI.AppImage || { echo "✗ falta el AppImage CLI"; exit 1; }
           cp dist/release/linux/ViewLBA-Server-CLI.AppImage "$CLI_OUT"
-
           ls -la "$OUT/"
 
       - name: Manifiest del build (commit ↔ binario)
@@ -237,14 +207,12 @@ jobs:
           bun installer/package/build-manifest.ts \
             --staging=dist/release/linux/ViewLBA-Server \
             --artifact="dist/release/linux/out/ViewLBA-Server-$VERSION-x86_64.deb" \
-            --tauri="$TAURI_CLI" \
             --out=dist/release/linux/out/manifest-linux.json
 
       - name: SHA256SUMS (Linux — nombres públicos finales)
         run: |
           cd dist/release/linux/out
           rm -f SHA256SUMS.txt && sha256sum -- *.deb *.AppImage manifest-linux.json > SHA256SUMS.txt
-          # sidecar .sha256 del CLI (compatibilidad con la V1)
           sha256sum "ViewLBA-Server-CLI-$VERSION-x86_64.AppImage" > "ViewLBA-Server-CLI-$VERSION-x86_64.AppImage.sha256"
           cat SHA256SUMS.txt
 
@@ -254,12 +222,12 @@ jobs:
           name: viewlba-linux-installer
           path: dist/release/linux/out/*
           retention-days: 14
-          # §14: verde SOLO si hay instalador — nunca "warn" con la misión vacía
+          # §14: verde SOLO si hay instalador
           if-no-files-found: error
 
   # ---------------------------------------------------------------- Windows
   build-windows:
-    name: "Windows: payload + Setup.exe (NSIS)"
+    name: "Windows: payload + Setup.exe NSIS (validación REAL)"
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -269,7 +237,6 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUILD_BUN }}
-          # NOTA: el input `cache` NO está soportado (warning) — no usarlo.
 
       - name: Dependencias del repo (entorno de build)
         run: bun install --frozen-lockfile
@@ -283,29 +250,17 @@ jobs:
       - name: Prisma Client (entorno de build — engines de WINDOWS)
         run: bunx prisma generate
 
-      # NOTA: la suite tests/installer/ se ejecuta en el job de LINUX (donde
-      # está diseñada y verde: paths POSIX, chmod 600, protocolo de spawn).
-      # Windows valida AQUÍ con evidencia REAL del entregable: guards del
-      # payload, contrato estructural (entrypoint/engines/sidecars/0 symlinks)
-      # y el sidecar .exe EJECUTÁNDOSE (--json detect) antes de NSIS.
-
       - name: Versión de release (del tag o del package.json)
         shell: bash
         run: |
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then V="${GITHUB_REF_NAME#v}"; else V=$(bun -e 'console.log(require("./package.json").version)'); fi
           echo "VERSION=$V" >> "$GITHUB_ENV"
 
-      - name: Inyectar versión en Tauri
-        shell: bash
-        run: |
-          bun -e 'const fs=require("fs");const f="installer/gui/src-tauri/tauri.conf.json";const j=JSON.parse(fs.readFileSync(f,"utf8"));j.version=process.argv[1];fs.writeFileSync(f,JSON.stringify(j,null,2)+"\n")' "$VERSION"
-
       - name: "Payload de producción (bundle-server: createProductionPayload + guards)"
         shell: bash
         run: bun installer/package/bundle-server.ts --platform=windows --version="$VERSION" --bun-version="${PAYLOAD_BUN}"
 
-      # Smoke estructural Windows (§17): el payload no puede ejecutarse aquí
-      # (bun .exe + service manager), pero el CONTRATO se verifica entero.
+      # Smoke estructural Windows (§17): contrato completo del payload.
       - name: "Smoke del payload (contrato Windows: entrypoint + engines + sidecars + 0 symlinks)"
         shell: bash
         run: |
@@ -324,8 +279,6 @@ jobs:
           [[ "$LINKS" -eq 0 ]] || { echo "✗ $LINKS symlink(s) en el payload (NSIS no puede empaquetarlos)"; find "$SRV" -type l; exit 1; }
           echo "✓ contrato Windows OK: entrypoint + engines + sidecars + 0 symlinks"
 
-      # El sidecar .exe se ejecuta AQUÍ (Windows REAL) — detect estructurado.
-      # timeout-minutes: si el binario se cuelga, evidencia rápida (no 60min).
       - name: Smoke del sidecar (detect en Windows REAL)
         shell: bash
         timeout-minutes: 3
@@ -333,70 +286,136 @@ jobs:
           ./dist/release/windows/ViewLBA-Server/viewlba-installer.exe --json detect | head -c 200
           echo
 
-      - name: Rust toolchain (stable, exacta)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
+      # ------------------------------------------------ Setup.exe (NSIS puro)
+      # NSIS viene preinstalado en los runners de Windows (C:\Program Files
+      # (x86)\NSIS\makensis.exe); fallback a chocolatey por si cambia la imagen.
+      - name: "Localizar makensis (NSIS 3 — preinstalado en el runner)"
+        shell: pwsh
+        run: |
+          $cand = @(
+            "C:\Program Files (x86)\NSIS\makensis.exe",
+            "C:\Program Files\NSIS\makensis.exe"
+          ) + (@($env:PATH -split ';' | ForEach-Object { Join-Path $_ 'makensis.exe' }))
+          $nsis = $cand | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $nsis) {
+            Write-Host "makensis no encontrado — instalando via chocolatey…"
+            choco install -y nsis | Out-Null
+            $nsis = "C:\Program Files (x86)\NSIS\makensis.exe"
+          }
+          Write-Host "makensis: $nsis"
+          if (-not (Test-Path $nsis)) { throw "makensis no disponible" }
+          Add-Content $env:GITHUB_ENV "MAKENSIS=$nsis"
 
-      - name: tauri-cli (versión EXACTA + lockfile)
-        shell: bash   # pwsh NO expande ${TAURI_CLI} (bug real del run 34430975096: versión vacía)
-        run: cargo install tauri-cli --version "${TAURI_CLI}" --locked
+      - name: "Construir Setup.exe (NSIS: payload + servicio + bandeja + accesos)"
+        shell: pwsh
+        run: |
+          $out = "dist/release/windows/out"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          # Rutas ABSOLUTAS (makensis resuelve las relativas contra el
+          # directorio del SCRIPT, no contra el CWD — ver nota en el .nsi).
+          $payload = (Resolve-Path "dist/release/windows/ViewLBA-Server").Path
+          $outExe = "$PWD/dist/release/windows/out/ViewLBA-Server-Setup-$env:VERSION.exe"
+          $log = & $env:MAKENSIS `
+            "-DVERSION=$env:VERSION" `
+            "-DPAYLOAD=$payload" `
+            "-DOUT_EXE=$outExe" `
+            "installer/windows/viewlba-setup.nsi" 2>&1
+          $log | Write-Host
+          if ($LASTEXITCODE -ne 0) { throw "makensis falló ($LASTEXITCODE)" }
+          $exe = "$out/ViewLBA-Server-Setup-$env:VERSION.exe"
+          if (-not (Test-Path $exe)) { throw "no se produjo $exe" }
+          Write-Host "✓ Setup.exe: $((Get-Item $exe).Length / 1MB) MB"
 
-      - name: "Sidecar → src-tauri/binaries (sufijo target de Tauri)"
+      # VALIDACIÓN REAL: instalar el Setup.exe EN ESTE RUNNER de Windows, en
+      # silencioso (/S), y demostrar que el servicio queda corriendo con
+      # /api/health 200. Igual que lo hará el usuario (doble clic → listo).
+      - name: "VALIDACIÓN REAL: Setup.exe /S → servicio + health + net stop/start + uninstall"
+        shell: pwsh
+        timeout-minutes: 15
+        run: |
+          $exe = "dist/release/windows/out/ViewLBA-Server-Setup-$env:VERSION.exe"
+          if (-not (Test-Path $exe)) { throw "falta el Setup.exe" }
+
+          Write-Host "→ instalación silenciosa (como el usuario, sin preguntas)…"
+          $p = Start-Process -FilePath $exe -ArgumentList "/S" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "la instalación silenciosa falló (código $($p.ExitCode))" }
+
+          Write-Host "→ servicio registrado y corriendo:"
+          $svc = Get-Service -Name PantallaRestaurante -ErrorAction SilentlyContinue
+          if (-not $svc) { throw "el servicio PantallaRestaurante NO existe" }
+          $deadline = (Get-Date).AddSeconds(180)
+          while ((Get-Date) -lt $deadline) {
+            $svc = Get-Service PantallaRestaurante
+            if ($svc.Status -eq 'Running') { break }
+            Start-Sleep 3
+          }
+          if ((Get-Service PantallaRestaurante).Status -ne 'Running') {
+            Write-Host "estado: $((Get-Service PantallaRestaurante).Status)"
+            C:\ViewLBA\viewlba-installer.exe diagnostics 2>&1 | Write-Host
+            throw "el servicio no quedó Running"
+          }
+          Write-Host "✓ PantallaRestaurante: Running"
+
+          Write-Host "→ health (hasta 180 s — primer arranque):"
+          $ok = $false
+          $deadline = (Get-Date).AddSeconds(180)
+          while ((Get-Date) -lt $deadline) {
+            try {
+              $r = Invoke-WebRequest -Uri "http://localhost:3000/api/health" -TimeoutSec 5 -UseBasicParsing
+              if ($r.StatusCode -eq 200) { $ok = $true; break }
+            } catch { Start-Sleep 3 }
+          }
+          if (-not $ok) {
+            C:\ViewLBA\viewlba-installer.exe logs 2>&1 | Write-Host
+            throw "/api/health sin respuesta"
+          }
+          Write-Host "✓ /api/health 200"
+
+          Write-Host "→ credenciales, accesos y bandeja:"
+          foreach ($f in @("C:\ViewLBA\CREDENCIALES.txt", "C:\ViewLBA\viewlba.ico", "C:\ViewLBA\tray\ViewLBA-Tray.ps1")) {
+            if (-not (Test-Path $f)) { throw "falta $f" }
+          }
+          $desk = [Environment]::GetFolderPath('Desktop')
+          $sh = New-Object -ComObject WScript.Shell
+          foreach ($n in @("ViewLBA - Panel", "ViewLBA - Iniciar servidor", "ViewLBA - Detener servidor", "ViewLBA - Credenciales", "ViewLBA - Bandeja")) {
+            if (-not (Test-Path "$desk\$n.lnk")) { throw "falta el acceso directo: $desk\$n.lnk" }
+          }
+          # el tray-script compila (sintaxis PowerShell) sin errores
+          $err = powershell.exe -NoProfile -Command "try { [void][System.Management.Automation.Language.Parser]::ParseFile('C:\ViewLBA\tray\ViewLBA-Tray.ps1', [ref]$null, [ref]\$e); if (\$e) { exit 1 } } catch { exit 1 }; exit 0"
+          if ($LASTEXITCODE -ne 0) { Write-Host "::warning::el parser reportó problemas en ViewLBA-Tray.ps1" }
+
+          Write-Host "→ ciclo stop/start (los botones del usuario):"
+          net stop PantallaRestaurante | Write-Host
+          Start-Sleep 2
+          if ((Get-Service PantallaRestaurante).Status -ne 'Stopped') { throw "no se detuvo" }
+          net start PantallaRestaurante | Write-Host
+          $deadline = (Get-Date).AddSeconds(60)
+          while ((Get-Date) -lt $deadline -and (Get-Service PantallaRestaurante).Status -ne 'Running') { Start-Sleep 2 }
+          if ((Get-Service PantallaRestaurante).Status -ne 'Running') { throw "no arrancó de nuevo" }
+          Write-Host "✓ stop/start correcto"
+
+          Write-Host "→ desinstalación (conserva datos, quita servicio + accesos):"
+          $u = Start-Process -FilePath "C:\ViewLBA\uninstall.exe" -ArgumentList "/S" -Wait -PassThru
+          if ($u.ExitCode -ne 0) { throw "el desinstalador falló ($($u.ExitCode))" }
+          if (Get-Service PantallaRestaurante -ErrorAction SilentlyContinue) { throw "el servicio sigue existiendo tras desinstalar" }
+          $desk = [Environment]::GetFolderPath('Desktop')
+          if (Test-Path "$desk\ViewLBA - Panel.lnk") { Write-Host "::warning::acceso residual en el escritorio" }
+          Write-Host "✓ Setup.exe VALIDADO en un Windows real (servicio + health + control + uninstall)"
+
+      - name: "Liberar disco (entorno de build fuera)"
         shell: bash
         run: |
-          mkdir -p installer/gui/src-tauri/binaries
-          cp dist/release/windows/ViewLBA-Server/viewlba-installer.exe \
-             installer/gui/src-tauri/binaries/viewlba-installer-x86_64-pc-windows-msvc.exe
+          rm -rf node_modules .next mini-services/realtime-service/node_modules mini-services/stream-service/node_modules
+          df -h / | tail -1 || true
 
-      # Misma estructura que los globs de tauri.conf (relativos a src-tauri).
-      - name: "Payload → src-tauri/resources"
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p installer/gui/src-tauri/resources
-          cp -aL dist/release/windows/ViewLBA-Server/resources/server installer/gui/src-tauri/resources/server
-          cp -aL dist/release/windows/ViewLBA-Server/runtime installer/gui/src-tauri/resources/runtime
-          cp dist/release/windows/ViewLBA-Server/manifest.json installer/gui/src-tauri/resources/
-          test -f installer/gui/src-tauri/resources/server/package.json
-          test -f installer/gui/src-tauri/resources/server/.next/standalone/server.js
-          test -d installer/gui/src-tauri/resources/server/node_modules/prisma
-          test -f installer/gui/src-tauri/resources/runtime/bun.exe
-          test -f installer/gui/src-tauri/resources/runtime/nssm.exe
-          test -f installer/gui/src-tauri/resources/manifest.json
-
-      # NSIS desde ruta CORTA (C:\v — 26 chars de prefijo): el payload V2 ya
-      # cabe con holgura en MAX_PATH (ruta máx 125), pero el margen adicional
-      # es gratis. FIX del run 59d74c4: se copia el directorio gui COMPLETO
-      # (src-tauri + ui) — copiar solo src-tauri rompía frontendDist "../ui"
-      # (resolvía a C:\ui inexistente → "Unable to find your web assets").
-      - name: "Construir Setup.exe (NSIS desde C:\\v — ruta corta)"
-        shell: bash
-        run: |
-          rm -rf /c/v
-          mkdir -p /c/v
-          cp -a installer/gui /c/v/gui
-          cd /c/v/gui/src-tauri
-          cargo tauri build --bundles nsis --ci
-          mkdir -p "$GITHUB_WORKSPACE/installer/gui/src-tauri/target/release/bundle"
-          cp -a /c/v/gui/src-tauri/target/release/bundle/nsis "$GITHUB_WORKSPACE/installer/gui/src-tauri/target/release/bundle/"
-        env:
-          TAURI_BUNDLER_TOOLS_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # ---- Validación de artefactos (§14) ----
-      - name: "Validar y renombrar artefacto (exactamente UN .exe, > 0 bytes, PE válido)"
+      - name: "Validar y renombrar artefacto (PE/MZ, >0 bytes)"
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist/release/windows/out
-          EXE_SRC=$(ls installer/gui/src-tauri/target/release/bundle/nsis/*-setup.exe | head -1)
-          test -s "$EXE_SRC" || { echo "✗ Setup.exe vacío o ausente"; exit 1; }
-          COUNT=$(ls installer/gui/src-tauri/target/release/bundle/nsis/*-setup.exe | wc -l)
-          [[ "$COUNT" -eq 1 ]] || { echo "✗ se esperaba exactamente 1 instalador, hay $COUNT"; exit 1; }
-          # cabecera PE (MZ) — no un archivo corrupto/vacío
-          head -c 2 "$EXE_SRC" | grep -q "MZ" || { echo "✗ no es un PE válido (falta MZ)"; exit 1; }
           EXE_OUT="dist/release/windows/out/ViewLBA-Server-Setup-$VERSION.exe"
-          cp "$EXE_SRC" "$EXE_OUT"
+          test -s "$EXE_OUT" || { echo "✗ Setup.exe vacío o ausente"; exit 1; }
+          head -c 2 "$EXE_OUT" | grep -q "MZ" || { echo "✗ no es un PE válido (falta MZ)"; exit 1; }
           echo "✓ Setup.exe validado (PE/MZ, >0 bytes): $(du -h "$EXE_OUT" | cut -f1)"
 
       - name: Manifiest del build (commit ↔ binario)
@@ -405,7 +424,6 @@ jobs:
           bun installer/package/build-manifest.ts \
             --staging=dist/release/windows/ViewLBA-Server \
             --artifact="dist/release/windows/out/ViewLBA-Server-Setup-$VERSION.exe" \
-            --tauri="$TAURI_CLI" \
             --out=dist/release/windows/out/manifest-windows.json
 
       - name: SHA256SUMS (Windows)
@@ -529,7 +547,7 @@ jobs:
           # El APK debe estar FIRMADO: evidencia de apksigner dentro del artifact
           grep -q "Verified using v2 scheme" "$APKVERIFY" || { echo "✗ el APK no pasó apksigner verify"; exit 1; }
           grep -q "Verified using v3 scheme" "$APKVERIFY" || { echo "✗ el APK no pasó apksigner v3"; exit 1; }
-          echo "✓ conjunto completo: exe + deb + CLI AppImage + APK firmado + checksums"
+          echo "✓ conjunto completo: Setup.exe + .deb + CLI AppImage + APK firmado + checksums"
 
       - name: SHA256SUMS.txt consolidado (nombres públicos)
         run: |
@@ -540,7 +558,7 @@ jobs:
           find . ../dist/manual -type f \( -name "*.exe" -o -name "*.deb" -o -name "*.AppImage" -o -name "ViewLBA-License-Generator-v*.apk" -o -name "ViewLBA-Manual-Usuario-v*.pdf" \) -print0 \
             | while IFS= read -r -d '' f; do b=$(basename "$f"); sha256sum "$f" | awk -v b="$b" '{print $1 "  " b}'; done > ../SHA256SUMS.txt
           cat ../SHA256SUMS.txt
-          # sanity: 5+ entradas (exe, deb, CLI appimage [+ GUI appimage] + APK + manual)
+          # sanity: 5+ entradas (exe, deb, CLI appimage + APK + manual)
           LINES=$(wc -l < ../SHA256SUMS.txt)
           [[ "$LINES" -ge 5 ]] || { echo "✗ menos de 5 binarios/documentos en el release"; exit 1; }
 
@@ -552,7 +570,7 @@ jobs:
             dist/manual/ViewLBA-Manual-Usuario-v*.pdf
             artifacts/**/ViewLBA-Server-Setup-*.exe
             artifacts/**/ViewLBA-Server-*-x86_64.deb
-            artifacts/**/ViewLBA-Server-*-x86_64.AppImage
+            artifacts/**/ViewLBA-Server-CLI-*.AppImage
             artifacts/**/ViewLBA-License-Generator-v*.apk
             artifacts/**/LicenseGenerator-SHA256SUMS.txt
             artifacts/**/LicenseGenerator-VERIFY.txt

@@ -8,17 +8,24 @@
 
 | Artefacto | Contenido | Dónde se construye |
 |---|---|---|
-| `ViewLBA-Server-<ver>-x86_64.deb` | Paquete Debian (bundle Tauri, obligatorio) | CI (Linux) |
-| `ViewLBA-Server-<ver>-x86_64.AppImage` | GUI (Tauri) + modo `--cli` + payload (opcional) | CI (Linux) |
-| `ViewLBA-Server-CLI-<ver>-x86_64.AppImage` | Solo CLI + payload (headless, sin GUI) | CI y local (`installer/package/appimage.sh`) |
-| `ViewLBA-Server-Setup-<ver>.exe` | Instalador Windows (NSIS, GUI + sidecar) | CI (Windows) |
+| `ViewLBA-Server-<ver>-x86_64.deb` | **.deb NATIVO (dpkg-deb puro, sin Tauri/Rust)** — instala y ARRANCA el servicio systemd + credenciales + accesos | CI (Linux, `installer/linux/build-deb.ts`) |
+| `ViewLBA-Server-CLI-<ver>-x86_64.AppImage` | Solo CLI + payload (headless) | CI y local (`installer/package/appimage.sh`) |
+| `ViewLBA-Server-Setup-<ver>.exe` | **Setup.exe NATIVO (NSIS puro, sin Tauri/Rust)** — instala TODO + servicio + bandeja + accesos de escritorio | CI (Windows, `installer/windows/viewlba-setup.nsi`) |
 
 Todos con `SHA256SUMS` verificable y `manifest-{linux,windows}.json`
 (commit ↔ binario). El payload es **completamente offline**: lleva el
 servidor (**payload de PRODUCCIÓN**: standalone trazado por Next +
-`node_modules` PODADO a runtime deps + scripts de runtime), build
-precompilado, **Bun** (MIT) y, en Windows, **NSSM**. El usuario no instala
-dependencias a mano ni clona GitHub.
+`node_modules` PODADO a runtime deps + scripts de runtime + **plantillas
+systemd `deploy/linux/`**), build precompilado, **Bun** (MIT) y, en
+Windows, **NSSM**. El usuario no instala dependencias a mano ni clona
+GitHub: **ni node ni bun** — el runtime va DENTRO del paquete.
+
+> **v3.2 — Instaladores SIMPLES por decisión de producto**: se retiró la
+> GUI (Tauri) del camino de release. Windows = Setup.exe NSIS con bandeja
+> del sistema (clic derecho: Iniciar/Detener/Panel) y accesos en el
+> escritorio; Linux = .deb que registra y arranca el servicio systemd
+> automáticamente. Ambos se VALIDAN EN CI instalándolos en un runner real
+> (servicio + `/api/health` + start/stop + desinstalación).
 
 > **BUILD deps ≠ RUNTIME deps**: el entorno de build (repo completo) vive en
 > CI; el payload distribuido es EXPLÍCITO (~450 MB, guard-validado).

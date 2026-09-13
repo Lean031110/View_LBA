@@ -17,7 +17,7 @@ dependencia de un servidor de licencias en Internet.
 | Retroceso del reloj para revivir licencia/trial | Reloj efectivo high-water + `clockTampered` sticky (tolerancia 2 h) |
 | Token truncado/alterado/excesivo/futuro | Validación estructural estricta antes de criptografía |
 | Extracción de la clave privada del servidor | **No hay clave privada en el servidor** (solo públicas) |
-| Extracción de claves del generador Android | SQLCipher + Keystore + PIN/biometría (ver abajo) |
+| Extracción de claves del generador Android | SQLCipher + PIN (PBKDF2 150k + AES-256-GCM; v3.2: envoltura simple portable, sin Keystore) |
 | Secretos en el repo/historial/CI | gitleaks + greps anti-clave + análisis del artifact APK |
 
 ## Regla de oro de las claves
@@ -30,10 +30,18 @@ App Android admin = claves PRIVADAS (Ed25519 firma + X25519 apertura)
 La privada **nunca** está en: el repo, el bundle del servidor, el
 instalador, la TV, logs, artifacts públicos, BuildConfig, assets o strings.
 Vive cifrada (SQLCipher) en el teléfono del administrador, protegida por
-Android Keystore (envoltura AES-GCM con `setUserAuthenticationRequired`,
-hardware-backed cuando existe TEE/StrongBox) y por el PIN (PBKDF2-SHA256,
-150 000 iteraciones). El único canal de salida es el **backup .vlbak**
+el **PIN del administrador** (PBKDF2-HMAC-SHA256, 150 000 iteraciones +
+AES-256-GCM). El único canal de salida es el **backup .vlbak**
 (AES-256-GCM con contraseña del administrador + SHA-256 externo).
+
+> **Nota v3.2**: hasta la v3.1 la master key llevaba una envoltura
+> adicional por Android Keystore ligada a biometría. Se retiró por decisión
+> de producto (el usuario pidió «solo un PIN simple, sin datos
+> biométricos») y porque en dispositivos reales con biometría inscrita el
+> primer uso quedaba atascado (`UserNotAuthenticatedException` al cifrar
+> sin un BiometricPrompt visible). El cifrado en reposo (SQLCipher) y la
+> envoltura por PIN se conservan íntegros; los vaults ≤3.1 siguen
+> desbloqueándose con su PIN y migran al formato nuevo al cambiarlo.
 
 ## Sellado de solicitudes (VLREQ2)
 

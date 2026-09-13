@@ -5,21 +5,19 @@
 
     <!-- Primer uso / desbloqueo -->
     <string name="first_use_title">Configura tu PIN de acceso</string>
-    <string name="first_use_hint">La base de datos local (claves y licencias) se cifra con una clave maestra protegida por Android Keystore y por este PIN. Si pierdes el PIN Y el backup, no hay recuperación.</string>
-    <string name="pin1_hint">PIN (6–16 caracteres)</string>
+    <string name="first_use_hint">La base de datos local (claves y licencias) se cifra con una clave maestra protegida por este PIN. Si pierdes el PIN Y el backup, no hay recuperación.</string>
+    <string name="pin1_hint">PIN (4–16 caracteres)</string>
     <string name="pin2_hint">Repite el PIN</string>
     <string name="btn_create_pin">Crear bóveda</string>
     <string name="vault_created">Bóveda creada — guarda tu backup .vlbak pronto</string>
-    <string name="pin_policy">El PIN debe tener entre 6 y 16 caracteres</string>
+    <string name="vault_working">Creando/desbloqueando la bóveda…</string>
+    <string name="pin_policy">El PIN debe tener entre 4 y 16 caracteres</string>
     <string name="pin_mismatch">Los PIN no coinciden</string>
     <string name="unlock_title">Generador bloqueado</string>
-    <string name="unlock_hint">Introduce tu PIN o usa la biometría</string>
+    <string name="unlock_hint">Introduce tu PIN para desbloquear</string>
     <string name="unlock_pin_hint">PIN</string>
     <string name="btn_unlock">Desbloquear</string>
-    <string name="btn_biometric">Usar biometría</string>
     <string name="pin_wrong">PIN incorrecto</string>
-    <string name="biometric_title">Desbloquear generador</string>
-    <string name="biometric_subtitle">Se requiere tu huella para abrir la bóveda</string>
     <string name="locked_error">La bóveda está bloqueada — desbloquea de nuevo</string>
 
     <!-- Home -->

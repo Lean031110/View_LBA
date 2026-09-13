@@ -22,15 +22,14 @@ import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.biometric.BiometricManager
-import androidx.biometric.BiometricPrompt
-import androidx.core.content.ContextCompat
+import com.viewlba.licensegen.BuildConfig
 import com.viewlba.licensegen.R
 import com.viewlba.licensegen.backup.BackupEnvelope
 import com.viewlba.licensegen.core.IssueOptions
 import com.viewlba.licensegen.core.LicenseEngine
 import com.viewlba.licensegen.core.LicenseRecord
 import com.viewlba.licensegen.core.RequestPayload
+import com.viewlba.licensegen.crypto.CryptoBox
 import com.viewlba.licensegen.db.Db
 import com.viewlba.licensegen.db.MasterKeyVault
 import com.viewlba.licensegen.util.Fmt
@@ -40,10 +39,13 @@ import java.util.concurrent.Executors
 /**
  * ViewLBA License Generator — app PRIVADA del administrador.
  *
- * Seguridad:
- *  · DB SQLCipher cifrada; master key envuelta por Android Keystore
- *    (biometría) y por PIN (PBKDF2).
- *  · Desbloqueo: biometría (CryptoObject) o PIN.
+ * Seguridad (v3.2 — SIMPLE, decisión de producto):
+ *  · DB SQLCipher cifrada; master key envuelta SOLO por el PIN del
+ *    administrador (PBKDF2-HMAC-SHA256 150k + AES-256-GCM). SIN biometría
+ *    y SIN Android Keystore: un dispositivo real (Samsung S22 Ultra) quedaba
+ *    atascado en la primera pantalla por UserNotAuthenticatedException del
+ *    Keystore al crear la bóveda. El PIN se configura desde dentro de la
+ *    propia aplicación (primer uso) y se puede cambiar en Ajustes.
  *  · Auto-bloqueo al pasar a segundo plano (>60s) y botón de bloqueo.
  *  · Las claves privadas Ed25519/X25519 NUNCA salen en claro: solo dentro
  *    de la DB cifrada o del backup .vlbak (cifrado con contraseña).
@@ -148,12 +150,25 @@ class MainActivity : AppCompatActivity() {
                 status.text = getString(R.string.pin_mismatch)
                 return@setOnClickListener
             }
-            try {
-                openDb(vault.initialize(p1))
-                Toast.makeText(this, R.string.vault_created, Toast.LENGTH_LONG).show()
-                showHome()
-            } catch (e: Exception) {
-                status.text = e.message ?: getString(R.string.generic_error)
+            // PBKDF2 (150k iter) NO puede correr en el hilo de UI: en
+            // dispositivos lentos ANR-aría la app. Bóveda en bg + doble
+            // click bloqueado mientras trabaja.
+            create.isEnabled = false
+            status.text = getString(R.string.vault_working)
+            bg.execute {
+                try {
+                    val mk = vault.initialize(p1)
+                    runOnUiThread {
+                        openDb(mk)
+                        Toast.makeText(this, R.string.vault_created, Toast.LENGTH_LONG).show()
+                        showHome()
+                    }
+                } catch (e: Exception) {
+                    runOnUiThread {
+                        create.isEnabled = true
+                        status.text = e.message ?: getString(R.string.generic_error)
+                    }
+                }
             }
         }
         pin2.setOnEditorActionListener { _, actionId, _ ->
@@ -163,7 +178,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ------------------------------------------------------------------
-    // Desbloqueo (biometría o PIN)
+    // Desbloqueo (PIN — simple, sin biometría)
     // ------------------------------------------------------------------
 
     private fun showUnlock() {
@@ -171,56 +186,31 @@ class MainActivity : AppCompatActivity() {
         val pin = v.findViewById<EditText>(R.id.unlock_pin)
         val status = v.findViewById<TextView>(R.id.unlock_status)
         val unlock = v.findViewById<View>(R.id.btn_unlock)
-        val bioBtn = v.findViewById<View>(R.id.btn_biometric)
-
-        val canBiometric = BiometricManager.from(this).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK) ==
-            BiometricManager.BIOMETRIC_SUCCESS
-        bioBtn.visibility = if (canBiometric) View.VISIBLE else View.GONE
-        bioBtn.setOnClickListener { tryBiometricUnlock() }
 
         unlock.setOnClickListener {
-            val mk = vault.unlockWithPin(pin.text.toString())
-            if (mk == null) {
-                status.text = getString(R.string.pin_wrong)
-                pin.setText("")
-            } else {
-                openDb(mk)
-                showHome()
+            val candidate = pin.text.toString()
+            if (candidate.isBlank()) return@setOnClickListener
+            // PBKDF2 en bg (mismo criterio que el primer uso: nunca en UI).
+            unlock.isEnabled = false
+            status.text = getString(R.string.vault_working)
+            bg.execute {
+                val mk = vault.unlockWithPin(candidate)
+                runOnUiThread {
+                    unlock.isEnabled = true
+                    if (mk == null) {
+                        status.text = getString(R.string.pin_wrong)
+                        pin.setText("")
+                    } else {
+                        openDb(mk)
+                        showHome()
+                    }
+                }
             }
         }
         pin.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_DONE) { unlock.performClick(); true } else false
         }
         swap(v)
-        if (canBiometric) pin.post { tryBiometricUnlock() }
-    }
-
-    private fun tryBiometricUnlock() {
-        try {
-            val cipher = vault.prepareKeystoreDecryptCipher()
-            val prompt = BiometricPrompt(
-                this,
-                ContextCompat.getMainExecutor(this),
-                object : BiometricPrompt.AuthenticationCallback() {
-                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                        val cryptoCipher = result.cryptoObject?.cipher ?: return
-                        val mk = vault.unlockWithKeystoreCipher(cryptoCipher)
-                        if (mk != null) {
-                            openDb(mk)
-                            showHome()
-                        }
-                    }
-                }
-            )
-            val info = BiometricPrompt.PromptInfo.Builder()
-                .setTitle(getString(R.string.biometric_title))
-                .setSubtitle(getString(R.string.biometric_subtitle))
-                .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_WEAK)
-                .build()
-            prompt.authenticate(info, BiometricPrompt.CryptoObject(cipher))
-        } catch (_: Exception) {
-            // Clave Keystore invalidada (re-enrolamiento) → desbloqueo por PIN
-        }
     }
 
     // ------------------------------------------------------------------
@@ -277,7 +267,17 @@ class MainActivity : AppCompatActivity() {
         validateBtn.setOnClickListener {
             status.text = ""
             try {
-                val req = requireEngine().openRequest(requestCode.text.toString())
+                val raw = requestCode.text.toString()
+                // Solicitudes DEMO (solo builds con demoRequests=true — CI/,
+                // smoke del emulador): evitan necesidad de claves reales del
+                // cliente para verificar el flujo completo. En producción
+                // (demoRequests=false) el prefijo se rechaza como código
+                // inválido, igual que cualquier otro código corrupto.
+                val req = if (BuildConfig.DEMO_REQUESTS && raw.trim().uppercase().startsWith("VLDEMO-")) {
+                    demoRequest(raw.trim())
+                } else {
+                    requireEngine().openRequest(raw)
+                }
                 currentRequest = req
                 cust.text = req.customerName
                 deviceInfo.text = getString(R.string.device_info_masked, Fmt.maskInstallation(req.installationId))
@@ -347,6 +347,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun requireEngine(): LicenseEngine = engine ?: throw IllegalStateException(getString(R.string.locked_error))
+
+    /**
+     * Payload sintético para el flujo DEMO (VLDEMO-…). Formatos idénticos a
+     * los de una solicitud real: instalación/disk/nonce conforme a Specs,
+     * fecha actual y hash anti-replay del código normalizado.
+     */
+    private fun demoRequest(code: String): RequestPayload = RequestPayload(
+        schemaVersion = 2,
+        product = "ViewLBA-Server",
+        customerName = "Cliente Demo CI",
+        installationId = "VWLB-00C1-2345-6789-ABCD",
+        diskId = "DSK-00C1-2345-6789",
+        nonce = "0123456789abcdef",
+        requestedAt = System.currentTimeMillis(),
+        requestHash = CryptoBox.sha256Hex(code.toByteArray(Charsets.UTF_8)),
+    )
 
     // ------------------------------------------------------------------
     // HISTORIAL + DETALLE
