@@ -157,12 +157,27 @@ swipe_up() {
     >/dev/null 2>&1 || true
 }
 
-# type_into_field ID TEXT → toca el campo, VERIFICA el foco y escribe.
-# La verificación del foco evita que el texto caiga en otro campo si el
-# teclado ha redimensionado/desplazado la ventana tras el tap.
+# type_digits TEXT → teclea DÍGITOS uno a uno por KEYCODE_N (vía de inyección
+# DISTINTA a `input text`: si el IME se tragó los eventos agrupados de
+# `input text`, los keycodes individuales sí llegan).
+type_digits() {
+  local text="$1" j ch
+  for (( j=0; j<${#text}; j++ )); do
+    ch="${text:j:1}"
+    adb shell input keyevent "KEYCODE_$ch" >/dev/null 2>&1
+    sleep 0.15
+  done
+}
+
+# type_into_field ID TEXT → toca el campo, VERIFICA el foco, escribe y
+# VERIFICA QUE EL TEXTO LLEGÓ (el volcado muestra los puntos de la
+# contraseña, no el hint). Si no llegó → reintento por KEYCODEs.
+# (Evidencia empírica run 34735769441: `input text` puede perderse con el
+# IME abriéndose — el foco estaba bien pero el campo llegó VACÍO al click.)
 type_into_field() {
-  local id="$1" text="$2"
+  local id="$1" text="$2" before after
   dump_ui || fail "sin volcado UI antes de escribir en $id"
+  before=$(field_text "$id")          # hint (o vacío) ANTES de escribir
   tap_view "$id" || fail "no se pudo tocar $id"
   sleep 1
   dump_ui || true
@@ -179,6 +194,34 @@ type_into_field() {
   focused_view "$id" || fail "no se pudo enfocar $id — el texto no se escribiría en el campo correcto"
   adb shell input text "$text" || fail "input text falló en $id"
   sleep 1
+  dump_ui || true
+  after=$(field_text "$id")
+  if [ -z "$after" ] || [ "$after" = "$before" ]; then
+    # El IME se tragó los eventos (carrera focus/IME observada en el run
+    # 34735769441: foco OK pero campo VACÍO). Reintento con cerrar teclado,
+    # re-tap y UN evento por carácter (vía distinta a input text).
+    log "el texto no llegó a $id ('${after:-vacío}') → reintento (ESC + retap + KEYCODEs)"
+    adb shell input keyevent 111 >/dev/null 2>&1 || true   # ESC: cerrar IME
+    sleep 1
+    dump_ui || true
+    tap_view "$id" || true
+    sleep 1
+    dump_ui || true
+    type_digits "$text"
+    sleep 1
+    dump_ui || true
+    after=$(field_text "$id")
+    if [ -z "$after" ] || [ "$after" = "$before" ]; then
+      # Última vía: input text de nuevo (a veces el 2.º intento sí llega).
+      adb shell input text "$text" >/dev/null 2>&1 || true
+      sleep 1
+      dump_ui || true
+      after=$(field_text "$id")
+    fi
+    if [ -z "$after" ] || [ "$after" = "$before" ]; then
+      fail "no se pudo escribir en $id (input text y keycodes no llegaron)"
+    fi
+  fi
 }
 
 # tap_button_with_fallback ID — tap directo; si el botón no está en el
@@ -241,12 +284,35 @@ log "✓ Primera pantalla visible: «Configura tu PIN»"
 # ── 2. PIN de ejemplo en ambos campos ───────────────────────────────────
 type_into_field "$ID_PIN1" "$PIN"
 dump_ui || true
-log "pin1 contiene ${#PIN} caracteres escritos"
+log "pin1 text='$(field_text "$ID_PIN1")' (${#PIN} caracteres esperados)"
 move_focus_to "$ID_PIN2" || fail "no se pudo enfocar pin2 (tap ni actionNext)"
+PIN2_BEFORE=$(field_text "$ID_PIN2")
 adb shell input text "$PIN" || fail "input text falló en pin2"
 sleep 1
 dump_ui || true
-log "pin2 text='$(field_text "$ID_PIN2")' (debe mostrar puntos/valor, no el hint)"
+PIN2_AFTER=$(field_text "$ID_PIN2")
+if [ -z "$PIN2_AFTER" ] || [ "$PIN2_AFTER" = "$PIN2_BEFORE" ]; then
+  log "el texto no llegó a pin2 ('${PIN2_AFTER:-vacío}') → reintento (ESC + retap + KEYCODEs)"
+  adb shell input keyevent 111 >/dev/null 2>&1 || true
+  sleep 1
+  dump_ui || true
+  tap_view "$ID_PIN2" || true
+  sleep 1
+  dump_ui || true
+  type_digits "$PIN"
+  sleep 1
+  dump_ui || true
+  PIN2_AFTER=$(field_text "$ID_PIN2")
+  if [ -z "$PIN2_AFTER" ] || [ "$PIN2_AFTER" = "$PIN2_BEFORE" ]; then
+    adb shell input text "$PIN" >/dev/null 2>&1 || true
+    sleep 1
+    dump_ui || true
+    PIN2_AFTER=$(field_text "$ID_PIN2")
+  fi
+fi
+log "pin2 text='$PIN2_AFTER' (debe mostrar puntos/valor, no el hint)"
+[ -n "$PIN2_AFTER" ] && [ "$PIN2_AFTER" != "$PIN2_BEFORE" ] \
+  || fail "pin2 quedó vacío — el PIN no se escribió en el segundo campo"
 
 # ── 3. «Crear bóveda» → HOME ────────────────────────────────────────────
 log "Enviando «Crear bóveda» (actionDone / tap)…"
