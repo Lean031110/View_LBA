@@ -110,5 +110,5 @@ jobs:
         with:
           name: viewlba-customer-manual
           path: dist/manual/*.pdf
-          retention-days: 14
+          retention-days: 3
           if-no-files-found: error
