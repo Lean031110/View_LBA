@@ -6,6 +6,7 @@ import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import android.util.Log
 import com.viewlba.licensegen.crypto.CryptoBox
 import java.io.File
 import java.security.KeyStore
@@ -30,6 +31,7 @@ import javax.crypto.spec.SecretKeySpec
 class MasterKeyVault(private val context: Context) {
 
     companion object {
+        private const val TAG = "ViewLBA-Vault"
         private const val PREFS = "vlba_vault"
         private const val KEY_ALIAS = "vlba_master_wrap"
         private const val F_WRAP_KEystore = "wrap_keystore" // envoltura A (iv+ct)
@@ -183,7 +185,16 @@ class MasterKeyVault(private val context: Context) {
         if (parts.size != 2) return false
         val salt = CryptoBox.base64UrlDecodeStrict(parts[0]) ?: return false
         val expected = CryptoBox.base64UrlDecodeStrict(parts[1]) ?: return false
-        val candidate = CryptoBox.pbkdf2Sha256(pin.toCharArray(), salt, 150_000)
+        // Un PIN «incorrecto» (o un verifier corrupto) NUNCA debe tirar la
+        // app: pbkdf2 puede lanzar (p.ej. Android envuelve RuntimeException
+        // de PBEKeySpec en InvalidKeySpecException «Could not generate secret
+        // key») — se registra con la causa COMPLETA y se trata como fallo.
+        val candidate = try {
+            CryptoBox.pbkdf2Sha256(pin.toCharArray(), salt, 150_000)
+        } catch (e: Exception) {
+            Log.e(TAG, "verifyPin: pbkdf2 falló (pin=${pin.length} chars, salt=${salt.size} B, expected=${expected.size} B)", e)
+            return false
+        }
         return constantTimeEquals(expected, candidate)
     }
 
@@ -199,7 +210,14 @@ class MasterKeyVault(private val context: Context) {
         val salt = blob.copyOfRange(0, 16)
         val iv = blob.copyOfRange(16, 28)
         val ct = blob.copyOfRange(28, blob.size)
-        val key = CryptoBox.pbkdf2Sha256(pin.toCharArray(), salt, 150_000)
+        // Misma regla que verifyPin: ningún fallo criptográfico puede tirar
+        // la app desde un listener de UI.
+        val key = try {
+            CryptoBox.pbkdf2Sha256(pin.toCharArray(), salt, 150_000)
+        } catch (e: Exception) {
+            Log.e(TAG, "pinDecrypt: pbkdf2 falló (blob=${blob.size} B, pin=${pin.length} chars)", e)
+            return null
+        }
         val plain = CryptoBox.aesGcmDecrypt(key, iv, ct) ?: return null
         return verifyFingerprint(plain)
     }

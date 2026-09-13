@@ -75,6 +75,16 @@ y este proyecto adhiere a [SemVer](https://semver.org/lang/es/).
 
 ### Arreglado (BLOQUEANTE — detectado por el smoke funcional del emulador)
 
+- **CRASH al desbloquear con un PIN incorrecto** (`FATAL EXCEPTION` en el
+  listener de «Desbloquear»): `MasterKeyVault.verifyPin` llamaba
+  `pbkdf2Sha256` sin proteger la criptografía — cualquier excepción del
+  JCE (en el emulador API 35: `InvalidKeySpecException: Could not
+  generate secret key` desde `SecretKeyFactory`) tiraba TODA la app al
+  suelo (pantalla negra → launcher). Ahora `verifyPin`/`pinDecrypt`
+  tratan cualquier fallo criptográfico como «PIN incorrecto» (fallo
+  seguro, la app sigue bloqueada) y registran la causa completa en
+  logcat (`ViewLBA-Vault`) para auditoría. Un PIN equivocado JAMÁS debe
+  cerrar la app.
 - **La APK no pasaba de la primera pantalla en dispositivos sin
   biometría** (emuladores limpios, tablets/TVs sin lector): al crear la
   bóveda, `MasterKeyVault.ensureKeystoreKey()` pedía una clave
