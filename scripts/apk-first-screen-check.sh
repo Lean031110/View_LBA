@@ -20,12 +20,16 @@
 #   bash scripts/apk-first-screen-check.sh [PIN] [RUTA_APK]
 #   (el script instala y lanza la APK él mismo)
 #
-# Notas técnicas:
-#   · Coordenadas de los controles extraídas de `uiautomator dump`
-#     (recurso-estable: no dependen de idioma ni de resolución).
-#   · El teclado se cierra con ESC (keyevent 111) para que el botón
-#     quede visible; como respaldo se envía ENTER (keyevent 66), que
-#     dispara el IME_ACTION_DONE declarado en pin2/unlock_pin.
+# Notas técnicas (aprendizajes de iteraciones anteriores de este script):
+#   · resource-id de uiautomator NO lleva prefijo «@» (eso es sintaxis
+#     Espresso). El volcado real confirmó pin1/pin2/btn_create visibles
+#     con pantalla 320x640 del runner.
+#   · Se verifica el FOCO tras cada tap (focused="true" del volcado)
+#     antes de escribir: así el texto nunca cae en el campo equivocado
+#     aunque el teclado redimensione la ventana.
+#   · El submit usa la LÓGICA IME de la propia app: keyevent 66 (ENTER)
+#     dispara actionDone → performClick(). Respaldo: tap por coordenadas
+#     del volcado actualizado (scroll relativo a `wm size` si hiciera falta).
 #   · PBKDF2 (150 000 iteraciones) + Keystore pueden tardar unos
 #     segundos en el emulador: cada espera tiene su timeout propio.
 # ============================================================================
@@ -37,12 +41,13 @@ PKG="com.viewlba.licensegen"
 ACT="$PKG/.ui.MainActivity"
 EVIDENCE_DIR="${EVIDENCE_DIR:-/tmp/viewlba-first-screen}"
 
-ID_PIN1="@$PKG:id/pin1"
-ID_PIN2="@$PKG:id/pin2"
-ID_CREATE="@$PKG:id/btn_create"
-ID_HOME_NEW="@$PKG:id/btn_new_license"
-ID_UNLOCK_PIN="@$PKG:id/unlock_pin"
-ID_UNLOCK_BTN="@$PKG:id/btn_unlock"
+# resource-ids del volcado uiautomator (SIN «@» — no es sintaxis Espresso)
+ID_PIN1="$PKG:id/pin1"
+ID_PIN2="$PKG:id/pin2"
+ID_CREATE="$PKG:id/btn_create"
+ID_HOME_NEW="$PKG:id/btn_new_license"
+ID_UNLOCK_PIN="$PKG:id/unlock_pin"
+ID_UNLOCK_BTN="$PKG:id/btn_unlock"
 
 mkdir -p "$EVIDENCE_DIR"
 UI_XML="$EVIDENCE_DIR/ui.xml"
@@ -53,6 +58,7 @@ fail() {
   adb exec-out screencap -p > "$EVIDENCE_DIR/FAIL-$(date +%s).png" 2>/dev/null || true
   adb shell logcat -d -b crash > "$EVIDENCE_DIR/logcat-crash.txt" 2>/dev/null || true
   adb shell logcat -d | tail -200     > "$EVIDENCE_DIR/logcat-tail.txt" 2>/dev/null || true
+  cp -f "$UI_XML" "$EVIDENCE_DIR/ui-at-failure.xml" 2>/dev/null || true
   echo "::error::$*"
   echo "[FAIL] $*"
   echo "[FAIL] Evidencia en $EVIDENCE_DIR (screenshot + UI dump + logcat)"
@@ -74,13 +80,16 @@ dump_ui() {
   return 1
 }
 
+# node_tag ID → imprime el tag <node … resource-id="ID" …> del volcado.
+node_tag() {
+  local id="$1"
+  grep -o "<node[^>]*resource-id=\"$id\"[^>]*>" "$UI_XML" 2>/dev/null | head -n1
+}
+
 # find_view ID → imprime "cx cy" (centro del control) o falla silenciosamente.
-# Busca el tag <node … resource-id="ID" … bounds="[x1,y1][x2,y2]" …> y calcula
-# el centro. uiautomator escribe TODO el XML en una línea: extraemos el tag
-# completo del node que contiene el resource-id.
 find_view() {
   local id="$1" tag bounds nums x1 y1 x2 y2 cx cy
-  tag=$(grep -o "<node[^>]*resource-id=\"$id\"[^>]*>" "$UI_XML" 2>/dev/null | head -n1)
+  tag=$(node_tag "$id")
   [ -n "$tag" ] || return 1
   bounds=$(printf '%s' "$tag" | grep -o 'bounds="\[[0-9,]*\]\[[0-9,]*\]"' | head -n1)
   [ -n "$bounds" ] || return 1
@@ -90,6 +99,19 @@ find_view() {
   cx=$(( (x1 + x2) / 2 ))
   cy=$(( (y1 + y2) / 2 ))
   echo "$cx $cy"
+}
+
+# focused_view ID → cierto si el control tiene el foco (focused="true").
+focused_view() {
+  local id="$1"
+  grep -q "<node[^>]*resource-id=\"$id\"[^>]*focused=\"true\"" "$UI_XML" 2>/dev/null
+}
+
+# field_text ID → contenido (text="…") del control (diagnóstico).
+field_text() {
+  local tag
+  tag=$(node_tag "$1")
+  printf '%s' "$tag" | sed -n 's/.* text="\([^"]*\)".*/\1/p'
 }
 
 # wait_view ID TIMEOUT_S → espera a que el control exista en pantalla.
@@ -114,15 +136,10 @@ tap_view() {
   adb shell input tap $coords
 }
 
-# type_into ID TEXT → enfoca el campo, escribe y cierra el teclado (ESC).
-type_into() {
-  local id="$1" text="$2"
-  tap_view "$id" || return 1
-  sleep 1
-  adb shell input text "$text" || return 1
-  sleep 1
-  adb shell input keyevent 111 >/dev/null 2>&1 || true   # ESC: ocultar teclado
-  sleep 1
+# submit_ime — keyevent 66 (ENTER): dispara actionNext/actionDone
+# declarados por la app (performClick del botón correspondiente).
+submit_ime() {
+  adb shell input keyevent 66
 }
 
 # screenshot NAME → guarda PNG en la carpeta de evidencia.
@@ -130,11 +147,80 @@ screenshot() {
   adb exec-out screencap -p > "$EVIDENCE_DIR/$1.png" 2>/dev/null || true
 }
 
+# swipe_up — scroll ascendente RESOLUCIÓN-INDEPENDIENTE (wm size).
+swipe_up() {
+  local size w h
+  size=$(adb shell wm size 2>/dev/null | grep -oE '[0-9]+x[0-9]+' | tail -n1)
+  w="${size%x*}"; w="${w:-320}"
+  h="${size#*x}"; h="${h:-640}"
+  adb shell input swipe $((w / 2)) $((h * 3 / 4)) $((w / 2)) $((h / 2)) 300 \
+    >/dev/null 2>&1 || true
+}
+
+# type_into_field ID TEXT → toca el campo, VERIFICA el foco y escribe.
+# La verificación del foco evita que el texto caiga en otro campo si el
+# teclado ha redimensionado/desplazado la ventana tras el tap.
+type_into_field() {
+  local id="$1" text="$2"
+  dump_ui || fail "sin volcado UI antes de escribir en $id"
+  tap_view "$id" || fail "no se pudo tocar $id"
+  sleep 1
+  dump_ui || true
+  if ! focused_view "$id"; then
+    # El tap no enfocó (p.ej. quedó tras el teclado) → scroll y reintento.
+    log "foco no en $id tras el tap → scroll + reintento"
+    swipe_up
+    sleep 1
+    dump_ui || true
+    tap_view "$id" || fail "no se pudo tocar $id (2.º intento)"
+    sleep 1
+    dump_ui || true
+  fi
+  focused_view "$id" || fail "no se pudo enfocar $id — el texto no se escribiría en el campo correcto"
+  adb shell input text "$text" || fail "input text falló en $id"
+  sleep 1
+}
+
+# tap_button_with_fallback ID — tap directo; si el botón no está en el
+# dump: ESC (cerrar teclado) → re-dump → tap; luego scroll → re-dump → tap.
+tap_button_with_fallback() {
+  local id="$1"
+  dump_ui || true
+  if tap_view "$id"; then return 0; fi
+  adb shell input keyevent 111 >/dev/null 2>&1 || true   # ESC: ocultar teclado
+  sleep 1
+  dump_ui || true
+  if tap_view "$id"; then return 0; fi
+  swipe_up
+  sleep 1
+  dump_ui || true
+  tap_view "$id"
+}
+
+# move_focus_to ID → garantiza el foco en ID. Orden seguro: primero
+# actionNext por ENTER (nunca escribe caracteres), luego tap por coords.
+# (Un tap sobre un campo tapado por el teclado podría teclear en el campo
+# equivocado — por eso ENTER va primero.)
+move_focus_to() {
+  local id="$1"
+  dump_ui || true
+  focused_view "$id" && return 0
+  submit_ime                    # actionNext (ENTER) sobre el campo actual
+  sleep 1
+  dump_ui || true
+  focused_view "$id" && return 0
+  tap_view "$id" || true
+  sleep 1
+  dump_ui || true
+  focused_view "$id"
+}
+
 echo "── Verificación del primer arranque de la APK ─────────────────────"
 echo "  APK     : $APK"
 echo "  PIN     : $PIN (ejemplo)"
 echo "  Paquete : $PKG"
 echo "  evidencia: $EVIDENCE_DIR"
+echo "  pantalla: $(adb shell wm size 2>/dev/null | tr -d '\r' | grep -oE '[0-9]+x[0-9]+' | tail -n1)"
 [ -f "$APK" ] || fail "APK no encontrada: $APK (¿se compiló antes de este script?)"
 
 # ── 0. Instalación limpia (por si quedara un resto de una corrida previa) ──
@@ -153,33 +239,25 @@ screenshot "01-first-use-screen"
 log "✓ Primera pantalla visible: «Configura tu PIN»"
 
 # ── 2. PIN de ejemplo en ambos campos ───────────────────────────────────
-log "Escribiendo el PIN de ejemplo en pin1 y pin2…"
-type_into "$ID_PIN1" "$PIN" || fail "no se pudo escribir el PIN en pin1"
-type_into "$ID_PIN2" "$PIN" || fail "no se pudo escribir el PIN en pin2"
+type_into_field "$ID_PIN1" "$PIN"
+dump_ui || true
+log "pin1 contiene ${#PIN} caracteres escritos"
+move_focus_to "$ID_PIN2" || fail "no se pudo enfocar pin2 (tap ni actionNext)"
+adb shell input text "$PIN" || fail "input text falló en pin2"
+sleep 1
+dump_ui || true
+log "pin2 text='$(field_text "$ID_PIN2")' (debe mostrar puntos/valor, no el hint)"
 
 # ── 3. «Crear bóveda» → HOME ────────────────────────────────────────────
-log "Pulsando «Crear bóveda»…"
-if ! tap_view "$ID_CREATE"; then
-  # El botón puede haber quedado fuera de viewport tras abrir el teclado:
-  # scroll up + re-dump + reintento; como última vía, ENTER sobre pin2
-  # dispara IME_ACTION_DONE → performClick() del botón (lógica de la app).
-  log "btn_create no visible → scroll + ENTER (IME_ACTION_DONE)"
-  adb shell input swipe 540 1500 540 600 300 >/dev/null 2>&1 || true
-  sleep 1
-  dump_ui || true
-  tap_view "$ID_CREATE" || adb shell input keyevent 66
-fi
-sleep 2
-
-log "Esperando HOME (btn_new_license) — PBKDF2 + Keystore pueden tardar…"
-if ! wait_view "$ID_HOME_NEW" 90; then
-  # Reintento vía IME_ACTION_DONE (algunos teclados ignoran el ESC).
-  dump_ui || true
-  if ! find_view "$ID_HOME_NEW" >/dev/null; then
-    adb shell input keyevent 66 >/dev/null 2>&1 || true
-    sleep 2
-  fi
-  wait_view "$ID_HOME_NEW" 30 || fail "No se llegó a HOME tras «Crear bóveda» — el PIN de la primera pantalla no funciona"
+log "Enviando «Crear bóveda» (actionDone / tap)…"
+submit_ime                      # actionDone → performClick() del botón
+sleep 3
+if ! wait_view "$ID_HOME_NEW" 45; then
+  # Respaldo por coordenadas (los campos ya están rellenos).
+  log "HOME no visible tras actionDone → respaldo por tap directo…"
+  tap_button_with_fallback "$ID_CREATE" || true
+  sleep 3
+  wait_view "$ID_HOME_NEW" 45 || fail "No se llegó a HOME tras «Crear bóveda» — el PIN de la primera pantalla no funciona"
 fi
 screenshot "02-home-after-create"
 log "✓ La APK PASÓ la primera pantalla: HOME visible (btn_new_license)"
@@ -196,16 +274,16 @@ screenshot "03-unlock-screen"
 
 # Nota: el emulador de CI no tiene biometría inscrita → el prompt
 # biométrico NO se muestra; el desbloqueo es 100 % por PIN.
-type_into "$ID_UNLOCK_PIN" "$PIN" || fail "no se pudo escribir el PIN en unlock_pin"
-log "Pulsando «Desbloquear»…"
-if ! tap_view "$ID_UNLOCK_BTN"; then
-  adb shell input swipe 540 1500 540 600 300 >/dev/null 2>&1 || true
-  sleep 1
-  dump_ui || true
-  tap_view "$ID_UNLOCK_BTN" || adb shell input keyevent 66
+log "Desbloqueando con el MISMO PIN…"
+type_into_field "$ID_UNLOCK_PIN" "$PIN"
+submit_ime                      # actionDone → «Desbloquear»
+sleep 3
+if ! wait_view "$ID_HOME_NEW" 45; then
+  log "HOME no visible tras actionDone → respaldo por tap directo…"
+  tap_button_with_fallback "$ID_UNLOCK_BTN" || true
+  sleep 3
+  wait_view "$ID_HOME_NEW" 45 || fail "No se llegó a HOME tras desbloquear con el PIN — el desbloqueo no funciona"
 fi
-sleep 2
-wait_view "$ID_HOME_NEW" 60 || fail "No se llegó a HOME tras desbloquear con el PIN — el desbloqueo no funciona"
 screenshot "04-home-after-unlock"
 log "✓ Desbloqueo con el mismo PIN correcto → HOME"
 
@@ -216,9 +294,8 @@ sleep 2
 adb shell am start -W -n "$ACT" >/dev/null
 sleep 3
 wait_view "$ID_UNLOCK_PIN" 60 || fail "No apareció la pantalla de desbloqueo (control negativo)"
-type_into "$ID_UNLOCK_PIN" "000000" || fail "no se pudo escribir el PIN incorrecto"
-dump_ui || true
-tap_view "$ID_UNLOCK_BTN" || adb shell input keyevent 66
+type_into_field "$ID_UNLOCK_PIN" "000000"
+submit_ime                      # intento de desbloqueo (DEBE fallar)
 sleep 3
 dump_ui || true
 if find_view "$ID_HOME_NEW" >/dev/null; then
