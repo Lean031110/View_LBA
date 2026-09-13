@@ -223,21 +223,51 @@ class MasterKeyVault(private val context: Context) {
         val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         if (ks.containsAlias(KEY_ALIAS)) return
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
-        val builder = KeyGenParameterSpec.Builder(
-            KEY_ALIAS,
-            KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
-        )
-        builder.setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-        builder.setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-        builder.setKeySize(256)
-        builder.setUserAuthenticationRequired(true)
-        builder.setInvalidatedByBiometricEnrollment(true)
-        if (Build.VERSION.SDK_INT >= 31) {
-            // clave no utilizable sin dispositivo desbloqueado (API 31+)
-            builder.setUnlockedDeviceRequired(true)
+
+        fun baseSpec(): KeyGenParameterSpec.Builder {
+            val b = KeyGenParameterSpec.Builder(
+                KEY_ALIAS,
+                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+            )
+            b.setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            b.setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            b.setKeySize(256)
+            if (Build.VERSION.SDK_INT >= 31) {
+                // clave no utilizable sin dispositivo desbloqueado (API 31+)
+                b.setUnlockedDeviceRequired(true)
+            }
+            return b
         }
-        generator.init(builder.build())
-        generator.generateKey()
+
+        try {
+            // Preferente: clave ligada a autenticación de usuario
+            // (biometría o credencial de bloqueo del dispositivo).
+            generator.init(baseSpec().also {
+                it.setUserAuthenticationRequired(true)
+                it.setInvalidatedByBiometricEnrollment(true)
+            }.build())
+            generator.generateKey()
+        } catch (e: IllegalStateException) {
+            // Dispositivo SIN biometría inscrita NI credencial de bloqueo
+            // (típico: emuladores limpios y equipos sin lector). El
+            // AndroidKeyStore rechaza claves con setUserAuthenticationRequired
+            // (true) en ese caso: «At least one biometric must be enrolled to
+            // create keys requiring user authentication».
+            //
+            // Degradación ELEGANTE (el vault DEBE poder crearse siempre):
+            // clave SIN binding de autenticación — sigue siendo UID-scoped
+            // (solo esta app puede usarla) y TEE/StrongBox-backed cuando el
+            // hardware lo soporta. En estos dispositivos la UI nunca ofrece
+            // desbloqueo biométrico (BiometricManager.canAuthenticate !=
+            // SUCCESS) y el acceso queda 100 % protegido por el PIN
+            // (envoltura B: PBKDF2 150k + AES-256-GCM).
+            val msg = (e.message ?: "").lowercase()
+            check("biometric" in msg || "fingerprint" in msg || "enrolled" in msg) {
+                "AndroidKeyStore: $e"
+            }
+            generator.init(baseSpec().build())
+            generator.generateKey()
+        }
     }
 
     private fun keystoreEncrypt(plain: ByteArray): ByteArray {
