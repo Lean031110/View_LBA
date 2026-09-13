@@ -1,109 +1,91 @@
 # Installer de ViewLBA Server — Linux
 
+> **v3.2 — .deb NATIVO (dpkg-deb puro, sin Tauri/Rust/linuxdeploy).**
+> `dpkg -i` y listo: instala TODO, registra y ARRANCA el servicio systemd,
+> genera credenciales y deja accesos en el escritorio/menú. Como un
+> programa nativo de Linux. CI lo valida INSTALÁNDOLO de verdad en un
+> runner (servicio activo + `/api/health` 200 + start/stop + purge).
+
 ## Requisitos del host
 
 - Linux x86_64 con **systemd** (Debian/Ubuntu/RHEL/Fedora…).
-- **root** (o sudo): el installer crea usuario de sistema, unidades systemd
-  y reglas de firewall.
-- Nada más: **Bun va dentro del paquete** (`runtime/`), el build va
-  precompilado y ffmpeg es opcional (OBS codifica en el cliente).
+- **root** (o sudo): el postinst crea usuario de sistema y unidades systemd.
+- **NADA MÁS**: **Bun va dentro del paquete** (`/opt/viewlba-server/runtime`),
+  el build va precompilado y ffmpeg es opcional (OBS codifica en el
+  cliente). No se necesita Node.js, npm ni Bun instalados — 100 % offline.
 
-## Instalar (con AppImage)
+## Instalar
 
 ```bash
-chmod +x ViewLBA-Server.AppImage
-
-# Con entorno gráfico: doble clic o
-./ViewLBA-Server.AppImage
-
-# Servidor headless (sin display) — CLI directo:
-sudo ./ViewLBA-Server.AppImage --cli
-
-# Variante CLI pura (sin GUI):
-sudo ./ViewLBA-Server-CLI.AppImage
+sudo dpkg -i ViewLBA-Server-<ver>-x86_64.deb
 ```
 
-El asistente (GUI o terminal) recorre los 12 pasos y termina con:
+El postinst hace TODO automáticamente (sin preguntas):
 
+1. Crea el usuario de sistema `pantalla` (sin login, sin root).
+2. Copia la app a `/opt/pantalla-restaurante` y prepara `.env`, DB SQLite
+   y el administrador (credenciales generadas en tu máquina:
+   `/opt/viewlba-server/CREDENCIALES.txt`).
+3. Registra y **ARRANCA** los servicios systemd
+   (`pantalla-restaurante.target` + timers de backup/purga) — el servidor
+   se reinicia automáticamente con el equipo.
+4. Instala los accesos directos (menú de aplicaciones + escritorio del
+   usuario que instala): **Panel · Iniciar servidor · Detener servidor**.
+5. Al final imprime en la terminal: URL del panel, dónde están las
+   credenciales y cómo controlar el servicio.
+
+## Uso diario (simple)
+
+```bash
+viewlba-server start        # o el acceso directo del escritorio
+viewlba-server stop
+viewlba-server restart
+viewlba-server status
+viewlba-server health       # /api/health
+viewlba-server logs
+viewlba-server panel        # abre http://localhost:3000 en el navegador
+viewlba-server credentials  # usuario + contraseña del admin
 ```
-Application ✓  Realtime ✓  Stream ✓  Database ✓  Backup (timer) ✓
-```
 
-verificados contra `/api/health` — si algo falla, NO se declara correcta y
-se muestra diagnóstico + rollback no destructivo.
+Panel: `http://localhost:3000` (espera ~30 s tras el primer arranque).
 
-## Qué crea (layout FHS — convención de deploy/linux)
+## Qué crea
 
 | Ruta | Contenido |
 |---|---|
-| `/opt/pantalla-restaurante` | Código + build standalone (rsync-equivalente con exclusiones) |
-| `/var/lib/pantalla-restaurante` | `db/custom.db` · `media/` · `backups/` · `data/` |
-| `/var/log/pantalla-restaurante` | Logs estructurados (rotación) |
-| `/etc/pantalla-restaurante.env` | Entorno + secretos (root:600) |
-| systemd | `pantalla-restaurante{,-realtime,-stream}.service` + `.target` + timers de backup/purga |
+| `/opt/viewlba-server` | Paquete: sidecar `viewlba-installer` + `runtime/bun` + manifest + `CREDENCIALES.txt` |
+| `/opt/pantalla-restaurante` | App (código + build standalone + `.env`) |
+| `/var/lib/pantalla-restaurante` | DB, media, backups |
+| `/var/log/pantalla-restaurante` | Logs (rotación por timer) |
+| `/etc/systemd/system/pantalla-restaurante*` | 3 servicios + target + 2 timers |
+| `/usr/bin/viewlba-server` | Comando de control simple |
+| `/usr/share/applications/viewlba-*.desktop` | Accesos (menú + escritorio) |
 
-El usuario de servicio `pantalla` (sin login, sin root) ejecuta TODO.
-Las unidades se **renderizan desde `deploy/linux/`** (única fuente de verdad)
-sustituyendo `__BUN_BIN__` por el bun incluido y las rutas del layout
-elegido (directorios personalizados soportados).
+Tras la instalación el paquete PODA el payload duplicado
+(`resources/server`, ~400 MB): la app es autosuficiente en
+`/opt/pantalla-restaurante`.
 
-## Firewall
-
-Reglas automáticas (3000/3003/1935 → subred LAN) con **ufw** o
-**firewalld**. Si no hay gestor, WARNING con las instrucciones exactas de
-`docs/FIREWALL.md` (la instalación continúa; los puertos internos
-3004/8000/8100 son localhost por diseño).
-
-## Gestión diaria
+## Desinstalar
 
 ```bash
-# CLI (sidecar compilado o AppImage --cli):
-viewlba-installer services status|start|stop|restart
-viewlba-installer health
-viewlba-installer logs
-viewlba-installer backup
-viewlba-installer restore /var/lib/.../backup.db --confirm
-viewlba-installer diagnostics
-viewlba-installer update <payload-nuevo>   # código nuevo, datos intactos
-viewlba-installer repair                   # reinstala servicios/entorno
-viewlba-installer uninstall                # casillas; datos por defecto intactos
+sudo apt remove viewlba-server    # conserva /var/lib (datos + backups)
+sudo apt purge  viewlba-server    # quita también el paquete completo
+                                  # (los DATOS se conservan: avisa la ruta)
 ```
 
-`deploy/linux/manage.sh` sigue funcionando (misma semántica, capa shell).
-
-## Desatendido
+## Build (CI)
 
 ```bash
-sudo ./ViewLBA-Server-CLI.AppImage --cfg cfg.json
-# o con el binario del paquete:
-sudo dist/release/linux/ViewLBA-Server/viewlba-installer --config cfg.json
+# payload (sidecar + runtime + servidor + plantillas systemd)
+bun installer/package/bundle-server.ts --platform=linux --version=3.2.0
+bun installer/package/smoke-payload.sh dist/release/linux/ViewLBA-Server
+# .deb nativo
+bun installer/linux/build-deb.ts --staging=dist/release/linux/ViewLBA-Server \
+                                 --version=3.2.0
 ```
 
-## Actualizar
-
-1. `viewlba-installer update /ruta/al/payload-nuevo` (o `manage.sh upgrade`):
-   sincroniza código, aplica migraciones versionadas (migrate deploy),
-   re-renderiza unidades y reinicia. **Los datos no se tocan.**
-2. Desde el release nuevo: descargar el AppImage y ejecutar con modo
-   "Actualizar instalación" en el asistente.
-
-## Verificación local realizada (sandbox, evidencia)
-
-- Payload offline: `migrate deploy` con `runtime/bun` incluido ✓
-- Arranque del standalone precompilado con `runtime/bun` ✓
-- `GET /api/health` → `{"status":"degraded","database":true,"storage":true,…}`
-  (realtime/stream sin iniciar — semántica correcta) ✓
-- `GET /` (TV) → 200 ✓
-- `ViewLBA-Server-CLI.AppImage --cli --json detect` → JSON correcto ✓
-- Instalación con systemd real: **CI / host con systemd** (sandbox sin
-  systemd NO VERIFIED por diseño — el preflight lo exige y aborta).
-
-## Compilar el paquete localmente
+## Alternativa headless: AppImage CLI
 
 ```bash
-bun installer/package/bundle-server.ts --platform=linux   # payload (fuera del repo)
-bash installer/package/appimage.sh                        # ViewLBA-Server-CLI.AppImage
+sudo ./ViewLBA-Server-CLI-<ver>-x86_64.AppImage   # asistente de terminal
 ```
-
-La GUI (`ViewLBA-Server.AppImage` con Tauri) se construye en CI con Rust +
-webkit2gtk (ver `docs/RELEASE.md`).

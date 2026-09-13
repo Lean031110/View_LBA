@@ -226,6 +226,11 @@ describe("createProductionPayload (estructura EXPLÍCITA — repo sintético)", 
     expect(existsSync(join(serverDir, "src", "lib", "auth.ts"))).toBe(true)
     expect(existsSync(join(serverDir, "mini-services", "realtime-service", "node_modules", "socket.io"))).toBe(true)
 
+    // v3.2: plantillas systemd del installer (sin ellas installServices falla)
+    expect(existsSync(join(serverDir, "deploy", "linux", "pantalla-restaurante.service"))).toBe(true)
+    expect(existsSync(join(serverDir, "deploy", "linux", "pantalla-restaurante.target"))).toBe(true)
+    expect(existsSync(join(serverDir, "deploy", "linux", "pantalla-restaurante-backup.timer"))).toBe(true)
+
     // node_modules PODADO en el payload
     expect(existsSync(join(serverDir, "node_modules", "prisma"))).toBe(true)
     expect(existsSync(join(serverDir, "node_modules", "typescript"))).toBe(false)
@@ -310,6 +315,22 @@ function makeSyntheticRepo(root: string): string {
   writeFileSync(join(root, "prisma", "schema.prisma"), "datasource db { provider = \"sqlite\" }\n")
   mkdirSync(join(root, "prisma", "migrations", "0_init"), { recursive: true })
   writeFileSync(join(root, "prisma", "migrations", "0_init", "migration.sql"), "-- init\n")
+
+  // deploy/linux: plantillas systemd que el installer renderiza (v3.2 —
+  // obligatorias en el payload: sin ellas installServices falla)
+  const UNITS = [
+    "pantalla-restaurante.service",
+    "pantalla-restaurante-realtime.service",
+    "pantalla-restaurante-stream.service",
+    "pantalla-restaurante.target",
+    "pantalla-restaurante-backup.service",
+    "pantalla-restaurante-backup.timer",
+    "pantalla-restaurante-logs-purge.service",
+    "pantalla-restaurante-logs-purge.timer",
+  ]
+  mkdirSync(join(root, "deploy", "linux"), { recursive: true })
+  for (const u of UNITS) writeFileSync(join(root, "deploy", "linux", u), "# unit\n")
+
   writeFileSync(join(root, "package.json"), JSON.stringify({ name: "viewlba", version: "1.0.0" }))
   writeFileSync(join(root, "bun.lock"), "{}")
   for (const cfg of ["next.config.ts", "tsconfig.json", "postcss.config.mjs", "tailwind.config.ts", "components.json", "bunfig.toml"]) {

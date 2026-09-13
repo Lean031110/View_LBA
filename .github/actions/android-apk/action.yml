@@ -18,6 +18,13 @@ inputs:
     description: "Nombre del artifact subido"
     required: false
     default: "viewlba-license-generator"
+  demo-requests:
+    description: >
+      Habilita códigos de solicitud DEMO (VLDEMO-…) para el smoke del
+      emulador en CI (BuildConfig.DEMO_REQUESTS). NUNCA activar en el
+      release de producción: default false.
+    required: false
+    default: "false"
 
 runs:
   using: "composite"
@@ -118,7 +125,8 @@ runs:
         set -euo pipefail
         cd android-license-generator
         ./gradlew :app:assembleRelease --no-daemon \
-          -PandroidVersionName="${{ inputs.version-name }}"
+          -PandroidVersionName="${{ inputs.version-name }}" \
+          -PdemoRequests=${{ inputs.demo-requests }}
         OUT=app/build/outputs/apk/release/app-release-unsigned.apk
         test -s "$OUT" || { echo "::error::assembleRelease no produjo APK"; exit 1; }
         ls -la "$OUT"

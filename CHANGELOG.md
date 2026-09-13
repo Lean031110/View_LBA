@@ -5,6 +5,79 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato está basado en [Keep a Changelog](https://keepachangelog.com/es/1.1.0/),
 y este proyecto adhiere a [SemVer](https://semver.org/lang/es/).
 
+## [3.2.0] — 2026-09-13 — Instaladores nativos + PIN simple + smoke del flujo completo
+
+### Arreglado
+
+- **La APK ya NO se atasca en la primera pantalla en dispositivos reales**
+  (evidencia: Samsung S22 Ultra). Causa raíz: `MasterKeyVault` creaba una
+  clave de Android Keystore con `setUserAuthenticationRequired(true)` y
+  luego la usaba INMEDIATAMENTE para cifrar la master key — en un equipo
+  con biometría inscrita eso lanza `UserNotAuthenticatedException` (no hay
+  BiometricPrompt visible durante el primer uso) y la bóveda nunca se
+  crea. Los emuladores sin biometría caían al fallback y por eso el CI
+  pasaba. **Decisión de producto (pedido explícito):** se ELIMINA toda la
+  envoltura Keystore/biométrica — la bóveda queda protegida solo por el
+  PIN (PBKDF2-HMAC-SHA256 150k + AES-256-GCM), como un «programa simple».
+  Los vaults creados por versiones ≤3.1 siguen desbloqueándose con su PIN
+  (la envoltura B se conserva); al cambiar el PIN quedan migrados al
+  formato nuevo.
+
+- **Los instaladores de Windows y Linux ya NO fallan**. Causa raíz
+  encontrada: el payload NUNCA incluyó las plantillas systemd
+  (`deploy/linux/*.service|target|timer`) que `LinuxServiceAdapter
+  .installServices` renderiza — el instalador moría con «No se encuentran
+  las plantillas systemd en /opt/pantalla-restaurante/deploy/linux (payload
+  incompleto)». Ahora `createProductionPayload` las incluye (guard de 8
+  unidades) y los tests lo exigen.
+
+### Cambiado
+
+- **PIN simple**: política relajada a **4–16 caracteres** (antes 6–16),
+  configurable desde dentro de la propia app (primer uso) y cambiable en
+  Ajustes. Sin biometría, sin Keystore, sin requisitos del dispositivo.
+- **PBKDF2 fuera del hilo de UI**: crear bóveda y desbloquear corren en
+  el ejecutor de fondo (antes en el hilo de UI — riesgo de ANR en
+  dispositivos lentos; el botón se deshabilita mientras trabaja).
+
+### Añadido
+
+- **Instalador Windows NATIVO** (`installer/windows/viewlba-setup.nsi`,
+  NSIS puro — sin Tauri/Rust): una sola pantalla, instala TODO (el runtime
+  **bun va dentro del paquete**: la máquina no necesita node ni bun),
+  registra y ARRANCA el servicio (NSSM incluido), genera credenciales
+  (`CREDENCIALES.txt` + acceso directo) y crea accesos en el escritorio:
+  **Panel · Iniciar servidor · Detener servidor · Credenciales · Bandeja**.
+- **Bandeja del sistema Windows** (`installer/windows/tray/ViewLBA-Tray.ps1`):
+  notificación persistente junto al reloj — **clic derecho: Iniciar ·
+  Detener · Abrir Panel · Salir**; icono verde/rojo según estado; refresco
+  cada 10 s; arranque automático con Windows. Cero dependencias
+  (PowerShell 5.1 preinstalado).
+- **.deb NATIVO de Linux** (`installer/linux/build-deb.ts`, dpkg-deb puro
+  — sin Tauri/Rust/linuxdeploy): `dpkg -i` y listo — el postinst instala
+  el usuario de sistema, las unidades systemd, la DB, el admin, ARRANCA el
+  servicio (se reinicia con el equipo), genera credenciales y copia los
+  accesos al escritorio. Comando simple `viewlba-server {start|stop|
+  restart|status|health|logs|panel|credentials}`. Purge conserva los
+  datos del restaurante.
+- **VALIDACIÓN REAL de los instaladores en CI** (nada de «estructura
+  correcta»): el job de Linux hace `dpkg -i` del .deb en el runner
+  (systemd activo + `/api/health` 200 + ciclo stop/start + purge) y el
+  job de Windows instala el `Setup.exe /S` en silencio (servicio
+  Running + health + credenciales + accesos + net stop/start +
+  desinstalación). Un instalador que no pasa eso NO se publica.
+- **Smoke del FLUJO COMPLETO de licencias** (`scripts/
+  apk-license-flow-check.sh`, pedido explícito): abrir la APK → PIN
+  (2025 — valida la política nueva de 4) → «Nueva licencia» → pegar
+  código de solicitud **demo** (`VLDEMO-…`, datos inventados solo para
+  pruebas, habilitado únicamente en builds de CI con
+  `-PdemoRequests=true`; en producción el prefijo se rechaza como código
+  inválido) → validar → GENERAR → token **VLBA2-** visible → **copiar al
+  portapapeles** (toast verificado) → aparece en el Historial. Corre en
+  el emulador de CI junto al smoke de primera pantalla.
+- Entrada `demo-requests` en la action compuesta `android-apk` (default
+  `false` — el APK de producción NUNCA lleva demo habilitado).
+
 ## [3.1.0] — 2026-09-12 — Temas de pantalla + Manual de usuario + release comercial
 
 ### Añadido

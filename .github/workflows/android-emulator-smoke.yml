@@ -13,6 +13,12 @@ name: Android Emulator Smoke
 # (más control negativo: un PIN incorrecto NO desbloquea).
 # Ver scripts/apk-first-screen-check.sh.
 #
+# DESDE v3.2.0: además verifica el FLUJO COMPLETO de crear una licencia
+# (abrir APK → PIN → Nueva licencia → validar solicitud demo → GENERAR →
+# token VLBA2 COPIADO → historial persistido), con datos inventados
+# (VLDEMO-… — solo posibles en este build de CI con demo-requests=true).
+# Ver scripts/apk-license-flow-check.sh.
+#
 # Se dispara: manualmente (workflow_dispatch), en cada tag v* (RC y final)
 # y en cada push a main (regresión funcional del APK visible de inmediato).
 
@@ -31,7 +37,7 @@ concurrency:
 
 jobs:
   smoke:
-    name: "Emulador API 35: install · PRIMERA PANTALLA (PIN) · HOME · unlock"
+    name: "Emulador API 35: PRIMERA PANTALLA (PIN) · HOME · unlock · FLUJO COMPLETO de licencia"
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -50,7 +56,10 @@ jobs:
           test -e /dev/kvm && (sudo chmod 777 /dev/kvm || true) && echo "✓ KVM presente" \
             || { echo "::error::Este runner no tiene KVM — el smoke no puede correr aquí"; exit 1; }
 
-      # Mismo pipeline firmado (lint/tests/sign/verify) → APK en disco
+      # Mismo pipeline firmado (lint/tests/sign/verify) → APK en disco.
+      # demo-requests=true: SOLO para este build de CI (habilita códigos
+      # VLDEMO- inventados con los que el smoke ejercita el flujo completo
+      # de licencias; el APK de producción se compila SIN esta flag).
       - name: "APK firmado y verificado (action compuesto)"
         uses: ./.github/actions/android-apk
         env:
@@ -61,6 +70,7 @@ jobs:
         with:
           version-name: ${{ env.APK_VERSION }}
           artifact-name: viewlba-emulator-smoke
+          demo-requests: "true"
 
       # EVIDENCIA del rc.1: el emulador moderno exige ~7.4 GB de userdata y
       # el runner llega con ~7.1 GB tras el build («Not enough space to create
@@ -74,11 +84,13 @@ jobs:
           df -h / | tail -1
 
       # Instalación + verificación FUNCIONAL en emulador REAL API 35:
-      # la APK debe pasar la primera pantalla (PIN de ejemplo) → HOME →
-      # relanzamiento → desbloqueo → HOME. PIN INCORRECTO → rechazado.
+      #   1) primera pantalla (PIN de ejemplo) → HOME → relanzamiento →
+      #      desbloqueo → HOME. PIN INCORRECTO → rechazado.
+      #   2) FLUJO COMPLETO de licencia (nuevo): PIN 2025 → Nueva licencia
+      #      → código demo → validar → GENERAR → copiar → historial.
       # El script es AUTOCONTENIDO (una sola línea: la action ejecuta cada
       # línea del script en un `sh -c` aparte — ver NOTA CRÍTICA de abajo).
-      - name: "Emulador: instalar, pasar la primera pantalla (PIN) y evidenciar"
+      - name: "Emulador: pasar la primera pantalla (PIN) + FLUJO COMPLETO de licencia"
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -95,14 +107,16 @@ jobs:
           #   expandida por GitHub (${{ env.APK_VERSION }}) en tiempo de parse.
           script: |
             bash scripts/apk-first-screen-check.sh 131313 android-license-generator/app/build/outputs/apk/release/ViewLBA-License-Generator-v${{ env.APK_VERSION }}.apk
+            bash scripts/apk-license-flow-check.sh 2025 android-license-generator/app/build/outputs/apk/release/ViewLBA-License-Generator-v${{ env.APK_VERSION }}.apk
             adb logcat -d | grep -E "FATAL EXCEPTION" | tail -20 || echo "sin FATAL EXCEPTION en logcat (correcto)"
 
-      - name: "Subir evidencia (screenshots del flujo PIN + UI dumps)"
+      - name: "Subir evidencia (screenshots del flujo PIN + licencia + UI dumps)"
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: viewlba-emulator-evidence
           path: |
             /tmp/viewlba-first-screen/
+            /tmp/viewlba-license-flow/
           retention-days: 30
           if-no-files-found: ignore

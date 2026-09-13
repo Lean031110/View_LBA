@@ -22,6 +22,12 @@ android {
         versionCode = (providers.gradleProperty("androidVersionCode").orNull
             ?: providers.gradleProperty("VERSION_CODE").orNull
             ?: "1").toInt()
+
+        // Solicitudes DEMO (VLDEMO-…): SOLO para el smoke del emulador en CI
+        // (./gradlew assembleRelease -PdemoRequests=true). El release de
+        // producción NO pasa la propiedad → false, y el prefijo VLDEMO- se
+        // rechaza como código inválido.
+        buildConfigField("boolean", "DEMO_REQUESTS", providers.gradleProperty("demoRequests").orElse("false").get())
     }
 
     buildTypes {
@@ -58,6 +64,10 @@ android {
         }
     }
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -77,8 +87,9 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
 
-    // Biometría/PIN (desbloqueo del generador)
-    implementation("androidx.biometric:biometric:1.1.0")
+    // (v3.2) SIN androidx.biometric: desbloqueo simple por PIN pedido por
+    // el usuario; el Keystore con setUserAuthenticationRequired dejaba la
+    // app atascada en la primera pantalla en dispositivos reales.
 
     // Criptografía Ed25519/X25519 (BouncyCastle — uso directo de clases,
     // sin registrar Provider para no chocar con el de Android)

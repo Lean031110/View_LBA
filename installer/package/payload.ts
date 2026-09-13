@@ -544,6 +544,24 @@ export function createProductionPayload(opts: PayloadOptions): PayloadResult {
   for (const f of SERVER_CONFIG_FILES) {
     if (existsSync(join(root, f))) copyFileIn(f)
   }
+  // deploy/linux: PLANTILLAS systemd que el installer renderiza al instalar
+  // (LinuxServiceAdapter.installServices las lee de <appDir>/deploy/linux).
+  // Sin esto el sidecar NO puede registrar los servicios — bug real de las
+  // versiones ≤3.1 (los instaladores fallaban justo en esta fase).
+  mkdirSync(join(serverDir, "deploy", "linux"), { recursive: true })
+  const deploySrc = join(root, "deploy", "linux")
+  if (existsSync(deploySrc)) {
+    for (const f of readdirSync(deploySrc)) {
+      if (/\.(service|target|timer)$/.test(f)) {
+        copyFileSync(join(deploySrc, f), join(serverDir, "deploy", "linux", f))
+      }
+    }
+  }
+  const units = readdirSync(join(serverDir, "deploy", "linux")).filter((f) => /\.(service|target|timer)$/.test(f))
+  if (units.length < 8) {
+    throw new PayloadError(`deploy/linux incompleto: ${units.length}/8 unidades (se esperaban pantalla-restaurante*.service|target|timer)`)
+  }
+  ok("deploy/linux (8 unidades systemd — plantillas del installer)")
   // prisma: schema + migrations + seed (migrate deploy offline del installer)
   mkdirSync(join(serverDir, "prisma"), { recursive: true })
   copyFileIn("prisma/schema.prisma")

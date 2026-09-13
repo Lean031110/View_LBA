@@ -19,8 +19,10 @@ con la clave Ed25519 del emisor y abre códigos VLREQ2 con la clave X25519.
 
 1. Instala `ViewLBA-License-Generator-vX.Y.Z.apk` (verifica el SHA-256 del
    artifact contra `SHA256SUMS.txt`).
-2. Crea tu **PIN** (6–16 caracteres) — la bóveda se inicializa (DB cifrada
-   con master key envuelta por Keystore+PIN).
+2. Crea tu **PIN** (4–16 caracteres, simple) — la bóveda se inicializa
+   (DB cifrada con master key envuelta por el PIN: PBKDF2 150k +
+   AES-256-GCM). Sin biometría, sin Keystore, sin requisitos del
+   dispositivo: funciona en cualquier teléfono (v3.2).
 3. **Ajustes → Importar claves privadas**: pega las DOS claves base64url
    que recibiste al configurar el sistema (Ed25519 firma + X25519
    solicitudes). O **Generar claves nuevas** (rotación) y copia las
@@ -67,13 +69,23 @@ explícito exige marcar «Acortar licencia (acción administrativa)».
 
 Ver `docs/LICENSE-SECURITY.md`. Resumen:
 
-- DB **SQLCipher** cifrada; master key con doble envoltura (Keystore
-  AES-GCM con biometría + PBKDF2 del PIN).
-- Bloqueo automático a los 60 s en background; PIN y biometría para
-  desbloquear; cambio de PIN.
+- DB **SQLCipher** cifrada; master key envuelta por el **PIN**
+  (PBKDF2-HMAC-SHA256 150k + AES-256-GCM) — simple y portable
+  (v3.2: sin Keystore/biometría; los vaults ≤3.1 se desbloquean igual
+  con el PIN y migran al cambiarlo).
+- Bloqueo automático a los 60 s en background; PIN para desbloquear;
+  cambio de PIN.
 - `allowBackup=false` — nada sale al cloud.
 - Claves privadas jamás en claro (ni logs, ni screenshots de la app: los
   ajustes solo muestran las PÚBLICAS).
+
+### Códigos de solicitud demo (SOLO builds de CI)
+
+Con `-PdemoRequests=true` (build del smoke del emulador, nunca en
+producción) la app acepta códigos `VLDEMO-…` como solicitudes válidas
+con datos inventados — permite verificar en CI el flujo completo de
+emitir una licencia sin claves reales de clientes. El APK de producción
+se compila SIN la flag: `VLDEMO-` se rechaza como código inválido.
 
 ## Compilación y CI
 
