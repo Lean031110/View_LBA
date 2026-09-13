@@ -68,8 +68,9 @@ y este proyecto adhiere a [SemVer](https://semver.org/lang/es/).
 
 ### Cambiado
 
-- `versionCode` Android: 3 → **4** (monótono, nunca se reutiliza el 3
-  publicado en v3.0.0). APK: `ViewLBA-License-Generator-v3.1.0.apk`.
+- `versionCode` Android: 4 → **5** (monótono; el 4 fue publicado en el
+  prerelease v3.1.0-rc.1 y no se reutiliza). APK:
+  `ViewLBA-License-Generator-v3.1.0.apk`.
 - Los backups incluyen las filas de temas (`Theme` en
   `TRACKED_TABLES`); restaurar revalida los paquetes antes de usarlos.
 
