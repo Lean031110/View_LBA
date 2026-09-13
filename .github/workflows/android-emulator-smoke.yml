@@ -118,5 +118,5 @@ jobs:
           path: |
             /tmp/viewlba-first-screen/
             /tmp/viewlba-license-flow/
-          retention-days: 30
+          retention-days: 7
           if-no-files-found: ignore

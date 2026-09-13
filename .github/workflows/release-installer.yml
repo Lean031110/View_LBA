@@ -221,7 +221,7 @@ jobs:
         with:
           name: viewlba-linux-installer
           path: dist/release/linux/out/*
-          retention-days: 14
+          retention-days: 3
           # §14: verde SOLO si hay instalador
           if-no-files-found: error
 
@@ -438,7 +438,7 @@ jobs:
         with:
           name: viewlba-windows-installer
           path: dist/release/windows/out/*
-          retention-days: 14
+          retention-days: 3
           if-no-files-found: error
 
   # ---------------------------------------------------------------- Android
