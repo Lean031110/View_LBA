@@ -361,7 +361,32 @@ adb shell am start -W -n "$ACT" >/dev/null
 sleep 3
 wait_view "$ID_UNLOCK_PIN" 60 || fail "No apareció la pantalla de desbloqueo (control negativo)"
 type_into_field "$ID_UNLOCK_PIN" "000000"
-submit_ime                      # intento de desbloqueo (DEBE fallar)
+# ESC para CERRAR el IME: asienta (commit) el texto del campo y deja el
+# botón visible. NOTA (runs 34735769441/34736413228): disparar la acción
+# con ENTER mientras el IME está abierto puede leer el campo ANTES del
+# commit del texto en composición → el click veía pin VACÍO. Con el IME
+# cerrado + tap por coordenadas, el texto ya está comprometido.
+adb shell input keyevent 111 >/dev/null 2>&1 || true
+sleep 1
+dump_ui || true
+NEG_TXT=$(field_text "$ID_UNLOCK_PIN")
+log "PIN incorrecto en el campo: '$NEG_TXT'"
+case "$NEG_TXT" in
+  *"•"*) : ;;      # hay texto (puntos de contraseña) — OK
+  *)                # vacío o hint ('PIN') → reescribir (keycodes) y asentar
+    tap_view "$ID_UNLOCK_PIN" || true
+    sleep 1
+    type_digits "000000"
+    sleep 1
+    adb shell input keyevent 111 >/dev/null 2>&1 || true
+    sleep 1
+    dump_ui || true
+    NEG_TXT=$(field_text "$ID_UNLOCK_PIN")
+    log "PIN incorrecto (2.º intento) en el campo: '$NEG_TXT'"
+    ;;
+esac
+dump_ui || true
+tap_button_with_fallback "$ID_UNLOCK_BTN" || submit_ime
 sleep 3
 dump_ui || true
 if find_view "$ID_HOME_NEW" >/dev/null; then
