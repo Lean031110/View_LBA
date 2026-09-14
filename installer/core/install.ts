@@ -305,6 +305,18 @@ export async function runInstall(config: InstallConfig, deps: InstallDeps): Prom
       emit({ type: "progress", current: copied, total: copied, label: "archivos copiados" })
       const prebuilt = existsSync(join(payloadDir, ".next", "standalone", "server.js"))
 
+      // ⚠ TRAZADO DE NEXT — bug real del 5.º/6.º build de v3.2.0: la copia
+      // filtrada excluye «node_modules» a CUALQUIER profundidad (correcto
+      // para el raíz: llega aparte) PERO el de .next/standalone es el módulo
+      // TRAZADO que server.js requiere (next, react, @prisma/client…) — sin
+      // él el servidor muere al arrancar (crash loop de systemd → health
+      // «unreachable»). Se copia EXPLÍCITAMENTE, junto a su package.json.
+      const standaloneNM = join(payloadDir, ".next", "standalone", "node_modules")
+      if (existsSync(standaloneNM)) {
+        copyTree(standaloneNM, join(layout.appDir, ".next", "standalone", "node_modules"))
+        emit({ type: "info", message: "node_modules trazado del standalone copiado (server.js autosuficiente)" })
+      }
+
       // Payload offline (o con deps vendored): node_modules incluidos.
       const payloadOffline = payloadHasDeps(payloadDir)
       if (payloadOffline) {
@@ -479,6 +491,23 @@ export async function runInstall(config: InstallConfig, deps: InstallDeps): Prom
       checks.push(...hc)
       for (const c of hc) emit({ type: "check", result: c })
       if (report.status === "unreachable" || report.status === "unhealthy") {
+        // AUTOPSIA del servicio ANTES del rollback (el rollback borra las
+        // unidades y destruye la evidencia — «unit could not be found» con
+        // journald vacío NO ES depurable). Solo Linux; nunca rompe el flujo.
+        if (adapter.platform === "linux") {
+          try {
+            const j = runner.run("journalctl", ["-u", "pantalla-restaurante.service", "--no-pager", "-n", "40"])
+            for (const l of (j.stdout || "").split("\n")) {
+              if (l.trim()) emit({ type: "info", message: `[autopsia] ${l.trim()}` })
+            }
+            const st = runner.run("systemctl", ["status", "pantalla-restaurante.service", "--no-pager", "-l"])
+            for (const l of ((st.stdout || "") + (st.stderr || "")).split("\n").slice(0, 15)) {
+              if (l.trim()) emit({ type: "info", message: `[autopsia] ${l.trim()}` })
+            }
+          } catch {
+            /* la autopsia es best-effort */
+          }
+        }
         throw new PhaseError(
           "health",
           `Health final FALLÓ (${report.status}): ${report.areas.filter((a) => !a.ok).map((a) => a.key).join(", ")}`,
