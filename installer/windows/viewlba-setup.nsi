@@ -44,11 +44,18 @@ Var AdminPassword
 !ifndef VERSION
   !error "VERSION requerido: -DVERSION=3.2.0"
 !endif
-; NOTA DE RUTAS: makensis resuelve rutas RELATIVAS contra el DIRECTORIO
-; DEL SCRIPT (no el CWD de quien lo invoca). Defaults = staging estándar
-; del repo; en CI se pasan -DPAYLOAD/-DOUT_EXE con rutas ABSOLUTAS.
+; NOTA DE RUTAS (lección del primer build real v3.2.0): makensis resuelve
+; las rutas RELATIVAS de File contra el CWD DE QUIEN LO INVOCA (NO contra
+; el directorio del script — comprobado empíricamente: File "tray/…"
+; falló en CI con CWD=raíz del repo aunque el archivo existe junto al
+; script). En CI se pasan -DPAYLOAD/-DOUT_EXE/-DTRAY_PS1/-DICON con rutas
+; ABSOLUTAS; los defaults relativos solo sirven invocando makensis desde
+; installer/windows/.
 !ifndef PAYLOAD
   !define PAYLOAD "../../dist/release/windows/ViewLBA-Server"
+!endif
+!ifndef TRAY_PS1
+  !define TRAY_PS1 "tray/ViewLBA-Tray.ps1"
 !endif
 !ifndef ICON
   !define ICON "viewlba.ico"
@@ -161,7 +168,7 @@ Section "Instalar ${APPNAME}" SecMain
   ; ---- 4. Bandeja del sistema (notificación persistente) ----------------
   DetailPrint "Instalando la bandeja del sistema (iniciar/detener con clic derecho)…"
   SetOutPath "$INSTDIR\tray"
-  File "tray/ViewLBA-Tray.ps1"
+  File "${TRAY_PS1}"
   SetOutPath "$INSTDIR"
   ; icono del producto (accesos + bandeja)
   File /oname=viewlba.ico "${ICON}"
