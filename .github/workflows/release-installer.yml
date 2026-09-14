@@ -363,26 +363,23 @@ jobs:
           if (-not (Test-Path $exe)) { throw "falta el Setup.exe" }
 
           Write-Host "→ instalación silenciosa (como el usuario, sin preguntas)…"
-          $p = Start-Process -FilePath $exe -ArgumentList "/S" -Wait -PassThru
+          # -Verb RunAs: los pasos del runner corren con token FILTRADO
+          # (integridad media): sin elevación explícita el instalador muere
+          # en el preflight «Permisos de administrador: NO». Los runners
+          # de Windows auto-aprueban la elevación (ConsentPromptBehaviorAdmin=0).
+          $p = Start-Process -FilePath $exe -ArgumentList "/S" -Wait -PassThru -Verb RunAs
           if ($p.ExitCode -ne 0) {
             Write-Host "→ la instalación silenciosa falló (código $($p.ExitCode)). Diagnóstico:"
-            # Salida COMPLETA del instalador (idempotente — re-ejecutar
-            # muestra el error real que /S tragó: la instalación silenciosa
-            # del NSIS captura el output en el detalle invisible).
-            if (Test-Path "C:\ViewLBA\viewlba-installer.exe") {
-              Write-Host "--- viewlba-installer --config (re-ejecución visible) ---"
-              & C:\ViewLBA\viewlba-installer.exe --config C:\ViewLBA\install-config.json 2>&1 | ForEach-Object { Write-Host "  $_" }
-              Write-Host "--- diagnostics ---"
-              & C:\ViewLBA\viewlba-installer.exe diagnostics 2>&1 | ForEach-Object { Write-Host "  $_" }
-              Write-Host "--- estado REAL de C:\ViewLBA (paths que el preflight comprueba) ---"
-              Write-Host "  package.json: $(Test-Path 'C:\ViewLBA\resources\server\package.json')"
-              Write-Host "  node_modules: $(Test-Path 'C:\ViewLBA\resources\server\node_modules')"
-              Write-Host "  .bin:         $(Test-Path 'C:\ViewLBA\resources\server\node_modules\.bin')"
-              Write-Host "  bun.exe:      $(Test-Path 'C:\ViewLBA\runtime\bun.exe')"
-              Get-ChildItem C:\ViewLBA -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  [dir] $($_.Name)" }
-              Get-ChildItem C:\ViewLBA\resources -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  [res] $($_.Name)" }
+            # El instalador dejó SU salida en install.log (redirección del NSIS)
+            if (Test-Path "C:\ViewLBA\install.log") {
+              Write-Host "--- install.log (salida REAL del instalador durante el /S) ---"
+              Get-Content "C:\ViewLBA\install.log" | Select-Object -First 60 | ForEach-Object { Write-Host "  $_" }
             } else {
-              Write-Host "  (el payload ni siquiera llegó a copiarse: C:\ViewLBA no existe)"
+              Write-Host "  (sin install.log — el instalador ni siquiera llegó a ejecutarse)"
+            }
+            if (Test-Path "C:\ViewLBA\viewlba-installer.exe") {
+              Write-Host "--- viewlba-installer --config (re-ejecución visible, token del paso) ---"
+              & C:\ViewLBA\viewlba-installer.exe --config C:\ViewLBA\install-config.json 2>&1 | Select-Object -First 30 | ForEach-Object { Write-Host "  $_" }
             }
             throw "la instalación silenciosa falló (código $($p.ExitCode))"
           }
