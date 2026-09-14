@@ -44,6 +44,15 @@ export interface InitializeOptions {
   appPort?: number
   realtimeHealthUrl?: string
   streamHealthUrl?: string
+  /**
+   * Directorio de trabajo de los subprocesos (prisma, seed). El instalador
+   * compilado DEBE pasarlo (appDir): PROJECT_ROOT se deriva de
+   * import.meta.url, que en un binario bun-compile apunta al bunfs VIRTUAL
+   * (/$bunfs/root/…, invisible para los hijos) → `bunx prisma` fallaba con
+   * cwd inexistente («no se pudo leer el datasource» — bug real v3.2.0).
+   * Sin esto (repo/scripts), se usa PROJECT_ROOT como siempre.
+   */
+  cwd?: string
 }
 
 export type StepStatus = "ok" | "skipped" | "failed" | "aborted"
@@ -68,8 +77,8 @@ export interface InitializeResult {
 export const MISMATCH_ABORT = "Database target mismatch: aborting to prevent modifying another database."
 
 /** Ejecuta un comando con env EXPLÍCITO (sin depender del shell heredado). */
-function runWithEnv(cmd: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs = 180_000): { stdout: string; stderr: string; status: number | null } {
-  const r = spawnSync(cmd, args, { encoding: "utf8", env, cwd: PROJECT_ROOT, timeout: timeoutMs })
+function runWithEnv(cmd: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs = 180_000, cwd?: string): { stdout: string; stderr: string; status: number | null } {
+  const r = spawnSync(cmd, args, { encoding: "utf8", env, cwd: cwd ?? PROJECT_ROOT, timeout: timeoutMs })
   return { stdout: r.stdout ?? "", stderr: r.stderr ?? "", status: r.status }
 }
 
@@ -79,6 +88,9 @@ function childEnv(databaseUrl: string): NodeJS.ProcessEnv {
 }
 
 export async function initializeProduction(options: InitializeOptions): Promise<InitializeResult> {
+  // cwd de los subprocesos: la APP instalada (instalador compilado) o el
+  // repo (scripts) — NUNCA el bunfs virtual de un binario bun-compile.
+  const workRoot = options.cwd ?? PROJECT_ROOT
   const result: InitializeResult = { ok: false, steps: [], adminCreated: false }
 
   // ---------- 1) Entorno: .env como fuente de verdad + target explícito ----------
@@ -125,14 +137,14 @@ export async function initializeProduction(options: InitializeOptions): Promise<
 
   // ---------- 2) Verificación REAL del datasource (antes de migrar) ----------
   if (!options.skipMigrations) {
-    const probe = runWithEnv("bunx", ["prisma", "migrate", "status"], childEnv(target.url), 180_000)
+    const probe = runWithEnv("bunx", ["prisma", "migrate", "status"], childEnv(target.url), 180_000, workRoot)
     const datasource = parseDatasourceUrl(probe.stdout + "\n" + probe.stderr)
     if (!datasource) {
       result.steps.push({ name: "database-target", status: "failed", detail: "no se pudo leer el datasource de prisma" })
       result.error = "No se pudo verificar el datasource real de Prisma (¿bunx prisma funciona?). Por seguridad no se continúa."
       return result
     }
-    if (!sqlitePathsMatch(datasource, target.url, PROJECT_ROOT)) {
+    if (!sqlitePathsMatch(datasource, target.url, workRoot)) {
       result.steps.push({
         name: "database-target",
         status: "aborted",
@@ -148,7 +160,7 @@ export async function initializeProduction(options: InitializeOptions): Promise<
   if (options.skipMigrations) {
     result.steps.push({ name: "migrations", status: "skipped", detail: "omitidas por opción" })
   } else {
-    const mig = runWithEnv("bunx", ["prisma", "migrate", "deploy"], childEnv(target.url), 240_000)
+    const mig = runWithEnv("bunx", ["prisma", "migrate", "deploy"], childEnv(target.url), 240_000, workRoot)
     if (mig.status !== 0) {
       result.steps.push({ name: "migrations", status: "failed", detail: (mig.stderr || mig.stdout).slice(0, 500) })
       result.error = "prisma migrate deploy falló — no se continúa con admin/seed."
@@ -217,7 +229,7 @@ export async function initializeProduction(options: InitializeOptions): Promise<
 
   // ---------- 6) Contenido demo opcional (sin usuarios) ----------
   if (options.withDemoData) {
-    const seed = runWithEnv("bun", ["prisma/seed.ts"], childEnv(target.url), 240_000)
+    const seed = runWithEnv("bun", ["prisma/seed.ts"], childEnv(target.url), 240_000, workRoot)
     if (seed.status !== 0) {
       result.steps.push({ name: "demo-seed", status: "failed", detail: (seed.stderr || seed.stdout).slice(0, 300) })
       result.ok = false
