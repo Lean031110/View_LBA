@@ -242,6 +242,55 @@ const STANDALONE_WHITELIST = [
   "public",
 ]
 
+/**
+ * Turbopack referencia EXTERNOS con un alias con hash:
+ * «@prisma/client-2c3a283f134fdcb6». Durante el build esos alias viven en
+ * .next/node_modules (raíz del proyecto) — junto al standalone NO se copian
+ * y en la máquina de destino el require del chunk FALLA («Cannot find
+ * module '@prisma/client-2c3a28…'» → crash loop del servicio → health
+ * unreachable — bug real del 8.º build de v3.2.0, reproducido localmente
+ * con build fresco: el .next/standalone del repo adyacente TAPABA el bug
+ * porque su node_modules raíz resolvía el alias).
+ *
+ * Solución PORTABLE (sin symlinks — NSIS/Windows no los admite y el smoke
+ * del payload los prohíbe): paquete-puente en node_modules del standalone
+ * que re-exporta el paquete real.
+ */
+export function ensureExternalAliases(standaloneDir: string): string[] {
+  const chunksDir = join(standaloneDir, ".next", "server", "chunks")
+  const nm = join(standaloneDir, "node_modules")
+  if (!existsSync(chunksDir) || !existsSync(nm)) return []
+  const aliases = new Map<string, string>() // alias completo → paquete base
+  // «@scope/paquete-<16hex>» o «paquete-<16hex>», entre comillas (string
+  // del chunk); el base debe existir en el node_modules del standalone.
+  const re = /["']((?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*)-([0-9a-f]{16})["']/g
+  const files = readdirSync(chunksDir, { recursive: true, withFileTypes: false }) as string[]
+  for (const f of files) {
+    if (!f.endsWith(".js")) continue
+    let src: string
+    try {
+      src = readFileSync(join(chunksDir, f), "utf8")
+    } catch {
+      continue
+    }
+    let m: RegExpExecArray | null
+    while ((m = re.exec(src)) !== null) {
+      const base = m[1]!
+      if (existsSync(join(nm, ...base.split("/")))) aliases.set(m[0].slice(1, -1), base)
+    }
+  }
+  const created: string[] = []
+  for (const [alias, base] of aliases) {
+    const dir = join(nm, ...alias.split("/"))
+    if (existsSync(dir)) continue
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, "package.json"), `${JSON.stringify({ name: alias, version: "0.0.0", main: "index.js" }, null, 2)}\n`)
+    writeFileSync(join(dir, "index.js"), `module.exports = require(${JSON.stringify(base)})\n`)
+    created.push(alias)
+  }
+  return created
+}
+
 // Límites de guard (fallan ANTES de Tauri/NSIS — nunca un instalador roto).
 export const PAYLOAD_LIMITS = {
   maxBytes: 700 * 1024 * 1024, // 700 MB (esperado ~400; margen 2×)
@@ -506,6 +555,14 @@ export function createProductionPayload(opts: PayloadOptions): PayloadResult {
     if (!existsSync(src)) continue // p.ej. public podría no existir
     copyTreeDeref(src, join(serverDir, ".next", "standalone", entry))
   }
+
+  // Puentes para los alias de Turbopack (externos con hash) — sin esto el
+  // server.js del standalone MUERE en destino (ver ensureExternalAliases).
+  log("Externos con alias de Turbopack: puentes portables (sin symlink)")
+  const bridges = ensureExternalAliases(join(serverDir, ".next", "standalone"))
+  if (bridges.length > 0) ok(`puentes creados: ${bridges.join(", ")}`)
+  else ok("sin alias con hash que puentear (nada que hacer)")
+
   // Variantes musl de sharp/@img (Alpine): inútiles en glibc (Ubuntu/Debian,
   // objetivo del instalador) y rompen linuxdeploy — "Could not find dependency:
   // libc.musl-x86_64.so.1" al empaquetar el AppImage GUI (evidencia real).
