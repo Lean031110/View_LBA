@@ -123,6 +123,9 @@ jobs:
             systemctl status pantalla-restaurante.service --no-pager -l 2>&1 | head -20 || true
             sudo ls -la /opt/pantalla-restaurante/runtime /opt/pantalla-restaurante/.next/standalone 2>&1 | head -12 || true
             sudo cat /etc/pantalla-restaurante.env 2>/dev/null | grep -v SECRET | grep -v TOKEN || true
+            echo "─── logs estructurados (/var/log/pantalla-restaurante) ───"
+            sudo ls -la /var/log/pantalla-restaurante 2>&1 || true
+            sudo tail -30 /var/log/pantalla-restaurante/*.log 2>/dev/null || true
             exit 1
           fi
 
