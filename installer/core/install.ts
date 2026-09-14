@@ -15,9 +15,9 @@
  */
 import { copyFileSync, existsSync, readdirSync } from "node:fs"
 import { networkInterfaces } from "node:os"
-import { basename, dirname, join, resolve } from "node:path"
+import { basename, delimiter, dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { initializeProduction } from "../../scripts/lib/production-init"
+import { initializeProduction, resolvePrismaCli } from "../../scripts/lib/production-init"
 import { readEnvFile, detectEnvContamination } from "../../scripts/lib/env-file"
 import type {
   CheckResult,
@@ -219,10 +219,12 @@ export async function runInstall(config: InstallConfig, deps: InstallDeps): Prom
     env: { ...process.env },
     bunPath: bundledBun ?? process.env.VIEWLBA_BUN ?? "bun",
   }
-  // Bun incluido: que bunx/bun de initializeProduction resuelvan al del paquete.
+  // Bun incluido: que bun/bunx de los subprocesos resuelvan al del paquete.
+  // ⚠ delimitador de PATH por plataforma (":" en Windows corrompía la
+  // variable — la raíz de los «no encontrado» silenciosos de bunx).
   if (bundledBun) {
     const runtimeDir = dirname(bundledBun)
-    ctx.env.PATH = `${runtimeDir}${ctx.env.PATH ? `:${ctx.env.PATH}` : ""}`
+    ctx.env.PATH = `${runtimeDir}${ctx.env.PATH ? `${delimiter}${ctx.env.PATH}` : ""}`
     process.env.PATH = ctx.env.PATH
   }
 
@@ -368,7 +370,8 @@ export async function runInstall(config: InstallConfig, deps: InstallDeps): Prom
           if (!existsSync(bunxExe)) copyFileSync(installedBun, bunxExe)
         }
         ctx.bunPath = installedBun
-        ctx.env.PATH = `${runtimeDst}${ctx.env.PATH ? `:${ctx.env.PATH}` : ""}`
+        // ⚠ delimitador de PATH por plataforma — ":" fijo rompía Windows.
+        ctx.env.PATH = `${runtimeDst}${ctx.env.PATH ? `${delimiter}${ctx.env.PATH}` : ""}`
         process.env.PATH = ctx.env.PATH
         emit({ type: "info", message: `runtime instalado (permanente) en ${runtimeDst}` })
       }
@@ -405,9 +408,22 @@ export async function runInstall(config: InstallConfig, deps: InstallDeps): Prom
       }
 
       // Prisma Client (necesario para migrate y para el runtime).
-      const gen = runner.run(ctx.bunPath, ["x", "prisma", "generate"], { cwd: layout.appDir, timeoutMs: 240_000 })
-      if (gen.status !== 0) {
-        throw new PhaseError("deploy", `prisma generate falló: ${(gen.stderr || gen.stdout).slice(0, 400)}`, gen.command, undefined, "prisma")
+      // ⚠ SIN `bun x` (bug del 9.º build): sobre el node_modules PODADO del
+      // payload, bun muere con «could not find bin metadata file» (bin
+      // remapping imposible). El payload oficial YA VIAJA GENERADO
+      // (.prisma/client — ver payload.ts), así que generate SOLO si falta;
+      // cuando hace falta, se invoca el entry del bin DIRECTO (repo con deps
+      // → también funciona; bunx queda como último recurso).
+      const prismaMarker = join(layout.appDir, "node_modules", ".prisma", "client", "default.js")
+      const prismaCli = resolvePrismaCli(layout.appDir)
+      const genArgs = prismaCli ? [prismaCli, "generate"] : ["x", "prisma", "generate"]
+      if (existsSync(prismaMarker)) {
+        emit({ type: "info", message: "Prisma Client ya generado en el payload (.prisma/client) — generate omitido" })
+      } else {
+        const gen = runner.run(ctx.bunPath, genArgs, { cwd: layout.appDir, timeoutMs: 240_000 })
+        if (gen.status !== 0) {
+          throw new PhaseError("deploy", `prisma generate falló: ${(gen.stderr || gen.stdout).slice(0, 400)}`, gen.command, undefined, "prisma")
+        }
       }
 
       // BUILD: el paquete oficial viaja PRECOMPILADO (.next copiado arriba).
@@ -467,6 +483,9 @@ export async function runInstall(config: InstallConfig, deps: InstallDeps): Prom
         // cwd = appDir REAL: en el sidecar compilado PROJECT_ROOT apunta al
         // bunfs VIRTUAL (invisible para los hijos) — bug real v3.2.0
         cwd: layout.appDir,
+        // bun del PAQUETE para los subprocesos (prisma/seed) — el CLI de
+        // prisma se invoca directo con ÉL (bun x rompe en el payload).
+        bunPath: ctx.bunPath,
       })
       for (const s of result.steps) emit({ type: "check", result: stepToCheck(s) })
       if (!result.ok) {
@@ -559,6 +578,7 @@ export async function runInstall(config: InstallConfig, deps: InstallDeps): Prom
         healthChecks: false,
         skipMigrations: true,
         cwd: layout.appDir,
+        bunPath: ctx.bunPath,
       })
       for (const s of result.steps) emit({ type: "check", result: stepToCheck(s) })
       if (!result.ok) throw new PhaseError("admin", result.error ?? "no se pudo crear el admin", undefined, undefined, "admin")

@@ -29,7 +29,7 @@ import {
   resolveDatabaseTarget,
   detectEnvContamination,
 } from "../scripts/lib/env-file"
-import { initializeProduction, MISMATCH_ABORT, PROJECT_ROOT } from "../scripts/lib/production-init"
+import { initializeProduction, MISMATCH_ABORT, PROJECT_ROOT, resolvePrismaCli } from "../scripts/lib/production-init"
 
 // ---------- Unit: parseEnvFile ----------
 describe("parseEnvFile", () => {
@@ -140,6 +140,24 @@ describe("detectEnvContamination", () => {
   test("sin variable en el entorno → null", () => {
     delete process.env.DATABASE_URL
     expect(detectEnvContamination({ DATABASE_URL: "file:/local/custom.db" })).toBeNull()
+  })
+})
+
+// ---------- Unit: resolvePrismaCli (invocación directa, sin bun x) ----------
+describe("resolvePrismaCli", () => {
+  test("repo: resuelve el entry del bin de prisma (bin del package.json)", () => {
+    const cli = resolvePrismaCli(PROJECT_ROOT)
+    expect(cli).toBeTruthy()
+    expect(cli).toContain(join("node_modules", "prisma"))
+    expect(existsSync(cli as string)).toBe(true)
+  })
+  test("árbol SIN node_modules/prisma → null (fallback a bun x)", () => {
+    const tmp2 = mkdtempSync(join(tmpdir(), "no-prisma-cli-"))
+    try {
+      expect(resolvePrismaCli(tmp2)).toBeNull()
+    } finally {
+      rmSync(tmp2, { recursive: true, force: true })
+    }
   })
 })
 
