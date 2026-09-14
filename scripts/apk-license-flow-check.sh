@@ -8,6 +8,9 @@
 #
 #   1. Instalación limpia → primer uso → PIN de ejemplo (2025 — valida la
 #      política NUEVA de PIN simple 4-16 chars) → HOME
+#   1b. Ajustes → Generar claves del emisor (el engine NO emite sin
+#      claves — «Claves del emisor no configuradas»: mismo camino que
+#      seguiría un administrador real)
 #   2. HOME → «Nueva licencia»
 #   3. Pegar código de solicitud DEMO (VLDEMO-CI-SMOKE — datos inventados,
 #      solo disponible en builds de CI con -PdemoRequests=true) → validar
@@ -46,6 +49,10 @@ ID_COPY="$PKG:id/btn_copy_token"
 ID_STATUS="$PKG:id/new_license_status"
 ID_BACK="$PKG:id/btn_back"
 ID_HISTORY="$PKG:id/btn_history"
+ID_SETTINGS="$PKG:id/btn_settings"
+ID_GEN_KEYS="$PKG:id/btn_generate_keys"
+ID_KEYS_STATE="$PKG:id/settings_keys"
+ID_DIALOG_OK="android:id/button1"
 
 mkdir -p "$EVIDENCE_DIR"
 UI_XML="$EVIDENCE_DIR/ui.xml"
@@ -284,6 +291,32 @@ log "Esperando HOME (PBKDF2 en bg puede tardar)…"
 wait_view "$ID_HOME_NEW" 120 || fail "No se llegó a HOME tras crear la bóveda (btn_new_license invisible tras 120 s)"
 screenshot "03-home"
 log "✓ HOME alcanzado — la bóveda se creó con el PIN simple"
+
+# ── 1b. Claves del emisor (el engine NO emite sin ellas) ───────────────
+# Camino real del administrador: Ajustes → Generar claves → confirmar el
+# diálogo → volver a HOME. Sin esto GENERAR responde «Claves del emisor
+# no configuradas» (comprobado en el primer run real del flujo).
+log "Generando las claves del emisor (Ajustes → Generar claves)…"
+tap_button_with_fallback "$ID_SETTINGS" || fail "no se pudo tocar btn_settings"
+wait_view "$ID_GEN_KEYS" 30 || fail "no apareció btn_generate_keys en Ajustes"
+screenshot "03b-ajustes"
+tap_button_with_fallback "$ID_GEN_KEYS" || fail "no se pudo tocar btn_generate_keys"
+wait_view "$ID_DIALOG_OK" 30 || fail "no apareció el diálogo de confirmación de claves"
+screenshot "03c-dialogo-claves"
+# TOQUE DIRECTO (sin ESC): un ESC/back sobre un AlertDialog puede
+# CANCELARLO — y el botón del diálogo nunca está bajo un IME.
+dump_ui || true
+tap_view "$ID_DIALOG_OK" || fail "no se pudo confirmar la generación de claves"
+# la generación es cripto pura (rápida); el toast vive ~3 s
+toast_visible "Claves generadas" 10 || log "aviso: toast «Claves generadas» no capturado (timing)"
+# verificación de estado: settings_keys debe informar «configuradas»
+wait_text "$ID_KEYS_STATE" "configuradas" 20 \
+  || fail "las claves del emisor NO quedaron configuradas: $(field_text "$ID_KEYS_STATE")"
+screenshot "03d-claves-generadas"
+log "✓ Claves del emisor generadas y persistentes"
+tap_button_with_fallback "$ID_BACK" || fail "no se pudo volver de Ajustes (btn_back)"
+sleep 2
+wait_view "$ID_HOME_NEW" 15 || fail "no se llegó de vuelta a HOME tras generar las claves"
 
 # ── 2. «Nueva licencia» ──────────────────────────────────────────────────
 log "Abriendo «Nueva licencia»…"
