@@ -38,6 +38,14 @@ runs:
 
     - name: "Android SDK (cmdline-tools)"
       uses: android-actions/setup-android@v3
+      with:
+        # «tools» (paquete LEGACY del SDK) fue RETIRADO del repositorio de
+        # Google: setup-android@v3 lo instala por DEFECTO («tools
+        # platform-tools») → «Failed to find package 'tools'» → exit 1 en
+        # cualquier runner nuevo (rompió los dos workflows Android de un día
+        # para otro sin cambios aquí). platform-tools BASTA (adb); aapt2/
+        # apksigner/zipalign vienen de build-tools (instalado abajo, 35.0.0).
+        packages: 'platform-tools'
 
     - name: "Plataforma 35 + build-tools 35.0.0 (fijos)"
       shell: bash
