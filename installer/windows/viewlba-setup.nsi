@@ -159,16 +159,19 @@ Section "Instalar ${APPNAME}" SecMain
 
   ; ---- 3. Instalación REAL: copia app + DB + admin + servicio + arranque --
   DetailPrint "Instalando el servicio de Windows y preparando la base de datos…"
-  nsExec::ExecToLog '"$INSTDIR\viewlba-installer.exe" --config "$INSTDIR\install-config.json"'
+  ; La salida se REDIRIGE a $INSTDIR\install.log: en /S (silencioso) el
+  ; detalle de nsExec NO es visible y el error real quedaba tragado
+  ; (lección de los builds 9-10: sin el log el diagnóstico era imposible).
+  nsExec::ExecToLog 'cmd /c ""$INSTDIR\viewlba-installer.exe" --config "$INSTDIR\install-config.json" > "$INSTDIR\install.log" 2>&1"'
   Pop $0
   ${If} $0 != 0
     MessageBox MB_RETRYCANCEL|MB_ICONSTOP \
-      "La instalación del servicio terminó con código $0.$\r$\n$\r$\nRevisa el detalle arriba y en $INSTDIR.$\r$\n¿Reintentar la instalación del servicio?" /SD IDCANCEL IDRETRY retry_install
+      "La instalación del servicio terminó con código $0.$\r$\n$\r$\nRevisa $INSTDIR\install.log.$\r$\n¿Reintentar la instalación del servicio?" /SD IDCANCEL IDRETRY retry_install
     Abort "Instalación del servicio fallida (código $0)."
   ${EndIf}
   Goto after_install
   retry_install:
-    nsExec::ExecToLog '"$INSTDIR\viewlba-installer.exe" --config "$INSTDIR\install-config.json"'
+    nsExec::ExecToLog 'cmd /c ""$INSTDIR\viewlba-installer.exe" --config "$INSTDIR\install-config.json" > "$INSTDIR\install.log" 2>&1"'
     Pop $0
     ${If} $0 != 0
       Abort "La reinstalación del servicio falló (código $0)."
