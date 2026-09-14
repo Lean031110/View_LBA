@@ -211,7 +211,11 @@ jobs:
             || { echo "✗ el .deb NO contiene el runtime bun (autosuficiencia)"; exit 1; }
           grep -q "usr/share/applications/viewlba-panel.desktop" /tmp/deb-contents.txt \
             || { echo "✗ el .deb NO crea accesos directos"; exit 1; }
-          grep -q "DEBIAN/postinst" /tmp/deb-contents.txt
+          # ⚠ dpkg-deb --contents lista SOLO el archivo data: DEBIAN/postinst
+          # NO aparece ahí (bug del 9.º build: grep silencioso → set -e mataba
+          # el paso sin mensaje). El control se valida extrayéndolo.
+          dpkg-deb --control "$DEB_OUT" /tmp/deb-ctl
+          test -s /tmp/deb-ctl/postinst || { echo "✗ falta DEBIAN/postinst"; exit 1; }
           echo "✓ .deb validado (dpkg-deb --info/--contents): $(du -h "$DEB_OUT" | cut -f1)"
           CLI_OUT="$OUT/ViewLBA-Server-CLI-$VERSION-x86_64.AppImage"
           test -s dist/release/linux/ViewLBA-Server-CLI.AppImage || { echo "✗ falta el AppImage CLI"; exit 1; }
