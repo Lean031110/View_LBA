@@ -321,6 +321,16 @@ export async function runInstall(config: InstallConfig, deps: InstallDeps): Prom
         copyTree(standaloneNM, join(layout.appDir, ".next", "standalone", "node_modules"))
         emit({ type: "info", message: "node_modules trazado del standalone copiado (server.js autosuficiente)" })
       }
+      // ⚠ ALIAS DE TURBOPACK (8.º build): los chunks referencian externos con
+      // hash («@prisma/client-2c3a28…») que Next escribe en .next/standalone/
+      // .next/node_modules — TAMBIÉN excluido por la regla de node_modules a
+      // cualquier profundidad. Sin él: «Cannot find module '@prisma/client-
+      // 2c3a28…'» desde el chunk → crash loop (autopsia del 8.º build).
+      const standaloneInnerNM = join(payloadDir, ".next", "standalone", ".next", "node_modules")
+      if (existsSync(standaloneInnerNM)) {
+        copyTree(standaloneInnerNM, join(layout.appDir, ".next", "standalone", ".next", "node_modules"))
+        emit({ type: "info", message: "alias de Turbopack (.next/node_modules interno) copiados" })
+      }
 
       // Payload offline (o con deps vendored): node_modules incluidos.
       const payloadOffline = payloadHasDeps(payloadDir)
