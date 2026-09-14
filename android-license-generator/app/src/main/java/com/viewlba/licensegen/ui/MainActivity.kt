@@ -14,6 +14,7 @@ import android.text.TextWatcher
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.util.Log
 import android.view.inputmethod.EditorInfo
 import android.widget.CheckBox
 import android.widget.EditText
@@ -56,6 +57,7 @@ import java.util.concurrent.Executors
 class MainActivity : AppCompatActivity() {
 
     companion object {
+        private const val TAG = "ViewLBA-Gen"
         private const val AUTOLOCK_MS = 60_000L
         private const val REQ_CREATE_BACKUP = 41
         private const val REQ_RESTORE_BACKUP = 42
@@ -689,6 +691,11 @@ class MainActivity : AppCompatActivity() {
     private fun copyToken(text: String) {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
         clipboard.setPrimaryClip(android.content.ClipData.newPlainText("ViewLBA", text))
+        // Trazabilidad (sin secretos: solo longitud — los toasts viven en
+        // ventanas TYPE_TOAST que los volcados UI no capturan y el portapapeles
+        // no es legible por adb sin permisos): el smoke de CI verifica la
+        // copia por este log determinista.
+        Log.i(TAG, "Token copiado al portapapeles (${text.length} caracteres)")
         Toast.makeText(this, R.string.copied, Toast.LENGTH_SHORT).show()
     }
 

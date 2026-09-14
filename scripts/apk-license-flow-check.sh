@@ -171,11 +171,11 @@ screen_dims() {
 }
 
 # ensure_visible ID [MAX] → scrolla hasta que el CENTRO del control esté
-# dentro del área útil (60 px de margen). Un tap sobre coordenadas fuera
-# de pantalla «se envía» con éxito pero no toca NADA — el botón de copiar
-# queda al final del ScrollView y el bloque de resultado CRECE tras
-# GENERAR (lección del run 3: el toast de copia nunca llegó porque el tap
-# no llegaba al botón).
+# dentro de la pantalla (margen 20 px: el tap solo necesita caer EN
+# pantalla — un centro en y=596 de 640 es tocable y VÁLIDO). Un tap sobre
+# coordenadas fuera de pantalla «se envía» con éxito pero no toca NADA —
+# el botón de copiar queda al final del ScrollView y el bloque de
+# resultado CRECE tras GENERAR (lección del run 3).
 ensure_visible() {
   local id="$1" max="${2:-3}" i coords cy
   for i in $(seq 1 "$max"); do
@@ -184,7 +184,7 @@ ensure_visible() {
     screen_dims
     if [ -n "$coords" ]; then
       cy=$(printf '%s' "$coords" | awk '{print $2}')
-      if [ -n "$cy" ] && [ "$cy" -ge 60 ] && [ "$cy" -le $((SCREEN_H - 60)) ]; then
+      if [ -n "$cy" ] && [ "$cy" -ge 20 ] && [ "$cy" -le $((SCREEN_H - 20)) ]; then
         return 0
       fi
     fi
@@ -269,20 +269,33 @@ type_into_field() {
   fi
 }
 
-# toast_visible SUBSTR TIMEOUT → cierto si el toast aparece en pantalla.
-# Los toasts LENGTH_SHORT viven ~2 s: volcar Y hacer grep EN EL DISPOSITIVO
-# (sin `adb pull` por iteración — la transferencia tarda 1-2 s y el toast
-# moría ANTES de llegar al host: causa real de los «toast no capturado»).
+# toast_visible SUBSTR TIMEOUT → cierto si el toast está en pantalla.
+# LECCIÓN (run 4): los toasts viven en ventanas TYPE_TOAST SEPARADAS que
+# `uiautomator dump` NO captura (no aparecen en NINGÚN volcado — los de
+# «Claves generadas» y «Copiado» jamás salieron). Señales (cualquiera):
+#   1. dumpsys window muestra una ventana Toast (poll rápido ~0.5 s)
+#   2. el volcado UI contiene el texto (por si la versión sí lo lista)
 toast_visible() {
   local substr="$1" timeout_s="$2" elapsed=0
   while [ "$elapsed" -lt "$timeout_s" ]; do
+    if adb shell "dumpsys window windows 2>/dev/null | grep -qi toast" 2>/dev/null; then
+      return 0
+    fi
     if adb shell "uiautomator dump /sdcard/viewlba_toast.xml >/dev/null 2>&1 && grep -qF '$substr' /sdcard/viewlba_toast.xml" 2>/dev/null; then
       return 0
     fi
-    sleep 1
+    sleep 0.5
     elapsed=$((elapsed + 1))
   done
   return 1
+}
+
+# copy_logged MARK → cuenta las líneas de logcat con la marca (señal
+# DETERMINISTA de la copia: la app registra «Token copiado… (N caracteres)»
+# sin secretos — el portapapeles no es legible por adb y los toasts no se
+# volcan; ver copyToken en MainActivity).
+copy_log_count() {
+  adb shell logcat -d 2>/dev/null | grep -c "Token copiado" || true
 }
 
 echo "── Flujo COMPLETO: abrir APK → crear licencia → copiar ───────────"
@@ -425,24 +438,32 @@ wait_text "$ID_STATUS" "Licencia emitida" 10 || log "aviso: status sin «Licenci
 log "Copiando el token (btn_copy_token)…"
 # El bloque de resultado (label + token + botón) CRECE al final del
 # ScrollView tras GENERAR → asegurar visibilidad ANTES de cada tap.
+# Verificación multi-señal (el toast vive en ventana TYPE_TOAST que los
+# volcados UI NO capturan): ventana Toast visible O log determinista de
+# la app («Token copiado…», sin secretos) — vale CUALQUIERA.
 COPY_OK=0
 COPY_TRIES=0
+LOGS_BEFORE=$(copy_log_count)
 while [ "$COPY_TRIES" -lt 3 ] && [ "$COPY_OK" -eq 0 ]; do
   COPY_TRIES=$((COPY_TRIES + 1))
-  ensure_visible "$ID_COPY" 3 || log "aviso: btn_copy_token no quedó centrado (intento $COPY_TRIES)"
+  ensure_visible "$ID_COPY" 3 || log "aviso: btn_copy_token no centrado tras 3 scrolls (intento $COPY_TRIES)"
   dump_ui || true
   tap_view "$ID_COPY" || true
+  sleep 1
   if toast_visible "Copiado" 6; then
     COPY_OK=1
-    screenshot "08-token-copiado"
-    log "✓ Token copiado al portapapeles (toast «Copiado al portapapeles» detectado — intento $COPY_TRIES)"
+    log "✓ Ventana Toast detectada tras el tap (intento $COPY_TRIES)"
+  elif [ "$(copy_log_count)" -gt "$LOGS_BEFORE" ]; then
+    COPY_OK=1
+    log "✓ copyToken ejecutado (log determinista: $(adb shell logcat -d 2>/dev/null | grep 'Token copiado' | tail -1 | tr -d '\r'))"
   else
-    log "toast no capturado (intento $COPY_TRIES) → scroll + reintento…"
+    log "copia no verificada (intento $COPY_TRIES: ni toast ni log) → scroll + reintento…"
     swipe_up >/dev/null 2>&1 || true
     sleep 1
   fi
 done
-[ "$COPY_OK" -eq 1 ] || fail "No se detectó el toast «Copiado al portapapeles» tras 3 intentos — el flujo de copiar NO se verificó"
+[ "$COPY_OK" -eq 1 ] || fail "No se verificó la copia tras 3 intentos (ni ventana Toast ni log «Token copiado») — el flujo de copiar NO se verificó"
+screenshot "08-token-copiado"
 
 # ── 6. Historial: la licencia emitida queda registrada ───────────────────
 log "Volviendo a HOME y abriendo el Historial…"
