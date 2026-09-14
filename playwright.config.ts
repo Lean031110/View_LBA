@@ -33,7 +33,12 @@ export default defineConfig({
   // Un solo worker: stack compartido (DB única + servicios únicos) — serie estricta
   fullyParallel: false,
   workers: 1,
-  retries: 0,
+  // 1 reintento SOLO en CI: la suite es estricta en local (fallos visibles
+  // de inmediato) pero en los runners de GitHub hay flakes ambientales
+  // (WS/puertos/audio de Chromium headless — p.ej. #23 setSinkId) que no
+  // reproduces localmente; el reintento los absorbe sin enmascarar fallos
+  // reales (un bug determinista falla 2 veces).
+  retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [["github"], ["list"]] : [["list"]],
   use: {
     baseURL: "http://127.0.0.1:3000",
