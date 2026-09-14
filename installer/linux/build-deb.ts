@@ -25,7 +25,7 @@
  * Regla de la misión: sin comandos POSIX en este script (fs + dpkg-deb).
  */
 import { spawnSync } from "node:child_process"
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -79,8 +79,20 @@ mkdirSync(pkg, { recursive: true })
 
 // 1) payload completo (se PODA en el postinst tras instalar: resources/server
 //    se copia a /opt/pantalla-restaurante y el duplicado se borra)
-cpSync(STAGING, pkg, { recursive: true, dereference: true })
+// ⚠ dereference: FALSE — el payload recrea node_modules/.bin/* como
+// SYMLINKS relativos (../prisma/build/index.js): si se desreferencian
+// aquí, el shim queda como COPIA del index.js y su resolución relativa
+// rompe (prisma busca prisma_schema_build_bg.wasm EN .bin/ → ENOENT —
+// bug real del tercer build de v3.2.0). dpkg-deb/tar preserva symlinks.
+cpSync(STAGING, pkg, { recursive: true, dereference: false })
 console.log("✓ payload copiado a /opt/viewlba-server")
+
+// Guard: el contrato .bin→symlink del payload DEBE llegar intacto al .deb
+const debBinPrisma = join(pkg, "resources", "server", "node_modules", ".bin", "prisma")
+if (existsSync(debBinPrisma) && !lstatSync(debBinPrisma).isSymbolicLink()) {
+  console.error("✗ node_modules/.bin/prisma NO es un symlink — la resolución del wasm de prisma romperá en destino")
+  process.exit(1)
+}
 
 // 2) wrapper de línea de comandos: `viewlba-server start|stop|restart|status|health|logs|panel|credentials`
 const BIN = join(ROOT, "usr", "bin")
