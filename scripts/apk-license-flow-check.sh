@@ -158,10 +158,16 @@ swipe_up() {
     >/dev/null 2>&1 || true
 }
 
+# tap_button_with_fallback ID → toca un botón, OCULTANDO ANTES el teclado
+#
+# LECCIÓN (fallo real del primer run del flujo completo): un IME abierto
+# tapa los botones del final de la pantalla y `input tap` sobre sus
+# coordenadas cae en una TECLA del teclado, no en el botón — tap_view
+# devuelve 0 igualmente y el handler nunca corre (el status no cambiaba
+# tras «GENERAR»). ESC inofensivo si no hay teclado: siempre se envía
+# ANTES del primer intento.
 tap_button_with_fallback() {
   local id="$1"
-  dump_ui || true
-  if tap_view "$id"; then return 0; fi
   adb shell input keyevent 111 >/dev/null 2>&1 || true   # ESC: ocultar teclado
   sleep 1
   dump_ui || true
@@ -170,6 +176,24 @@ tap_button_with_fallback() {
   sleep 1
   dump_ui || true
   tap_view "$id"
+}
+
+# ime_open → cierto si el teclado en pantalla está visible (dumpsys IME)
+ime_open() {
+  adb shell dumpsys input_method 2>/dev/null | grep -q "mInputShown=true"
+}
+
+# close_ime → ESC (hasta 3) hasta que dumpsys confirme el IME oculto.
+# Un swipe sobre el teclado abierto ESCRIBE en el campo enfocado (por eso
+# aparecía basura «GT GT…» en el código de solicitud durante los scrolls).
+close_ime() {
+  local i
+  for i in 1 2 3; do
+    adb shell input keyevent 111 >/dev/null 2>&1 || true   # ESC: ocultar IME
+    sleep 1
+    ime_open || return 0
+  done
+  return 0
 }
 
 type_into_field() {
@@ -270,6 +294,9 @@ screenshot "04-new-license"
 # ── 3. Pegar el código DEMO (datos inventados) y validar ─────────────────
 log "Escribiendo el código de solicitud demo ($DEMO_CODE)…"
 type_into_field "$ID_REQ_CODE" "$DEMO_CODE"
+# El teclado queda abierto tras escribir: cerrarlo ANTES de validar para
+# que el tap de VALIDAR caiga en el botón (el código queda ya asentado).
+close_ime || true
 screenshot "05-codigo-pegado"
 tap_button_with_fallback "$ID_VALIDATE" || fail "no se pudo tocar «Validar»"
 log "Esperando validación (cliente visible)…"
@@ -281,7 +308,33 @@ log "✓ Solicitud validada: «$(field_text "$ID_CUSTOMER")»"
 # ── 4. GENERAR la licencia (plan anual por defecto) ──────────────────────
 log "Buscando el botón GENERAR (scroll si hace falta)…"
 wait_view "$ID_GENERATE" 20 || { swipe_up; sleep 1; wait_view "$ID_GENERATE" 20 || fail "no se encontró btn_generate"; }
-tap_button_with_fallback "$ID_GENERATE" || fail "no se pudo tocar «Generar»"
+
+# VERIFICACIÓN del tap (lección del primer run): el handler de GENERAR
+# limpia el status al instante → si tras tocar sigue el texto de
+# «Solicitud válida», el tap NO llegó al botón (IME abierto tapando
+# GENERAR — el tap caía en una tecla del teclado). Protocolo: cerrar el
+# teclado, tocar, esperar 3 s y comprobar token/status; si nada cambió →
+# scroll + reintento (hasta 3). Con el IME cerrado el primer tap llega y
+# las comprobaciones son solo una red de seguridad.
+STATUS_BEFORE=$(field_text "$ID_STATUS")
+GEN_TRIES=0
+while [ "$GEN_TRIES" -lt 3 ]; do
+  close_ime || true          # el teclado NO puede tapar GENERAR
+  dump_ui || true
+  tap_view "$ID_GENERATE" || true
+  sleep 3
+  dump_ui || true
+  TOKEN=$(field_text "$ID_RESULT")
+  case "$TOKEN" in VLBA2-*) break ;; esac
+  STATUS_NOW=$(field_text "$ID_STATUS")
+  if [ -n "$STATUS_NOW" ] && [ "$STATUS_NOW" != "$STATUS_BEFORE" ]; then
+    break   # el handler corrió (status cambió) → el token llega abajo
+  fi
+  GEN_TRIES=$((GEN_TRIES + 1))
+  log "el tap de GENERAR no llegó al botón (intento $GEN_TRIES) → scroll + reintento"
+  swipe_up >/dev/null 2>&1 || true
+  sleep 1
+done
 log "Esperando el token VLBA2-…"
 TOKEN=""
 for i in $(seq 1 45); do
@@ -292,8 +345,11 @@ for i in $(seq 1 45); do
     *) TOKEN="" ;;
   esac
   [ -n "$TOKEN" ] && break
-  # el cuadro del resultado puede quedar BAJO el área visible → scroll
-  if [ $((i % 5)) -eq 0 ]; then swipe_up; fi
+  # el cuadro del resultado puede quedar BAJO el área visible → scroll,
+  # pero NUNCA con el teclado abierto (el swipe escribiría en el campo)
+  if [ $((i % 5)) -eq 0 ]; then
+    if ime_open; then close_ime || true; else swipe_up; sleep 1; fi
+  fi
   sleep 2
 done
 [ -n "$TOKEN" ] || fail "El token VLBA2-… no apareció tras GENERAR (status: $(field_text "$ID_STATUS"))"
