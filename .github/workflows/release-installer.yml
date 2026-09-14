@@ -344,7 +344,21 @@ jobs:
 
           Write-Host "→ instalación silenciosa (como el usuario, sin preguntas)…"
           $p = Start-Process -FilePath $exe -ArgumentList "/S" -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "la instalación silenciosa falló (código $($p.ExitCode))" }
+          if ($p.ExitCode -ne 0) {
+            Write-Host "→ la instalación silenciosa falló (código $($p.ExitCode)). Diagnóstico:"
+            # Salida COMPLETA del instalador (idempotente — re-ejecutar
+            # muestra el error real que /S tragó: la instalación silenciosa
+            # del NSIS captura el output en el detalle invisible).
+            if (Test-Path "C:\ViewLBA\viewlba-installer.exe") {
+              Write-Host "--- viewlba-installer --config (re-ejecución visible) ---"
+              & C:\ViewLBA\viewlba-installer.exe --config C:\ViewLBA\install-config.json 2>&1 | ForEach-Object { Write-Host "  $_" }
+              Write-Host "--- diagnostics ---"
+              & C:\ViewLBA\viewlba-installer.exe diagnostics 2>&1 | ForEach-Object { Write-Host "  $_" }
+            } else {
+              Write-Host "  (el payload ni siquiera llegó a copiarse: C:\ViewLBA no existe)"
+            }
+            throw "la instalación silenciosa falló (código $($p.ExitCode))"
+          }
 
           Write-Host "→ servicio registrado y corriendo:"
           $svc = Get-Service -Name PantallaRestaurante -ErrorAction SilentlyContinue
