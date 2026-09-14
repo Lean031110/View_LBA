@@ -7,7 +7,7 @@
  * aborta ANTES de modificar el sistema.
  */
 import { spawnSync } from "node:child_process"
-import { existsSync } from "node:fs"
+import { existsSync, writeFileSync, rmSync } from "node:fs"
 import type { CheckResult, InstallConfig, Layout, Platform } from "./types"
 import { systemChecks, collectSystemInfo } from "./sysinfo"
 import { checkPorts, requiredPorts } from "./ports"
@@ -49,32 +49,30 @@ export async function runPreflight(
     checks.push(c)
   }
 
-  // Elevación en Windows (real y ROBUSTA):
-  //   1. whoami /groups VÍA cmd.exe (resolución garantizada): el SID de
-  //      integridad ALTA (S-1-16-12288) solo aparece en procesos ELEVADOS.
-  //   2. «net session» como fallback clásico — PERO exige el servicio
-  //      Server (LanmanServer), apagado en los runners de CI → falso
-  //      negativo incluso elevado (bug real del 9.º-11.º build de v3.2.0).
-  // El detalle del check lleva la salida de whoami: evidencia directa del
-  // token real (para diagnosticar entornos raros sin otro round-trip).
+  // Elevación en Windows — sonda PURA DE FS (sin procesos externos):
+  // escribir y borrar un archivo en C:\Windows SOLO funciona con token de
+  // Administrador. Las sondas por spawn (whoami/cmd.exe/net session)
+  // FALLABAN EN CADENA desde el sidecar compilado en los runners de CI
+  // (salida VACÍA y «net session» exige LanmanServer apagado — builds
+  // 9-12 de v3.2.0: falso «Permisos de administrador: NO»). Esta sonda
+  // funciona con o sin servicios, consola o codepage, y refleja el token
+  // REAL del proceso (deny del ACL = no elevado).
   if (deps.platform === "windows") {
-    const w = spawnSync("cmd.exe", ["/c", "whoami /groups"], { encoding: "utf8", timeout: 8000, windowsHide: true })
-    const whoamiOut = ((w.stdout || "") + (w.stderr || "")).trim()
-    let isAdmin = whoamiOut.includes("S-1-16-12288")
-    if (!isAdmin) {
-      const n = spawnSync("net", ["session"], { encoding: "utf8", timeout: 8000, windowsHide: true })
-      isAdmin = n.status === 0
+    const probe = "C:\\Windows\\.viewlba-elev-probe.tmp"
+    let isAdmin = false
+    let evidence = ""
+    try {
+      writeFileSync(probe, "probe")
+      rmSync(probe)
+      isAdmin = true
+    } catch (e) {
+      evidence = (e as Error).message.slice(0, 140)
     }
-    const tokenEvidence = whoamiOut
-      .split(/\r?\n/)
-      .filter((l) => l.includes("Mandatory") || l.includes("Administrators") || l.includes("S-1-16-"))
-      .join(" | ")
-      .slice(0, 220)
     checks.push({
       id: "elevated",
       label: isAdmin ? "Permisos de administrador: sí" : "Permisos de administrador: NO",
       status: isAdmin ? "pass" : "fail",
-      detail: isAdmin ? undefined : tokenEvidence || "whoami sin salida",
+      detail: isAdmin ? undefined : evidence || "escritura en C:\\Windows denegada",
       hint: isAdmin ? undefined : "Ejecuta el installer como Administrador (clic derecho → Ejecutar como administrador)",
     })
   }
