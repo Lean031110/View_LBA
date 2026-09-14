@@ -75,4 +75,14 @@ describe("parseo de --config (regresión v3.2.0: forma ESPACIO)", () => {
     expect(r.code).toBe(1)
     expect((r.stdout + r.stderr)).toContain("uso:")
   })
+
+  test("--json <subcomando>: el subcomando NO se consume como valor (regresión del fix)", async () => {
+    // `--json detect` es un flag BOOLEANO + subcomando: detect debe llegar a
+    // runManagerJson (JSON en stdout) y NO caer al modo instalación sidecar
+    // (que se queda esperando config por stdin y falla con waiting-config).
+    const r = await runCli(["--json", "detect"], 20_000)
+    const all = r.stdout + r.stderr
+    expect(all).not.toContain("waiting-config")
+    expect(all).toContain('"command":"detect"')
+  })
 })

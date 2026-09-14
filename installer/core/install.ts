@@ -95,7 +95,17 @@ export function resolvePackageRoot(): string {
   if (existsSync(join(repoRoot, "package.json")) && existsSync(join(repoRoot, "src", "app"))) {
     return repoRoot // checkout del servidor
   }
-  const exeDir = dirname(resolve(process.argv[1] ?? process.argv[0] ?? "."))
+  // Binario COMPILADO (bun build --compile — verificado empíricamente en
+  // bun 1.3.14): argv[0] es «bun» y argv[1] apunta al bunfs VIRTUAL
+  // (/$bunfs/root/…), NO al ejecutable real. El binario real (junto al que
+  // viven manifest.json / runtime/bun / resources) es process.execPath.
+  // Sin esto, el sidecar del .deb/Setup.exe no encontraba SU runtime y el
+  // preflight fallaba con «Bun: no disponible» (bug real v3.2.0).
+  const entry = process.argv[1] ?? ""
+  const exeDir =
+    entry.includes("$bunfs") || !entry
+      ? dirname(resolve(process.execPath || process.argv[0] || "."))
+      : dirname(resolve(entry))
   return resolvePackageRootFrom(exeDir)
 }
 

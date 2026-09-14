@@ -66,12 +66,18 @@ const arg = (name: string): string | undefined => {
   return next !== undefined && !next.startsWith("--") ? next : undefined
 }
 
+// Flags que SÍ consumen el argumento siguiente como VALOR (forma espacio).
+// NO incluir flags booleanos (--json, --confirm, --demo…): consumirían el
+// SUBCOMANDO siguiente (bug de regresión: «--json detect» perdía «detect»
+// y el CLI caía en modo instalación sidecar esperando config por stdin).
+const VALUE_FLAGS = new Set(["--config", "--dir", "--email", "--password", "--uninstall-options"])
+
 // Posiciones consumidas como VALOR de un flag en forma espacio (para no
 // confundirlas con un subcomando: `--config cfg.json` → «cfg.json» NO es
-// subcomando).
+// subcomando, pero `--json detect` → «detect» SÍ es subcomando).
 const flagValueIdx = new Set<number>()
 for (let i = 0; i < argv.length; i++) {
-  if (argv[i].startsWith("--") && !argv[i].includes("=") && argv[i + 1] && !argv[i + 1].startsWith("--")) {
+  if (VALUE_FLAGS.has(argv[i]) && argv[i + 1] && !argv[i + 1].startsWith("--")) {
     flagValueIdx.add(i + 1)
   }
 }
