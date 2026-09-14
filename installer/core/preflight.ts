@@ -49,24 +49,32 @@ export async function runPreflight(
     checks.push(c)
   }
 
-  // Elevación en Windows (real y ROBUSTA): «net session» solo funciona como
-  // admin PERO además exige el servicio Server (LanmanServer) — apagado en
-  // los runners de CI → FALSO NEGATIVO incluso elevado (bug real del 9.º
-  // build de v3.2.0: la instalación silenciosa abortaba en «Permisos de
-  // administrador: NO»). Sonda correcta: whoami /groups contiene el SID de
-  // integridad ALTA (S-1-16-12288) solo en procesos elevados; net session
-  // queda como fallback para entornos sin whoami.
+  // Elevación en Windows (real y ROBUSTA):
+  //   1. whoami /groups VÍA cmd.exe (resolución garantizada): el SID de
+  //      integridad ALTA (S-1-16-12288) solo aparece en procesos ELEVADOS.
+  //   2. «net session» como fallback clásico — PERO exige el servicio
+  //      Server (LanmanServer), apagado en los runners de CI → falso
+  //      negativo incluso elevado (bug real del 9.º-11.º build de v3.2.0).
+  // El detalle del check lleva la salida de whoami: evidencia directa del
+  // token real (para diagnosticar entornos raros sin otro round-trip).
   if (deps.platform === "windows") {
-    const w = spawnSync("whoami", ["/groups"], { encoding: "utf8", timeout: 8000, windowsHide: true })
-    let isAdmin = (w.stdout || "").includes("S-1-16-12288")
-    if (!isAdmin && w.status !== 0) {
+    const w = spawnSync("cmd.exe", ["/c", "whoami /groups"], { encoding: "utf8", timeout: 8000, windowsHide: true })
+    const whoamiOut = ((w.stdout || "") + (w.stderr || "")).trim()
+    let isAdmin = whoamiOut.includes("S-1-16-12288")
+    if (!isAdmin) {
       const n = spawnSync("net", ["session"], { encoding: "utf8", timeout: 8000, windowsHide: true })
       isAdmin = n.status === 0
     }
+    const tokenEvidence = whoamiOut
+      .split(/\r?\n/)
+      .filter((l) => l.includes("Mandatory") || l.includes("Administrators") || l.includes("S-1-16-"))
+      .join(" | ")
+      .slice(0, 220)
     checks.push({
       id: "elevated",
       label: isAdmin ? "Permisos de administrador: sí" : "Permisos de administrador: NO",
       status: isAdmin ? "pass" : "fail",
+      detail: isAdmin ? undefined : tokenEvidence || "whoami sin salida",
       hint: isAdmin ? undefined : "Ejecuta el installer como Administrador (clic derecho → Ejecutar como administrador)",
     })
   }
