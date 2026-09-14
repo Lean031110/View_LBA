@@ -250,6 +250,64 @@ describe("runInstall — happy path (FS real, comandos grabados)", () => {
     expect(adapter.capturedCtx?.bunPath).toBe("bun")
   })
 
+  test("PAYLOAD CON DEPS (offline): prisma generate OMITIDO — bun x JAMÁS (bug del 9.º build)", async () => {
+    // Bug real del 9.º build de v3.2.0: sobre el node_modules PODADO del
+    // payload, `bun x prisma generate` moría con «could not find bin
+    // metadata file» (bun no puede remapear los bins — Windows). El payload
+    // oficial VIAJA con el client ya generado (.prisma/client) → generate
+    // se OMITE por completo y bun x deja de existir en el flujo.
+    const { payload, config } = makeEnv("offlinegen")
+    mkdirSync(join(payload, "node_modules", ".bin"), { recursive: true })
+    writeFileSync(join(payload, "node_modules", ".bin", "prisma"), "#!/bin/sh\n")
+    mkdirSync(join(payload, "node_modules", ".prisma", "client"), { recursive: true })
+    writeFileSync(join(payload, "node_modules", ".prisma", "client", "default.js"), "// generado")
+    mkdirSync(join(payload, "node_modules", "prisma", "build"), { recursive: true })
+    writeFileSync(join(payload, "node_modules", "prisma", "build", "index.js"), "// cli")
+    const init = fakeInitProd()
+    const runner = new RecordingRunner()
+    const report = await runInstall(config, {
+      adapter: new FakeAdapter(),
+      runner,
+      initProd: init.fn,
+      waitHealth: fakeWaitHealth(),
+      packageRoot: join(tmp, "offlinegen"),
+    })
+    expect(report.ok).toBe(true)
+    const cmds = runner.rendered().join("\n")
+    // generate OMITIDO: el client ya viaja generado en el payload
+    expect(cmds).not.toContain("generate")
+    // payload offline con deps: sin bun install en destino
+    expect(cmds).not.toContain("install --frozen-lockfile")
+    // initProd recibe cwd (appDir) y bunPath → el CLI de prisma se invoca
+    // DIRECTO con ese bun en production-init (nunca bun x)
+    expect(init.calls[0].cwd).toBe(config.installDir)
+    expect(typeof init.calls[0].bunPath).toBe("string")
+  })
+
+  test("deps SIN client generado: prisma generate DIRECTO (entry del bin, sin bun x)", async () => {
+    // Instalación con node_modules pero sin .prisma/client (repo podado a
+    // mano): generate hace falta → se lanza el ENTRY del bin de prisma
+    // DIRECTO (node_modules/prisma/build/index.js) con el bun resuelto.
+    const { payload, config } = makeEnv("directgen")
+    mkdirSync(join(payload, "node_modules", ".bin"), { recursive: true })
+    writeFileSync(join(payload, "node_modules", ".bin", "prisma"), "#!/bin/sh\n")
+    mkdirSync(join(payload, "node_modules", "prisma", "build"), { recursive: true })
+    writeFileSync(join(payload, "node_modules", "prisma", "build", "index.js"), "// cli")
+    const runner = new RecordingRunner()
+    const report = await runInstall(config, {
+      adapter: new FakeAdapter(),
+      runner,
+      initProd: fakeInitProd().fn,
+      waitHealth: fakeWaitHealth(),
+      packageRoot: join(tmp, "directgen"),
+    })
+    expect(report.ok).toBe(true)
+    const cmds = runner.rendered().join("\n")
+    // invocación DIRECTA del entry del bin — JAMÁS bun x sobre el árbol podado
+    expect(cmds).toContain(join("node_modules", "prisma", "build", "index.js"))
+    expect(cmds).not.toContain("x prisma generate")
+  })
+
   test("BUILD PRECOMPILADO: el .next del payload VIAJA al appDir (start.ts lo exige) y no se recompila", async () => {
     // Bug real corregido: SERVER_COPY_EXCLUDES excluía .next → la instalación
     // oficial perdía el build del paquete → start.ts no encontraba server.js.

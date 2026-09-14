@@ -18,6 +18,7 @@
  *    se ejecutan migraciones contra una DB inesperada.
  */
 import { spawnSync } from "child_process"
+import { existsSync, readFileSync } from "fs"
 import { dirname, join, resolve } from "path"
 import { PrismaClient } from "@prisma/client"
 import { hashPassword } from "../../src/lib/auth"
@@ -53,6 +54,48 @@ export interface InitializeOptions {
    * Sin esto (repo/scripts), se usa PROJECT_ROOT como siempre.
    */
   cwd?: string
+  /**
+   * Ejecutable de Bun para los subprocesos (prisma/seed). El instalador con
+   * runtime empaquetado DEBE pasarlo (p. ej. …\runtime\bun.exe): sobre el
+   * node_modules PODADO del payload, `bun x prisma` muere con «could not
+   * find bin metadata file» (bun no puede remapear los bins — bug real del
+   * 9.º build en Windows). El CLI de Prisma se invoca entonces DIRECTO
+   * (node_modules/prisma/build/index.js) con ESTE binario. Sin esto se usa
+   * «bun» del PATH (repo/scripts, donde bunx también funciona).
+   */
+  bunPath?: string
+}
+
+/**
+ * Resuelve el entry JS del bin de `prisma` dentro de un node_modules.
+ *
+ * INVOCACIÓN DIRECTA (sin `bun x`): el payload del instalador viaja con un
+ * node_modules PODADO (PAYLOAD_ROOTS) y `bun x` intenta «remapear» los bins
+ * de ese árbol → «could not find bin metadata file / corrupted node_modules»
+ * (bug real del 9.º build de v3.2.0 en Windows; en Linux los symlinks de
+ * .bin sobreviven y por eso nunca se vio). Llamar al entry del bin con el
+ * bun del paquete es portable en ambas plataformas y no depende de .bin.
+ *
+ * @returns ruta absoluta del CLI o null (no hay node_modules/prisma → el
+ *          caller debe recurrir a `bun x prisma`, p. ej. repo con deps).
+ */
+export function resolvePrismaCli(workRoot: string): string | null {
+  const pkgDir = join(workRoot, "node_modules", "prisma")
+  const pkgJson = join(pkgDir, "package.json")
+  const fallback = join(pkgDir, "build", "index.js")
+  try {
+    if (existsSync(pkgJson)) {
+      const bin = JSON.parse(readFileSync(pkgJson, "utf8")).bin
+      const rel = typeof bin === "string" ? bin : bin?.prisma
+      if (rel) {
+        const cli = join(pkgDir, rel)
+        if (existsSync(cli)) return cli
+      }
+    }
+  } catch {
+    /* package.json ilegible → fallback estático */
+  }
+  return existsSync(fallback) ? fallback : null
 }
 
 export type StepStatus = "ok" | "skipped" | "failed" | "aborted"
@@ -91,6 +134,12 @@ export async function initializeProduction(options: InitializeOptions): Promise<
   // cwd de los subprocesos: la APP instalada (instalador compilado) o el
   // repo (scripts) — NUNCA el bunfs virtual de un binario bun-compile.
   const workRoot = options.cwd ?? PROJECT_ROOT
+  // Bin que ejecuta los subprocesos: el del paquete (instalador) o «bun» del
+  // PATH (repo). El CLI de prisma se invoca DIRECTO (sin bun x) cuando el
+  // node_modules del workRoot lo permite (ver resolvePrismaCli).
+  const bunExe = options.bunPath ?? "bun"
+  const prismaCli = resolvePrismaCli(workRoot)
+  const prismaArgs = prismaCli ? [prismaCli] : ["x", "prisma"]
   const result: InitializeResult = { ok: false, steps: [], adminCreated: false }
 
   // ---------- 1) Entorno: .env como fuente de verdad + target explícito ----------
@@ -137,11 +186,11 @@ export async function initializeProduction(options: InitializeOptions): Promise<
 
   // ---------- 2) Verificación REAL del datasource (antes de migrar) ----------
   if (!options.skipMigrations) {
-    const probe = runWithEnv("bunx", ["prisma", "migrate", "status"], childEnv(target.url), 180_000, workRoot)
+    const probe = runWithEnv(bunExe, [...prismaArgs, "migrate", "status"], childEnv(target.url), 180_000, workRoot)
     const datasource = parseDatasourceUrl(probe.stdout + "\n" + probe.stderr)
     if (!datasource) {
       result.steps.push({ name: "database-target", status: "failed", detail: "no se pudo leer el datasource de prisma" })
-      result.error = "No se pudo verificar el datasource real de Prisma (¿bunx prisma funciona?). Por seguridad no se continúa."
+      result.error = "No se pudo verificar el datasource real de Prisma (¿el CLI de prisma ejecuta con el bun indicado?). Por seguridad no se continúa."
       return result
     }
     if (!sqlitePathsMatch(datasource, target.url, workRoot)) {
@@ -160,7 +209,7 @@ export async function initializeProduction(options: InitializeOptions): Promise<
   if (options.skipMigrations) {
     result.steps.push({ name: "migrations", status: "skipped", detail: "omitidas por opción" })
   } else {
-    const mig = runWithEnv("bunx", ["prisma", "migrate", "deploy"], childEnv(target.url), 240_000, workRoot)
+    const mig = runWithEnv(bunExe, [...prismaArgs, "migrate", "deploy"], childEnv(target.url), 240_000, workRoot)
     if (mig.status !== 0) {
       result.steps.push({ name: "migrations", status: "failed", detail: (mig.stderr || mig.stdout).slice(0, 500) })
       result.error = "prisma migrate deploy falló — no se continúa con admin/seed."
@@ -229,7 +278,9 @@ export async function initializeProduction(options: InitializeOptions): Promise<
 
   // ---------- 6) Contenido demo opcional (sin usuarios) ----------
   if (options.withDemoData) {
-    const seed = runWithEnv("bun", ["prisma/seed.ts"], childEnv(target.url), 240_000, workRoot)
+    // Ruta ABSOLUTA del seed (cwd del hijo = workRoot, pero el absoluto es
+    // inmune a cualquier discrepancia de resolución relativa).
+    const seed = runWithEnv(bunExe, [join(workRoot, "prisma", "seed.ts")], childEnv(target.url), 240_000, workRoot)
     if (seed.status !== 0) {
       result.steps.push({ name: "demo-seed", status: "failed", detail: (seed.stderr || seed.stdout).slice(0, 300) })
       result.ok = false
