@@ -180,7 +180,13 @@ if (PLATFORM === "windows") {
 
 // ---------------------------------------------------------------- 5. sidecar CLI
 STEP("Compilando el sidecar del installer (bun build --compile — lógica embebida)")
-const target = PLATFORM === "windows" ? "bun-windows-x64" : undefined
+// --target SOLO para cross-compile REAL: en el runner de Windows se compilaba
+// con «--target bun-windows-x64» INNECESARIAMENTE y el binario resultante
+// tenía los spawnSync rotos (whoami/cmd.exe/node/nssm devolvían vacío/error
+// mientras bun.exe respondía — 13.º build de v3.2.0). El compile NATIVO se
+// comporta como el sidecar de Linux (spawns correctos).
+const needCrossTarget = PLATFORM === "windows" && process.platform !== "win32"
+const target = needCrossTarget ? "bun-windows-x64" : undefined
 const sidecarArgs = [
   "build",
   "--compile",
@@ -190,7 +196,7 @@ const sidecarArgs = [
 ]
 if (target) sidecarArgs.splice(2, 0, "--target", target)
 run("bun", sidecarArgs, { cwd: ROOT })
-OK(`sidecar: ${join(stage, PLATFORM === "windows" ? "viewlba-installer.exe" : "viewlba-installer")}`)
+OK(`sidecar: ${join(stage, PLATFORM === "windows" ? "viewlba-installer.exe" : "viewlba-installer")}${target ? ` (cross-target ${target})` : " (nativo)"}`)
 
 // ---------------------------------------------------------------- 6. manifest
 const gitRev = (() => {

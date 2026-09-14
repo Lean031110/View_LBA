@@ -61,6 +61,13 @@ export class WindowsServiceAdapter implements ServiceAdapter {
     if (commandExists(this.nssmPath, ["version"])) {
       return [{ id: "nssm", label: `NSSM disponible (${this.nssmPath})`, status: "pass" }]
     }
+    // El nssm DEL PAQUETE (ruta absoluta existente) vale por PRESENCIA: es
+    // el contrato del payload oficial (runtime/nssm.exe) y la ejecución se
+    // ejercita de verdad al registrar el servicio. Solo el fallback al PATH
+    // («nssm» sin ruta) exige verificación por spawn.
+    if (this.nssmPath !== "nssm" && existsSync(this.nssmPath)) {
+      return [{ id: "nssm", label: `NSSM incluido en el paquete (${this.nssmPath})`, status: "pass" }]
+    }
     return [
       {
         id: "nssm",
