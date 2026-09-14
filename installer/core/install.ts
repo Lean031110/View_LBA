@@ -95,17 +95,22 @@ export function resolvePackageRoot(): string {
   if (existsSync(join(repoRoot, "package.json")) && existsSync(join(repoRoot, "src", "app"))) {
     return repoRoot // checkout del servidor
   }
-  // Binario COMPILADO (bun build --compile — verificado empíricamente en
-  // bun 1.3.14): argv[0] es «bun» y argv[1] apunta al bunfs VIRTUAL
-  // (/$bunfs/root/…), NO al ejecutable real. El binario real (junto al que
-  // viven manifest.json / runtime/bun / resources) es process.execPath.
-  // Sin esto, el sidecar del .deb/Setup.exe no encontraba SU runtime y el
-  // preflight fallaba con «Bun: no disponible» (bug real v3.2.0).
+  // Binario COMPILADO (bun build --compile — verificado empíricamente):
+  // argv[0] es «bun» y argv[1] apunta al bunfs VIRTUAL, que NO es el
+  // ejecutable real. El prefijo virtual DEPENDE DE LA PLATAFORMA (lección
+  // del 7.º build de v3.2.0, con la evidencia del dump de CI):
+  //   · Linux:   /$bunfs/root/…
+  //   · Windows: B:\~BUN\root\…   ← NO contiene «$bunfs»: el detector
+  //     anterior lo dejaba pasar y el sidecar buscaba SU payload en
+  //     B:\~BUN\root (inexistente) → «Payload offline INCOMPLETO» con el
+  //     payload PERFECTAMENTE instalado en C:\ViewLBA.
+  // El binario real (junto al que viven manifest.json / runtime / resources)
+  // es process.execPath.
   const entry = process.argv[1] ?? ""
-  const exeDir =
-    entry.includes("$bunfs") || !entry
-      ? dirname(resolve(process.execPath || process.argv[0] || "."))
-      : dirname(resolve(entry))
+  const isVirtualFs = entry.includes("$bunfs") || entry.includes("~BUN") || !entry
+  const exeDir = isVirtualFs
+    ? dirname(resolve(process.execPath || process.argv[0] || "."))
+    : dirname(resolve(entry))
   return resolvePackageRootFrom(exeDir)
 }
 
@@ -493,16 +498,23 @@ export async function runInstall(config: InstallConfig, deps: InstallDeps): Prom
       if (report.status === "unreachable" || report.status === "unhealthy") {
         // AUTOPSIA del servicio ANTES del rollback (el rollback borra las
         // unidades y destruye la evidencia — «unit could not be found» con
-        // journald vacío NO ES depurable). Solo Linux; nunca rompe el flujo.
+        // journald vacío NO ES depurable). console.log DIRECTO: los eventos
+        // «info» del emit NO se imprimen en modo --config (lección del 7.º
+        // build: la autopsia anterior se emitió y nadie la vio). Solo Linux;
+        // nunca rompe el flujo.
         if (adapter.platform === "linux") {
           try {
             const j = runner.run("journalctl", ["-u", "pantalla-restaurante.service", "--no-pager", "-n", "40"])
             for (const l of (j.stdout || "").split("\n")) {
-              if (l.trim()) emit({ type: "info", message: `[autopsia] ${l.trim()}` })
+              if (l.trim()) console.log(`[autopsia] ${l.trim()}`)
             }
             const st = runner.run("systemctl", ["status", "pantalla-restaurante.service", "--no-pager", "-l"])
             for (const l of ((st.stdout || "") + (st.stderr || "")).split("\n").slice(0, 15)) {
-              if (l.trim()) emit({ type: "info", message: `[autopsia] ${l.trim()}` })
+              if (l.trim()) console.log(`[autopsia] ${l.trim()}`)
+            }
+            const all = runner.run("systemctl", ["list-units", "pantalla*", "--no-pager", "--all"])
+            for (const l of (all.stdout || "").split("\n").slice(0, 12)) {
+              if (l.trim()) console.log(`[autopsia] ${l.trim()}`)
             }
           } catch {
             /* la autopsia es best-effort */

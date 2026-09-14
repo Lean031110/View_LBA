@@ -1,6 +1,12 @@
 [Unit]
 Description=Pantalla Restaurante - Grupo de servicios (app + realtime + stream)
 Documentation=file:/opt/pantalla-restaurante/docs/OPERATIONS.md
+# El target AGRUPA y debe ARRANCAR los tres servicios: sin Wants, iniciar/
+# reiniciar el target solo afectaba a los ya activos (PartOf propaga
+# stop/restart, NO arranca) → «systemctl restart pantalla-restaurante.target»
+# dejaba la app PARADA con realtime/stream vivos por otras vías (bug real
+# del 7.º build de v3.2.0: health unreachable con journald vacío).
+Wants=pantalla-restaurante-stream.service pantalla-restaurante-realtime.service pantalla-restaurante.service
 
 [Install]
 WantedBy=multi-user.target

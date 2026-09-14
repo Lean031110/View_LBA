@@ -441,3 +441,41 @@ describe("sysinfo", () => {
     expect(gw === null || /^\d+\.\d+\.\d+\.\d+$/.test(gw)).toBe(true)
   })
 })
+
+// ---------------------------------------------------------------------------
+// resolvePackageRoot: detección del bunfs VIRTUAL por plataforma (regresión
+// del 7.º build de v3.2.0: en Windows el prefijo es B:\~BUN\root\…, NO
+// «$bunfs» — el sidecar buscaba su payload en B:\~BUN\root).
+// ---------------------------------------------------------------------------
+describe("resolvePackageRoot — binario compilado (bunfs virtual)", () => {
+  test("argv[1] con prefijo Windows B:\\~BUN → usa process.execPath (exe real)", async () => {
+    const realArgv = [...process.argv]
+    const realExec = process.execPath
+    try {
+      // construir un fake-package junto a un «exe» real (bun mismo)
+      process.argv = [realArgv[0]!, "B:\\~BUN\\root\\viewlba-installer.exe"]
+      const { resolvePackageRoot } = await import("../../installer/core/install")
+      // en el sandbox interpretado: execPath = bun real → su dir NO es
+      // packageRoot válido → cae al fallback (exeDir) SIN tocar B:\
+      const root = resolvePackageRoot()
+      expect(root.startsWith("B:")).toBe(false)
+      expect(root).toBeTruthy()
+    } finally {
+      process.argv = realArgv
+      process.execPath = realExec
+    }
+  })
+
+  test("argv[1] con prefijo Linux /$bunfs → usa process.execPath (exe real)", async () => {
+    const realArgv = [...process.argv]
+    try {
+      process.argv = [realArgv[0]!, "/$bunfs/root/viewlba-installer"]
+      const { resolvePackageRoot } = await import("../../installer/core/install")
+      const root = resolvePackageRoot()
+      expect(root.includes("$bunfs")).toBe(false)
+      expect(root).toBeTruthy()
+    } finally {
+      process.argv = realArgv
+    }
+  })
+})
