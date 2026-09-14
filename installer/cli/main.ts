@@ -51,12 +51,35 @@ import {
 
 const argv = process.argv.slice(2)
 const flags = new Set(argv.map((a) => a.split("=")[0]))
-const arg = (name: string): string | undefined =>
-  argv.find((a) => a.startsWith(`--${name}=`))?.split("=").slice(1).join("=")
+
+// Flags con valor en DOS formas: --flag=valor y --flag valor (estándar).
+// La forma ESPACIO es la que usan postinst (Linux) y el NSIS (Windows):
+// `--config "$PKG/install-config.json"`. Sin soporte (bug real v3.2.0),
+// el camino quedaba como SUBCOMANDO desconocido → printHelp + exit 1 y
+// el postinst abortaba la instalación.
+const arg = (name: string): string | undefined => {
+  const i = argv.findIndex((a) => a === `--${name}` || a.startsWith(`--${name}=`))
+  if (i < 0) return undefined
+  const a = argv[i]
+  if (a.startsWith(`--${name}=`)) return a.split("=").slice(1).join("=")
+  const next = argv[i + 1]
+  return next !== undefined && !next.startsWith("--") ? next : undefined
+}
+
+// Posiciones consumidas como VALOR de un flag en forma espacio (para no
+// confundirlas con un subcomando: `--config cfg.json` → «cfg.json» NO es
+// subcomando).
+const flagValueIdx = new Set<number>()
+for (let i = 0; i < argv.length; i++) {
+  if (argv[i].startsWith("--") && !argv[i].includes("=") && argv[i + 1] && !argv[i + 1].startsWith("--")) {
+    flagValueIdx.add(i + 1)
+  }
+}
+const subcommand =
+  argv.find((a, i) => !a.startsWith("--") && !a.includes("=") && !flagValueIdx.has(i)) ?? "install"
 
 const JSON_MODE = flags.has("--json")
 const CONFIG_FILE = arg("config")
-const subcommand = argv.find((a) => !a.startsWith("--") && !a.includes("=")) ?? "install"
 
 /** CLI humano: logs a consola; modo --json: stdout reservado al protocolo. */
 const log = JSON_MODE ? humanLog : console.log

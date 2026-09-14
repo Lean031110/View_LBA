@@ -311,13 +311,19 @@ jobs:
         run: |
           $out = "dist/release/windows/out"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
-          # Rutas ABSOLUTAS (makensis resuelve las relativas contra el
-          # directorio del SCRIPT, no contra el CWD — ver nota en el .nsi).
+          # Rutas ABSOLUTAS para TODO lo que referencia File/OutFile:
+          # makensis resuelve las relativas contra el CWD DE LA LLAMADA
+          # (lección del primer build real: File "tray/…" y ${ICON} fallaron
+          # con CWD=raíz del repo — ver nota actualizada en el .nsi).
           $payload = (Resolve-Path "dist/release/windows/ViewLBA-Server").Path
+          $tray    = (Resolve-Path "installer/windows/tray/ViewLBA-Tray.ps1").Path
+          $icon    = (Resolve-Path "installer/windows/viewlba.ico").Path
           $outExe = "$PWD/dist/release/windows/out/ViewLBA-Server-Setup-$env:VERSION.exe"
           $log = & $env:MAKENSIS `
             "-DVERSION=$env:VERSION" `
             "-DPAYLOAD=$payload" `
+            "-DTRAY_PS1=$tray" `
+            "-DICON=$icon" `
             "-DOUT_EXE=$outExe" `
             "installer/windows/viewlba-setup.nsi" 2>&1
           $log | Write-Host
