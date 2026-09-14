@@ -157,12 +157,41 @@ screenshot() {
 }
 
 swipe_up() {
-  local size w h
-  size=$(adb shell wm size 2>/dev/null | grep -oE '[0-9]+x[0-9]+' | tail -n1)
-  w="${size%x*}"; w="${w:-320}"
-  h="${size#*x}"; h="${h:-640}"
-  adb shell input swipe $((w / 2)) $((h * 3 / 4)) $((w / 2)) $((h / 2)) 300 \
+  screen_dims
+  adb shell input swipe $((SCREEN_W / 2)) $((SCREEN_H * 3 / 4)) $((SCREEN_W / 2)) $((SCREEN_H / 2)) 300 \
     >/dev/null 2>&1 || true
+}
+
+# screen_dims → SCREEN_W/SCREEN_H actuales (para ensure_visible)
+screen_dims() {
+  local size
+  size=$(adb shell wm size 2>/dev/null | grep -oE '[0-9]+x[0-9]+' | tail -n1)
+  SCREEN_W="${size%x*}"; SCREEN_W="${SCREEN_W:-320}"
+  SCREEN_H="${size#*x}"; SCREEN_H="${SCREEN_H:-640}"
+}
+
+# ensure_visible ID [MAX] → scrolla hasta que el CENTRO del control esté
+# dentro del área útil (60 px de margen). Un tap sobre coordenadas fuera
+# de pantalla «se envía» con éxito pero no toca NADA — el botón de copiar
+# queda al final del ScrollView y el bloque de resultado CRECE tras
+# GENERAR (lección del run 3: el toast de copia nunca llegó porque el tap
+# no llegaba al botón).
+ensure_visible() {
+  local id="$1" max="${2:-3}" i coords cy
+  for i in $(seq 1 "$max"); do
+    dump_ui || true
+    coords=$(find_view "$id" || true)
+    screen_dims
+    if [ -n "$coords" ]; then
+      cy=$(printf '%s' "$coords" | awk '{print $2}')
+      if [ -n "$cy" ] && [ "$cy" -ge 60 ] && [ "$cy" -le $((SCREEN_H - 60)) ]; then
+        return 0
+      fi
+    fi
+    swipe_up
+    sleep 1
+  done
+  return 1
 }
 
 # tap_button_with_fallback ID → toca un botón, OCULTANDO ANTES el teclado
@@ -240,13 +269,14 @@ type_into_field() {
   fi
 }
 
-# toast_visible SUBSTR TIMEOUT → cierto si algún volcado contiene el texto
-# (los toasts viven ~3 s en el árbol de accesibilidad).
+# toast_visible SUBSTR TIMEOUT → cierto si el toast aparece en pantalla.
+# Los toasts LENGTH_SHORT viven ~2 s: volcar Y hacer grep EN EL DISPOSITIVO
+# (sin `adb pull` por iteración — la transferencia tarda 1-2 s y el toast
+# moría ANTES de llegar al host: causa real de los «toast no capturado»).
 toast_visible() {
   local substr="$1" timeout_s="$2" elapsed=0
   while [ "$elapsed" -lt "$timeout_s" ]; do
-    dump_ui || true
-    if grep -q "$substr" "$UI_XML" 2>/dev/null; then
+    if adb shell "uiautomator dump /sdcard/viewlba_toast.xml >/dev/null 2>&1 && grep -qF '$substr' /sdcard/viewlba_toast.xml" 2>/dev/null; then
       return 0
     fi
     sleep 1
@@ -393,19 +423,26 @@ wait_text "$ID_STATUS" "Licencia emitida" 10 || log "aviso: status sin «Licenci
 
 # ── 5. COPIAR la licencia ya lista ───────────────────────────────────────
 log "Copiando el token (btn_copy_token)…"
-tap_button_with_fallback "$ID_COPY" || fail "no se pudo tocar «Copiar token»"
-if toast_visible "Copiado" 8; then
-  screenshot "08-token-copiado"
-  log "✓ Token copiado al portapapeles (toast «Copiado al portapapeles» detectado)"
-else
-  # reintento: el toast pudo perderse por timing — el tap debe volver a copiar
-  log "toast no capturado → reintento de copia…"
-  tap_button_with_fallback "$ID_COPY" || true
-  toast_visible "Copiado" 8 \
-    || fail "No se detectó el toast «Copiado al portapapeles» tras dos intentos — el flujo de copiar NO se verificó"
-  screenshot "08-token-copiado"
-  log "✓ Token copiado al portapapeles (2.º intento)"
-fi
+# El bloque de resultado (label + token + botón) CRECE al final del
+# ScrollView tras GENERAR → asegurar visibilidad ANTES de cada tap.
+COPY_OK=0
+COPY_TRIES=0
+while [ "$COPY_TRIES" -lt 3 ] && [ "$COPY_OK" -eq 0 ]; do
+  COPY_TRIES=$((COPY_TRIES + 1))
+  ensure_visible "$ID_COPY" 3 || log "aviso: btn_copy_token no quedó centrado (intento $COPY_TRIES)"
+  dump_ui || true
+  tap_view "$ID_COPY" || true
+  if toast_visible "Copiado" 6; then
+    COPY_OK=1
+    screenshot "08-token-copiado"
+    log "✓ Token copiado al portapapeles (toast «Copiado al portapapeles» detectado — intento $COPY_TRIES)"
+  else
+    log "toast no capturado (intento $COPY_TRIES) → scroll + reintento…"
+    swipe_up >/dev/null 2>&1 || true
+    sleep 1
+  fi
+done
+[ "$COPY_OK" -eq 1 ] || fail "No se detectó el toast «Copiado al portapapeles» tras 3 intentos — el flujo de copiar NO se verificó"
 
 # ── 6. Historial: la licencia emitida queda registrada ───────────────────
 log "Volviendo a HOME y abriendo el Historial…"
