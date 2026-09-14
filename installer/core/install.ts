@@ -256,6 +256,7 @@ export async function runInstall(config: InstallConfig, deps: InstallDeps): Prom
         ownBusyPorts: ownPorts,
         bundledBun,
         offlinePayload: config.offline ? payloadHasDeps(payloadDir) : undefined,
+        payloadDir,
       })
       checks.push(...report.checks)
       for (const c of report.checks) {
