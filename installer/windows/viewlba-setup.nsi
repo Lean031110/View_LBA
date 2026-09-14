@@ -107,7 +107,18 @@ Section "Instalar ${APPNAME}" SecMain
   ; Paquete AUTOSUFICIENTE: bun.exe y nssm.exe van DENTRO (runtime\).
   ; La máquina del usuario NO necesita node, bun ni nada instalado.
   DetailPrint "Copiando ${APPNAME} (servidor + runtime incluido, ~450 MB)…"
-  File /r "${PAYLOAD}\*.*"
+  ; ⚠ patrón `\*` y NO `\*.*`: en NSIS, *.* SOLO casa nombres con PUNTO —
+  ; dejaba fuera node_modules, runtime, mini-services, prisma… (el payload
+  ; llegaba COJO a $INSTDIR y el preflight fallaba con «Payload offline
+  ; INCOMPLETO» — bug real del cuarto build de v3.2.0). `\*` casa TODO,
+  ; incluidos los nombres sin extensión y los dotfiles (.next, .bin).
+  File /r "${PAYLOAD}\*"
+
+  ; Guard: el payload DEBE llegar completo (fail-fast con mensaje claro)
+  ${IfNot} ${FileExists} "$INSTDIR\runtime\bun.exe"
+    ${OrIfNot} ${FileExists} "$INSTDIR\resources\server\node_modules\.bin"
+    Abort "Payload incompleto tras la copia (¿patrón de File?): falta runtime\bun.exe o node_modules\.bin"
+  ${EndIf}
 
   ; ---- 2. Credenciales admin (generadas EN ESTA máquina) ----------------
   ; PowerShell genera una contraseña con política del servidor

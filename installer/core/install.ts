@@ -436,6 +436,9 @@ export async function runInstall(config: InstallConfig, deps: InstallDeps): Prom
         withDemoData: config.withDemoData,
         healthChecks: false, // la fase health lo hace con los servicios arriba
         skipMigrations: false,
+        // cwd = appDir REAL: en el sidecar compilado PROJECT_ROOT apunta al
+        // bunfs VIRTUAL (invisible para los hijos) — bug real v3.2.0
+        cwd: layout.appDir,
       })
       for (const s of result.steps) emit({ type: "check", result: stepToCheck(s) })
       if (!result.ok) {
@@ -503,6 +506,7 @@ export async function runInstall(config: InstallConfig, deps: InstallDeps): Prom
         adminPassword: config.adminPassword,
         healthChecks: false,
         skipMigrations: true,
+        cwd: layout.appDir,
       })
       for (const s of result.steps) emit({ type: "check", result: stepToCheck(s) })
       if (!result.ok) throw new PhaseError("admin", result.error ?? "no se pudo crear el admin", undefined, undefined, "admin")
