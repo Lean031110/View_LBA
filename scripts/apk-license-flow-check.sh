@@ -269,6 +269,16 @@ type_into_field() {
   fi
 }
 
+# swipe_down → gesto hacia ABAJO (el contenido sube: scrollear hacia el
+# PRINCIPIO de la pantalla — swipe_up scrollea hacia el final). Necesario
+# para volver: btn_back vive ARRIBA y tras generar la pantalla queda
+# scrolleada al final (lección del run 5).
+swipe_down() {
+  screen_dims
+  adb shell input swipe $((SCREEN_W / 2)) $((SCREEN_H / 4)) $((SCREEN_W / 2)) $((SCREEN_H * 3 / 4)) 300 \
+    >/dev/null 2>&1 || true
+}
+
 # toast_visible SUBSTR TIMEOUT → cierto si el toast está en pantalla.
 # LECCIÓN (run 4): los toasts viven en ventanas TYPE_TOAST SEPARADAS que
 # `uiautomator dump` NO captura (no aparecen en NINGÚN volcado — los de
@@ -465,10 +475,22 @@ done
 [ "$COPY_OK" -eq 1 ] || fail "No se verificó la copia tras 3 intentos (ni ventana Toast ni log «Token copiado») — el flujo de copiar NO se verificó"
 screenshot "08-token-copiado"
 
-# ── 6. Historial: la licencia emitida queda registrada ───────────────────
+# ── 6. Historial: la licencia emitida queda registrada ───────────────
 log "Volviendo a HOME y abriendo el Historial…"
+# La pantalla quedó scrolleada al FINAL (bloque del resultado): volver al
+# PRINCIPIO para que btn_back (ARRIBA) esté en pantalla — un tap con
+# coordenadas fuera/negativas falla y el swipe_up del fallback empeora.
+for i in 1 2 3; do
+  swipe_down
+  sleep 1
+  dump_ui || true
+  BACK_COORDS=$(find_view "$ID_BACK" || true)
+  BACK_CY=$(printf '%s' "$BACK_COORDS" | awk '{print $2}')
+  [ -n "$BACK_CY" ] && [ "$BACK_CY" -ge 20 ] && break
+done
 tap_button_with_fallback "$ID_BACK" || fail "no se pudo volver (btn_back)"
 sleep 2
+dump_ui || true   # refresco OBLIGATORIO: ya estamos en HOME, el volcado anterior era de «Nueva licencia»
 tap_view "$ID_HISTORY" || fail "no se pudo tocar btn_history"
 wait_view "$PKG:id/history_list" 30 || fail "no apareció la lista del historial"
 sleep 2
