@@ -25,6 +25,8 @@ export interface PreflightDeps {
   bundledBun?: string
   /** Payload offline completo (node_modules vendored). */
   offlinePayload?: boolean
+  /** Ruta del payload comprobada (diagnóstico en el fallo del check). */
+  payloadDir?: string
 }
 
 export interface PreflightReport {
@@ -134,6 +136,9 @@ export async function runPreflight(
       id: "offline-payload",
       label: deps.offlinePayload ? "Payload offline completo (deps incluidas)" : "Payload offline INCOMPLETO",
       status: deps.offlinePayload ? "pass" : "fail",
+      detail: deps.offlinePayload
+        ? undefined
+        : `comprobado (inexistente): ${deps.payloadDir ?? "?"}/node_modules y ${deps.payloadDir ?? "?"}/node_modules/.bin`,
       hint: deps.offlinePayload ? undefined : "El paquete debe incluir node_modules y runtime/bun para instalación sin red",
     })
   }

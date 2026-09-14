@@ -111,7 +111,20 @@ jobs:
           test -s "$DEB" || { echo "✗ falta el .deb"; exit 1; }
 
           echo "→ instalando el .deb (postinst: systemd + DB + admin + arranque)…"
-          sudo dpkg -i "$DEB"
+          # Si el postinst falla, el diagnóstico del instalador ya salió por
+          # consola — pero el PORQUÉ del servicio lo tiene journald: volcarlo
+          # ANTES de morir (lección del quinto build: health unreachable sin
+          # poder ver el crash del servicio no es depurable).
+          if ! sudo dpkg -i "$DEB"; then
+            echo ""
+            echo "═══ dpkg -i FALLÓ — journald de los servicios ═══"
+            sudo journalctl -u pantalla-restaurante.service --no-pager -n 60 2>&1 || true
+            echo "─── estado ───"
+            systemctl status pantalla-restaurante.service --no-pager -l 2>&1 | head -20 || true
+            sudo ls -la /opt/pantalla-restaurante/runtime /opt/pantalla-restaurante/.next/standalone 2>&1 | head -12 || true
+            sudo cat /etc/pantalla-restaurante.env 2>/dev/null | grep -v SECRET | grep -v TOKEN || true
+            exit 1
+          fi
 
           echo "→ servicio activo:"
           systemctl is-active pantalla-restaurante.service
@@ -354,6 +367,13 @@ jobs:
               & C:\ViewLBA\viewlba-installer.exe --config C:\ViewLBA\install-config.json 2>&1 | ForEach-Object { Write-Host "  $_" }
               Write-Host "--- diagnostics ---"
               & C:\ViewLBA\viewlba-installer.exe diagnostics 2>&1 | ForEach-Object { Write-Host "  $_" }
+              Write-Host "--- estado REAL de C:\ViewLBA (paths que el preflight comprueba) ---"
+              Write-Host "  package.json: $(Test-Path 'C:\ViewLBA\resources\server\package.json')"
+              Write-Host "  node_modules: $(Test-Path 'C:\ViewLBA\resources\server\node_modules')"
+              Write-Host "  .bin:         $(Test-Path 'C:\ViewLBA\resources\server\node_modules\.bin')"
+              Write-Host "  bun.exe:      $(Test-Path 'C:\ViewLBA\runtime\bun.exe')"
+              Get-ChildItem C:\ViewLBA -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  [dir] $($_.Name)" }
+              Get-ChildItem C:\ViewLBA\resources -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  [res] $($_.Name)" }
             } else {
               Write-Host "  (el payload ni siquiera llegó a copiarse: C:\ViewLBA no existe)"
             }
