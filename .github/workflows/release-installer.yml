@@ -502,9 +502,15 @@ jobs:
           foreach ($n in @("ViewLBA - Panel", "ViewLBA - Iniciar servidor", "ViewLBA - Detener servidor", "ViewLBA - Credenciales", "ViewLBA - Bandeja")) {
             if (-not (Test-Path "$desk\$n.lnk")) { throw "falta el acceso directo: $desk\$n.lnk" }
           }
-          # el tray-script compila (sintaxis PowerShell) sin errores
-          $err = powershell.exe -NoProfile -Command "try { [void][System.Management.Automation.Language.Parser]::ParseFile('C:\ViewLBA\tray\ViewLBA-Tray.ps1', [ref]$null, [ref]\$e); if (\$e) { exit 1 } } catch { exit 1 }; exit 0"
-          if ($LASTEXITCODE -ne 0) { Write-Host "::warning::el parser reportó problemas en ViewLBA-Tray.ps1" }
+          # el tray-script PARSEA sin errores — EN PROCESO (sin powershell.exe
+          # anidado: la línea antigua con escapes «\$e» llegaba MANGLED al
+          # hijo y su ParserError rompía el exit del PASO pese a que TODO lo
+          # demás había pasado — 22.º build de v3.2.1: bandeja VIVA, health,
+          # stop/start y uninstall OK y el paso moría por esta línea).
+          $e = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile('C:\ViewLBA\tray\ViewLBA-Tray.ps1', [ref]$null, [ref]$e)
+          if ($e) { Write-Host "::warning::el parser reportó problemas en ViewLBA-Tray.ps1: $($e[0].Message)" }
+          else { Write-Host "✓ ViewLBA-Tray.ps1 parsea limpio" }
 
           # bandeja VIVA: el instalador la lanza con Exec → proceso registrado
           $PidFile = 'C:\ViewLBA\tray\tray.pid'
