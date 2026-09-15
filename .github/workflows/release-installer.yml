@@ -420,10 +420,14 @@ jobs:
             taskkill /PID $p.Id /T /F 2>&1 | Out-String | ForEach-Object { Write-Host "  $_" }
             Start-Sleep 3
             Dump-Diagnostics "VOLCADO DE DIAGNÓSTICO (instalación colgada)"
-            if (Test-Path "C:\ViewLBA\viewlba-installer.exe") {
-              Write-Host "--- nssm dump (si el servicio llegó a crearse) ---"
-              & "C:\PantallaRestaurante\app\runtime\nssm.exe" dump PantallaRestaurante 2>&1 | Select-Object -First 25 | ForEach-Object { Write-Host "  $_" }
+            # nssm dump puede quedarse esperando (lección del 15.º build: lo
+            # colgó 10 min y comió el timeout del paso) → job con plazo duro.
+            $job = Start-Job -ScriptBlock {
+              & "C:\PantallaRestaurante\app\runtime\nssm.exe" dump PantallaRestaurante 2>&1 | Select-Object -First 25
             }
+            if (Wait-Job $job -Timeout 15) { Receive-Job $job | ForEach-Object { Write-Host "  $_" } }
+            else { Write-Host "  (nssm dump sin responder en 15 s — omitido)" }
+            Remove-Job $job -Force -ErrorAction SilentlyContinue
             throw "la instalación silenciosa excedió 20 minutos (ver volcado)"
           }
           if ($p.ExitCode -ne 0) {
