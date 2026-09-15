@@ -1,0 +1,172 @@
+name: Windows Exit Diagnostics
+
+# Diagnóstico AISLADO del cuelgue de salida del sidecar (builds 15-17 de
+# v3.2.0): la instalación completa está SANA (39 s) pero el proceso no
+# termina. Este workflow prueba CADA mecanismo de salida en un binario
+# bun-compile REAL sobre windows-latest:
+#   A) process.exit en binario compilado (sin hijos)
+#   B) kernel32.ExitProcess vía FFI en binario compilado
+#   C) process.exit tras spawnSync de un hijo que CIERRA los pipes pero
+#      SIGUE VIVO (la simulación exacta del quirk prisma)
+#   D) ExitProcess (FFI) en el mismo escenario C
+#   E) Atomics.wait (gracia síncrona) funciona con el loop "colgado"
+# Cada test imprime su duración y código de salida — la evidencia decide.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["diag/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  exit-matrix:
+    name: "Mecanismos de salida en bun-compile (Windows real)"
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Instalar Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+
+      - name: "Escribir los programas de prueba"
+        shell: bash
+        run: |
+          mkdir -p /tmp/exitdiag
+          cat > /tmp/exitdiag/prog.ts <<'EOF'
+          // argv[2] = modo: A | B | C | D | E
+          import { spawnSync } from "node:child_process"
+          import { dlopen } from "bun:ffi"
+          const mode = process.argv[2] ?? "A"
+
+          function log(m: string) { console.log(`[${mode}] ${m}`) }
+          function syncSleep(ms: number) {
+            try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms) } catch {}
+          }
+          function osExit(code: number) {
+            try {
+              const k32 = dlopen("kernel32", { ExitProcess: { args: ["uint32"], returns: "void" } })
+              log(`FFI dlopen(kernel32) OK — llamando ExitProcess(${code})`)
+              ;(k32.symbols.ExitProcess as (c: number) => void)(code)
+              log("ERROR FATAL: ExitProcess REGRESÓ (no debía)")
+            } catch (e) {
+              log(`FFI FALLÓ: ${(e as Error).message}`)
+              process.exit(code)
+            }
+          }
+
+          // Hijo «prisma-like»: cierra stdout/stderr al salir pero el
+          // PROCESO sigue vivo (setInterval forever) — reproduce el quirk.
+          const CHILD = `
+          import { spawnSync } from "node:child_process"
+          console.log("hijo: salida útil (pipes se cierran con esto… NO)")
+          const r = spawnSync("cmd", ["/c", "exit 0"])
+          // El proceso hijo NO termina: intervalo eterno y stdout cerrado:
+          process.stdout.end?.()
+          setInterval(() => {}, 1000)
+          `
+
+          log("inicio")
+          if (mode === "C" || mode === "D") {
+            const r = spawnSync(process.execPath, ["-e", CHILD], {
+              encoding: "utf8", timeout: 10_000,
+              stdin: "ignore", stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
+            } as never)
+            log(`spawnSync devolvió: status=${r.status} pid=${r.pid} stdout=${JSON.stringify((r.stdout||"").slice(0,40))}`)
+          }
+          if (mode === "E") {
+            log("durmiendo 500 ms SÍNCRONOS (Atomics.wait)…")
+            syncSleep(500)
+            log("Atomics.wait REGRESÓ (el hilo principal no está bloqueado)")
+          }
+          log("llegando al mecanismo de salida")
+          syncSleep(200)
+          if (mode === "A" || mode === "C") {
+            log(`process.exit(77)`)
+            process.exit(77)
+          } else {
+            osExit(77)
+          }
+          log("INALCANZABLE")
+          while (true) { syncSleep(1000) }
+          EOF
+          echo "listo"
+
+      - name: "Compilar A/B/C/D/E (bun build --compile)"
+        shell: bash
+        run: |
+          for M in A B C D E; do
+            bun build --compile /tmp/exitdiag/prog.ts --outfile /tmp/exitdiag/prog-$M >/dev/null 2>&1 || { echo "✗ compile $M falló"; exit 1; }
+          done
+          echo "✓ 5 binarios compilados"
+
+      - name: "A) process.exit (sin hijos) — ¿termina?"
+        shell: pwsh
+        run: |
+          $t0 = Get-Date
+          $p = Start-Process -FilePath "/tmp/exitdiag/prog-A.exe" -ArgumentList "A" -PassThru -Wait -NoNewWindow -RedirectStandardOutput /tmp/exitdiag/a-out.txt
+          $dt = ((Get-Date) - $t0).TotalSeconds
+          Write-Host "A: exit=$($p.ExitCode) duración=$([math]::Round($dt,1))s"
+          Get-Content /tmp/exitdiag/a-out.txt | ForEach-Object { Write-Host "  $_" }
+          if ($dt -gt 15) { Write-Host "✗ A COLGADO"; exit 1 }
+
+      - name: "B) ExitProcess vía FFI (sin hijos) — ¿termina?"
+        shell: pwsh
+        run: |
+          $t0 = Get-Date
+          $p = Start-Process -FilePath "/tmp/exitdiag/prog-B.exe" -ArgumentList "B" -PassThru -Wait -NoNewWindow -RedirectStandardOutput /tmp/exitdiag/b-out.txt
+          $dt = ((Get-Date) - $t0).TotalSeconds
+          Write-Host "B: exit=$($p.ExitCode) duración=$([math]::Round($dt,1))s"
+          Get-Content /tmp/exitdiag/b-out.txt | ForEach-Object { Write-Host "  $_" }
+          if ($dt -gt 15) { Write-Host "✗ B COLGADO"; exit 1 }
+
+      - name: "E) Atomics.wait — ¿el hilo principal vive?"
+        shell: pwsh
+        run: |
+          $t0 = Get-Date
+          $p = Start-Process -FilePath "/tmp/exitdiag/prog-E.exe" -ArgumentList "E" -PassThru -Wait -NoNewWindow -RedirectStandardOutput /tmp/exitdiag/e-out.txt
+          $dt = ((Get-Date) - $t0).TotalSeconds
+          Write-Host "E: exit=$($p.ExitCode) duración=$([math]::Round($dt,1))s"
+          Get-Content /tmp/exitdiag/e-out.txt | ForEach-Object { Write-Host "  $_" }
+
+      - name: "C) process.exit TRAS hijo vivo — ¿termina?"
+        shell: pwsh
+        timeout-minutes: 3
+        run: |
+          $t0 = Get-Date
+          $p = Start-Process -FilePath "/tmp/exitdiag/prog-C.exe" -ArgumentList "C" -PassThru -NoNewWindow -RedirectStandardOutput /tmp/exitdiag/c-out.txt
+          if (-not ($p.WaitForExit(60000))) {
+            Write-Host "C: ✗ COLGADO (60 s) — process.exit no termina con hijo vivo"
+            taskkill /PID $p.Id /T /F | Out-Null
+            Get-Content /tmp/exitdiag/c-out.txt | ForEach-Object { Write-Host "  $_" }
+            exit 0   # diagnóstico: NO fallar el workflow
+          }
+          $dt = ((Get-Date) - $t0).TotalSeconds
+          Write-Host "C: ✓ exit=$($p.ExitCode) duración=$([math]::Round($dt,1))s"
+          Get-Content /tmp/exitdiag/c-out.txt | ForEach-Object { Write-Host "  $_" }
+
+      - name: "D) ExitProcess (FFI) TRAS hijo vivo — ¿termina?"
+        shell: pwsh
+        timeout-minutes: 3
+        run: |
+          $t0 = Get-Date
+          $p = Start-Process -FilePath "/tmp/exitdiag/prog-D.exe" -ArgumentList "D" -PassThru -NoNewWindow -RedirectStandardOutput /tmp/exitdiag/d-out.txt
+          if (-not ($p.WaitForExit(60000))) {
+            Write-Host "D: ✗ COLGADO (60 s) — ExitProcess no termina con hijo vivo (!)"
+            taskkill /PID $p.Id /T /F | Out-Null
+            Get-Content /tmp/exitdiag/d-out.txt | ForEach-Object { Write-Host "  $_" }
+            exit 1
+          }
+          $dt = ((Get-Date) - $t0).TotalSeconds
+          Write-Host "D: ✓ exit=$($p.ExitCode) duración=$([math]::Round($dt,1))s"
+          Get-Content /tmp/exitdiag/d-out.txt | ForEach-Object { Write-Host "  $_" }
+
+      - name: "Resumen de la matriz"
+        shell: bash
+        run: |
+          echo "=== Matriz de salida (windows-latest, bun 1.4.2 compile) ==="
+          for f in a b c d e; do echo "--- $f ---"; cat /tmp/exitdiag/$f-out.txt 2>/dev/null | tail -6; done
