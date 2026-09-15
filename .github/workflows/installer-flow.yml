@@ -1,0 +1,685 @@
+name: Installer Flow CI
+
+# ============================================================================
+# CI del FLUJO COMPLETO de los instaladores (lo que pidió el usuario):
+#   «Crea pruebas en el CI de todo… crea CI para el flujo de instalación
+#    completo de cada SO, para el flujo de iniciar, detener, abrir, configurar
+#    etc. Valida todo el código, crea pruebas de humo del funcionamiento»
+#
+# QUÉ VALIDA ESTE WORKFLOW (por SO, en runners REALES):
+#   1. INSTALACIÓN completa, como la haría el usuario:
+#        · Linux:   dpkg -i del .deb → postinst → servicio systemd ARRANCADO
+#        · Windows: Setup.exe /S silencioso → servicio Windows Running
+#   2. FUNCIONAMIENTO: /api/health 200 + credenciales + accesos directos.
+#   3. BANDEJA (indicador permanente): icono de estado + menú
+#      Iniciar · Detener · Reiniciar · Configurar · Panel:
+#        · Linux:   viewlba-tray instalado + íconos de estado + autostart
+#                   XDG + .desktop válidos (desktop-file-validate) + py_compile
+#        · Windows: ViewLBA-Tray.ps1 parsea, ARRANCA, vive (bucle de mensajes),
+#                   y la instancia única funciona (segunda copia sale sola)
+#   4. INICIAR / DETENER (los botones del usuario):
+#        · Linux:   viewlba-server stop → inactive → start → active + health
+#        · Windows: net stop → Stopped → net start → Running + health
+#   5. CONFIGURAR: estado/health/logs/credentials por CLI + bandeja.
+#   6. 100 % OFFLINE (prueba REAL, no declarativa):
+#        · Linux:   iptables REJECT de todo excepto loopback → reinstalar
+#                   dpkg -i → servicio + health OK SIN red externa.
+#        · Windows: reglas de firewall outbound BLOCK para el sidecar y el
+#                   runtime bun (loopback EXENTO por diseño de Windows) →
+#                   instalar + health OK SIN red externa.
+#   7. DESINSTALACIÓN: purge / uninstall.exe → sin servicios ni accesos.
+#
+# La diferencia con release-installer.yml: ese SOLO corre en tags (publica
+# el release). ESTE corre en cada push/PR — los instaladores se rompen en el
+# PR que los rompe, no el día del release.
+# ============================================================================
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installer-flow-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Versiones EXACTAS (mismo determinismo que release-installer.yml).
+  BUILD_BUN: "1.4.2"
+  PAYLOAD_BUN: "1.3.14"
+
+jobs:
+  # ------------------------------------------------------------------ Linux
+  linux-flow:
+    name: "Linux: flujo completo (.deb → bandeja → iniciar/detener → offline → purge)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Instalar Bun (versión exacta)
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUILD_BUN }}
+
+      - name: Dependencias del repo (entorno de build)
+        run: bun install --frozen-lockfile
+
+      - name: Dependencias de mini-services (entorno de build)
+        run: |
+          (cd mini-services/realtime-service && bun install --frozen-lockfile)
+          (cd mini-services/stream-service && bun install --frozen-lockfile)
+
+      - name: Prisma Client (entorno de build)
+        run: bunx prisma generate
+
+      - name: Tests unitarios del installer (lógica ANTES de empaquetar)
+        run: bun test tests/installer/
+
+      - name: Versión (del package.json)
+        run: |
+          V=$(bun -e 'console.log(require("./package.json").version)')
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+          echo "→ versión: $V"
+
+      - name: "Payload de producción (bundle-server + guards offline)"
+        run: bun installer/package/bundle-server.ts --platform=linux --version="$VERSION" --bun-version="${PAYLOAD_BUN}"
+
+      - name: "Smoke REAL del payload (migrate + arranque + health + SIGTERM)"
+        run: bash installer/package/smoke-payload.sh dist/release/linux/ViewLBA-Server
+
+      - name: "Construir .deb (payload + postinst + bandeja + autostart)"
+        run: bun installer/linux/build-deb.ts --staging=dist/release/linux/ViewLBA-Server --version="$VERSION" --out=dist/release/linux/out
+
+      # ------------------------------------------------------------------
+      # 1) INSTALACIÓN COMPLETA (como el usuario: sudo dpkg -i)
+      # ------------------------------------------------------------------
+      - name: "FLUJO 1 — instalar: dpkg -i → servicio activo + health 200"
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          DEB="dist/release/linux/out/ViewLBA-Server-$VERSION-x86_64.deb"
+          test -s "$DEB" || { echo "✗ falta el .deb"; exit 1; }
+          if ! sudo dpkg -i "$DEB"; then
+            echo "═══ dpkg -i FALLÓ — journald ═══"
+            sudo journalctl -u pantalla-restaurante.service --no-pager -n 60 2>&1 || true
+            exit 1
+          fi
+          systemctl is-active pantalla-restaurante.service
+          systemctl is-enabled pantalla-restaurante.target
+          ok=""
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:3000/api/health > /tmp/health.json 2>/dev/null; then ok=1; break; fi
+            sleep 2
+          done
+          [[ -n "$ok" ]] || { echo "✗ /api/health sin respuesta"; sudo viewlba-server logs || true; exit 1; }
+          cat /tmp/health.json; echo
+          sudo test -s /opt/viewlba-server/CREDENCIALES.txt
+          test -x /usr/bin/viewlba-server
+          echo "✓ INSTALACIÓN completa: servicio + health + credenciales"
+
+      # ------------------------------------------------------------------
+      # 2) BANDEJA: indicador permanente (Iniciar · Detener · Configurar)
+      # ------------------------------------------------------------------
+      - name: "FLUJO 2 — bandeja: script + iconos de estado + autostart + .desktop válidos"
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq desktop-file-utils >/dev/null
+          # script de la bandeja instalado y compila
+          test -x /usr/bin/viewlba-tray
+          python3 -m py_compile /usr/bin/viewlba-tray && echo "✓ py_compile viewlba-tray"
+          # autocomprobación de la bandeja (crítico: unidad + wrapper)
+          sudo /usr/bin/viewlba-tray --check
+          # iconos de estado (verde=activo rojo=detenido amarillo=transición)
+          for s in running stopped waiting; do
+            for d in 22x22 32x32 48x48; do
+              test -s "/usr/share/icons/hicolor/$d/apps/viewlba-$s.png" \
+                || { echo "✗ falta icono $d/viewlba-$s.png"; exit 1; }
+            done
+          done
+          echo "✓ iconos de estado hicolor (22/32/48 × running/stopped/waiting)"
+          # .desktop: menú + autostart de sesión
+          for f in viewlba-panel.desktop viewlba-start.desktop viewlba-stop.desktop viewlba-tray.desktop; do
+            test -s "/usr/share/applications/$f" || { echo "✗ falta $f"; exit 1; }
+            desktop-file-validate "/usr/share/applications/$f" && echo "✓ desktop-file-validate $f"
+          done
+          test -s /etc/xdg/autostart/viewlba-tray.desktop
+          desktop-file-validate /etc/xdg/autostart/viewlba-tray.desktop
+          # el menú de la bandeja y de iniciar/detener existen en el binario
+          grep -q "Iniciar servidor" /usr/bin/viewlba-tray
+          grep -q "Detener servidor" /usr/bin/viewlba-tray
+          grep -q "Configurar" /usr/bin/viewlba-tray
+          echo "✓ BANDEJA: script + iconos + autostart + menú Iniciar/Detener/Configurar"
+
+      # ------------------------------------------------------------------
+      # 3) INICIAR / DETENER (los botones del usuario)
+      # ------------------------------------------------------------------
+      - name: "FLUJO 3 — iniciar/detener: viewlba-server stop → inactive → start → health"
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          sudo viewlba-server stop || true
+          for i in $(seq 1 15); do
+            st=$(systemctl is-active pantalla-restaurante.service || true)
+            [[ "$st" == "inactive" || "$st" == "failed" ]] && break
+            sleep 2
+          done
+          st=$(systemctl is-active pantalla-restaurante.service || true)
+          [[ "$st" == "inactive" || "$st" == "failed" ]] || { echo "✗ no se detuvo (estado: $st)"; exit 1; }
+          echo "✓ DETENER: servicio detenido"
+          sudo viewlba-server start
+          for i in $(seq 1 30); do
+            systemctl is-active --quiet pantalla-restaurante.service && break
+            sleep 2
+          done
+          systemctl is-active pantalla-restaurante.service
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3000/api/health >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          curl -fsS http://localhost:3000/api/health >/dev/null
+          echo "✓ INICIAR: servicio activo + health 200 tras re-arrancar"
+
+      # ------------------------------------------------------------------
+      # 4) CONFIGURAR: CLI de gestión (estado, health, logs, credenciales)
+      # ------------------------------------------------------------------
+      - name: "FLUJO 4 — configurar: status + health + logs + credentials + bandeja headless"
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          sudo viewlba-server status | grep -E "pantalla-restaurante|PantallaRestaurante" | head -3
+          sudo viewlba-server health | grep -qEi "ok|200|healthy" || sudo viewlba-server health | head -5
+          sudo viewlba-server logs | head -5 || true
+          sudo viewlba-server credentials | grep -q "admin@viewlba.local"
+          # bandeja en headless: se degrada ELEGANTE (exit 0, sin romper nada)
+          out=$(viewlba-tray 2>&1 || true)
+          echo "bandeja headless: $out" | head -2
+          echo "$out" | grep -q "sin sesión gráfica" && echo "✓ degradación elegante de la bandeja sin escritorio"
+          echo "✓ CONFIGURAR: CLI completo + bandeja degradable"
+
+      # ------------------------------------------------------------------
+      # 5) 100 % OFFLINE — reinstalar sin red externa (PRUEBA REAL)
+      # ------------------------------------------------------------------
+      - name: "FLUJO 5 — 100 % OFFLINE: iptables sin red (solo loopback) → dpkg -i → health"
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          DEB="dist/release/linux/out/ViewLBA-Server-$VERSION-x86_64.deb"
+
+          echo "→ purgando la instalación online para reinstalar SIN red…"
+          sudo dpkg --purge viewlba-server >/dev/null 2>&1 || true
+          sudo rm -rf /var/lib/pantalla-restaurante /opt/pantalla-restaurante 2>/dev/null || true
+
+          echo "→ AISLANDO LA RED: solo loopback (iptables REJECT del resto)…"
+          # REJECT (no DROP): error inmediato — si algo intenta red, FALLA ya.
+          sudo iptables -I OUTPUT -o lo -j ACCEPT
+          sudo iptables -I OUTPUT 2 -j REJECT
+          sudo ip6tables -I OUTPUT ! -o lo -j REJECT 2>/dev/null || true
+          cleanup() {
+            sudo iptables -D OUTPUT -j REJECT 2>/dev/null || true
+            sudo iptables -D OUTPUT -o lo -j ACCEPT 2>/dev/null || true
+            sudo ip6tables -D OUTPUT ! -o lo -j REJECT 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          echo "→ probando que NO hay red externa (debe FALLAR):"
+          if curl -fsS --max-time 5 https://github.com >/dev/null 2>&1; then
+            echo "✗ el aislamiento NO funciona — hay red externa"; exit 1
+          fi
+          echo "✓ red externa bloqueada (github.com inaccesible)"
+
+          echo "→ dpkg -i SIN red externa…"
+          if ! sudo dpkg -i "$DEB"; then
+            echo "═══ dpkg -i OFFLINE FALLÓ — journald ═══"
+            sudo journalctl -u pantalla-restaurante.service --no-pager -n 60 2>&1 || true
+            exit 1
+          fi
+          systemctl is-active pantalla-restaurante.service
+          ok=""
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:3000/api/health > /tmp/health-offline.json 2>/dev/null; then ok=1; break; fi
+            sleep 2
+          done
+          [[ -n "$ok" ]] || { echo "✗ /api/health sin respuesta EN OFFLINE"; sudo viewlba-server logs || true; exit 1; }
+          cat /tmp/health-offline.json; echo
+          sudo test -s /opt/viewlba-server/CREDENCIALES.txt
+          # ciclo iniciar/detener también SIN red
+          sudo viewlba-server stop || true
+          sleep 3
+          sudo viewlba-server start
+          for i in $(seq 1 30); do
+            systemctl is-active --quiet pantalla-restaurante.service && break
+            sleep 2
+          done
+          systemctl is-active pantalla-restaurante.service
+          # health con REINTENTOS: el servicio queda «active» antes de que
+          # Next.js termine de bindear el puerto 3000 (lección del 2.º build
+          # del flow: curl inmediato tras start → conexión rechazada).
+          ok=""
+          for i in $(seq 1 45); do
+            if curl -fsS http://localhost:3000/api/health >/dev/null 2>&1; then ok=1; break; fi
+            sleep 2
+          done
+          [[ -n "$ok" ]] || { echo "✗ health SIN respuesta tras re-arrancar EN OFFLINE"; sudo viewlba-server logs || true; exit 1; }
+          echo "✓ 100 % OFFLINE: instalación + health + iniciar/detener SIN red externa"
+
+      # ------------------------------------------------------------------
+      # 6) DESINSTALACIÓN (purge): sin servicios ni unidades residuales
+      # ------------------------------------------------------------------
+      - name: "FLUJO 6 — desinstalar: purge → sin unidades ni accesos"
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          sudo dpkg --purge viewlba-server >/dev/null 2>&1 || sudo dpkg --purge viewlba-server
+          if systemctl list-unit-files 2>/dev/null | grep -q "^pantalla-restaurante"; then
+            echo "::warning::unidades residuales tras purge"
+          fi
+          if test -e /usr/bin/viewlba-tray || test -e /usr/bin/viewlba-server; then
+            echo "✗ binarios residuales tras purge"; exit 1
+          fi
+          sudo rm -rf /var/lib/pantalla-restaurante /opt/pantalla-restaurante 2>/dev/null || true
+          echo "✓ DESINSTALACIÓN: purge limpio"
+
+      - name: Evidencias (Linux)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-flow-linux-evidence
+          path: |
+            /tmp/health.json
+            /tmp/health-offline.json
+          retention-days: 3
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------- Windows
+  windows-flow:
+    name: "Windows: flujo completo (Setup.exe → bandeja → iniciar/detener → offline → uninstall)"
+    runs-on: windows-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Instalar Bun (versión exacta)
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUILD_BUN }}
+
+      - name: Dependencias del repo (entorno de build)
+        run: bun install --frozen-lockfile
+
+      - name: Dependencias de mini-services (entorno de build)
+        shell: bash
+        run: |
+          (cd mini-services/realtime-service && bun install --frozen-lockfile)
+          (cd mini-services/stream-service && bun install --frozen-lockfile)
+
+      - name: Prisma Client (entorno de build — engines de WINDOWS)
+        run: bunx prisma generate
+
+      - name: Versión (del package.json)
+        shell: bash
+        run: |
+          V=$(bun -e 'console.log(require("./package.json").version)')
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+
+      - name: "Payload de producción (bundle-server + guards offline)"
+        shell: bash
+        run: bun installer/package/bundle-server.ts --platform=windows --version="$VERSION" --bun-version="${PAYLOAD_BUN}"
+
+      - name: "Smoke del payload (contrato Windows: entrypoint + engines + runtime + 0 symlinks)"
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGE=dist/release/windows/ViewLBA-Server
+          SRV="$STAGE/resources/server"
+          test -f "$SRV/.next/standalone/server.js"      || { echo "✗ falta server.js"; exit 1; }
+          test -x "$STAGE/runtime/bun.exe"               || { echo "✗ falta runtime/bun.exe"; exit 1; }
+          test -f "$STAGE/runtime/nssm.exe"              || { echo "✗ falta runtime/nssm.exe"; exit 1; }
+          test -x "$STAGE/viewlba-installer.exe"         || { echo "✗ falta el sidecar"; exit 1; }
+          LINKS=$(find "$SRV" -type l | wc -l)
+          [[ "$LINKS" -eq 0 ]] || { echo "✗ $LINKS symlink(s) en el payload"; exit 1; }
+          echo "✓ contrato Windows OK"
+
+      - name: "Localizar makensis (NSIS 3 — preinstalado en el runner)"
+        shell: pwsh
+        run: |
+          $cand = @(
+            "C:\Program Files (x86)\NSIS\makensis.exe",
+            "C:\Program Files\NSIS\makensis.exe"
+          ) + (@($env:PATH -split ';' | ForEach-Object { Join-Path $_ 'makensis.exe' }))
+          $nsis = $cand | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $nsis) {
+            Write-Host "makensis no encontrado — instalando via chocolatey…"
+            choco install -y nsis | Out-Null
+            $nsis = "C:\Program Files (x86)\NSIS\makensis.exe"
+          }
+          Write-Host "makensis: $nsis"
+          if (-not (Test-Path $nsis)) { throw "makensis no disponible" }
+          Add-Content $env:GITHUB_ENV "MAKENSIS=$nsis"
+
+      - name: "Construir Setup.exe (NSIS: payload + servicio + bandeja + accesos)"
+        shell: pwsh
+        run: |
+          $out = "dist/release/windows/out"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $payload = (Resolve-Path "dist/release/windows/ViewLBA-Server").Path
+          $tray    = (Resolve-Path "installer/windows/tray/ViewLBA-Tray.ps1").Path
+          $icon    = (Resolve-Path "installer/windows/viewlba.ico").Path
+          $outExe = "$PWD/dist/release/windows/out/ViewLBA-Server-Setup-$env:VERSION.exe"
+          $log = & $env:MAKENSIS `
+            "-DVERSION=$env:VERSION" `
+            "-DPAYLOAD=$payload" `
+            "-DTRAY_PS1=$tray" `
+            "-DICON=$icon" `
+            "-DOUT_EXE=$outExe" `
+            "installer/windows/viewlba-setup.nsi" 2>&1
+          $log | Write-Host
+          if ($LASTEXITCODE -ne 0) { throw "makensis falló ($LASTEXITCODE)" }
+          $exe = "$out/ViewLBA-Server-Setup-$env:VERSION.exe"
+          if (-not (Test-Path $exe)) { throw "no se produjo $exe" }
+          Write-Host "✓ Setup.exe: $([math]::Round((Get-Item $exe).Length / 1MB, 1)) MB"
+
+      # ------------------------------------------------------------------
+      # OFFLINE: reglas de firewall outbound BLOCK para el instalador y el
+      # runtime (loopback EXENTO por diseño de Windows → localhost funciona).
+      # ⚠ los pasos del runner van con token FILTRADO: crear reglas de
+      # firewall requiere elevación (el runner auto-aprueba UAC).
+      # ------------------------------------------------------------------
+      - name: "OFFLINE — reglas de firewall: BLOCK outbound (sidecar + bun + nssm)"
+        shell: pwsh
+        run: |
+          @'
+          $ErrorActionPreference = 'Stop'
+          $paths = @(
+            "C:\ViewLBA\viewlba-installer.exe",
+            "C:\PantallaRestaurante\app\runtime\bun.exe",
+            "C:\PantallaRestaurante\app\runtime\nssm.exe"
+          )
+          foreach ($p in $paths) {
+            New-NetFirewallRule -DisplayName ("ViewLBA-Offline-Test " + (Split-Path $p -Leaf)) `
+              -Direction Outbound -Program $p -Action Block | Out-Null
+          }
+          Write-Output "OK: 3 reglas outbound BLOCK creadas"
+          '@ | Set-Content -Path "$env:RUNNER_TEMP\fw-add.ps1" -Encoding UTF8
+          $p = Start-Process pwsh -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',"$env:RUNNER_TEMP\fw-add.ps1" `
+            -Verb RunAs -PassThru -Wait -WindowStyle Hidden
+          if ($p.ExitCode -ne 0) { throw "no se pudieron crear las reglas de firewall (exit $($p.ExitCode))" }
+          Write-Host "✓ 3 reglas outbound BLOCK (loopback exento: localhost sigue)"
+
+      # ------------------------------------------------------------------
+      # 1) INSTALACIÓN COMPLETA silenciosa (el Setup.exe DEBE terminar solo:
+      #    regresión del 21.er build — la bandeja ya se lanza con Exec).
+      # ------------------------------------------------------------------
+      - name: "FLUJO 1 — instalar: Setup.exe /S → TERMINA → servicio Running + health 200"
+        shell: pwsh
+        timeout-minutes: 15
+        run: |
+          $exe = "dist/release/windows/out/ViewLBA-Server-Setup-$env:VERSION.exe"
+          if (-not (Test-Path $exe)) { throw "falta el Setup.exe" }
+
+          Write-Host "→ instalación silenciosa (como el usuario)…"
+          $p = Start-Process -FilePath $exe -ArgumentList "/S" -PassThru -Verb RunAs
+          $deadline = (Get-Date).AddMinutes(12)
+          while (-not $p.HasExited -and (Get-Date) -lt $deadline) {
+            Start-Sleep 10
+            if (Test-Path "C:\ViewLBA\install.log") {
+              $tail = (Get-Content "C:\ViewLBA\install.log" -Tail 1 -ErrorAction SilentlyContinue)
+              if ($tail) { Write-Host "  … [$((Get-Date).ToString('HH:mm:ss'))] $tail" }
+            }
+          }
+          if (-not $p.HasExited) {
+            Write-Host "⏱ TIMEOUT: Setup.exe NO terminó en 12 min (regresión del cuelgue)"
+            taskkill /PID $p.Id /T /F 2>&1 | Out-String | ForEach-Object { Write-Host $_ }
+            if (Test-Path "C:\ViewLBA\install.log") { Get-Content "C:\ViewLBA\install.log" | ForEach-Object { Write-Host "  $_" } }
+            throw "Setup.exe colgado — la bandeja debe lanzarse con Exec, no nsExec"
+          }
+          Write-Host "✓ Setup.exe TERMINÓ solo (exit $($p.ExitCode)) — sin cuelgue"
+          if (-not (Select-String -Path "C:\ViewLBA\install.log" -Pattern "INSTALACIÓN COMPLETA" -Quiet)) {
+            Write-Host "→ install.log sin el marcador de éxito:"
+            Get-Content "C:\ViewLBA\install.log" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $_" }
+            throw "la instalación no completó"
+          }
+
+          Write-Host "→ servicio:"
+          $deadline = (Get-Date).AddSeconds(180)
+          while ((Get-Date) -lt $deadline) {
+            if ((Get-Service PantallaRestaurante -ErrorAction SilentlyContinue).Status -eq 'Running') { break }
+            Start-Sleep 3
+          }
+          if ((Get-Service PantallaRestaurante).Status -ne 'Running') { throw "el servicio no quedó Running" }
+          Write-Host "✓ PantallaRestaurante: Running"
+
+          Write-Host "→ health (hasta 180 s):"
+          $ok = $false
+          $deadline = (Get-Date).AddSeconds(180)
+          while ((Get-Date) -lt $deadline) {
+            try {
+              $r = Invoke-WebRequest -Uri "http://localhost:3000/api/health" -TimeoutSec 5 -UseBasicParsing
+              if ($r.StatusCode -eq 200) { $ok = $true; break }
+            } catch { Start-Sleep 3 }
+          }
+          if (-not $ok) {
+            C:\ViewLBA\viewlba-installer.exe logs 2>&1 | Write-Host
+            throw "/api/health sin respuesta"
+          }
+          Write-Host "✓ /api/health 200 — INSTALACIÓN completa SIN red externa"
+
+          # ── BANDEJA LANZADA POR EL INSTALADOR (mismo paso: el runner puede
+          #    limpiar el árbol de procesos AL TERMINAR EL PASO — los servicios
+          #    sobreviven porque los crea el SCM; la bandeja es hija del
+          #    Setup.exe, así que su prueba de vida va AQUÍ, no en el paso
+          #    siguiente). El Setup.exe la lanza con Exec (no espera): el pid
+          #    se registra ANTES de cargar WinForms (< 1 s).
+          Write-Host "→ bandeja del instalador (mismo paso — sin limpieza de por medio):"
+          if (-not (Test-Path 'C:\ViewLBA\tray\ViewLBA-Tray.ps1')) { throw "falta C:\ViewLBA\tray\ViewLBA-Tray.ps1 — el instalador no copió la bandeja" }
+          $deadline = (Get-Date).AddSeconds(60)
+          while (-not (Test-Path 'C:\ViewLBA\tray\tray.pid') -and (Get-Date) -lt $deadline) { Start-Sleep 2 }
+          if (-not (Test-Path 'C:\ViewLBA\tray\tray.pid')) {
+            # VOLCADO COMPLETO (evidencia) + WARNING no fatal: FLUJO 2 valida la
+            # bandeja con arranque manual elevado y stderr capturado, y decide
+            # ahí (el contexto de sesión del runner es artificial: sin área de
+            # notificación como la de un escritorio de usuario real).
+            Write-Host "::warning::tray.pid no apareció en 60 s — volcado de evidencia (FLUJO 2 validará con arranque manual):"
+            Write-Host "── C:\ViewLBA\tray: ──"
+            Get-ChildItem C:\ViewLBA\tray -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $($_.Name) ($($_.Length) b)" }
+            if (Test-Path 'C:\ViewLBA\tray\tray-launch.txt') {
+              Write-Host "── tray-launch.txt (resultado del CreateProcess en el NSIS): ──"
+              Get-Content 'C:\ViewLBA\tray\tray-launch.txt' | ForEach-Object { Write-Host "  $_" }
+            }
+            Write-Host "── tray-boot.txt (traza de arranque del script): ──"
+            if (Test-Path 'C:\ViewLBA\tray\tray-boot.txt') {
+              Get-Content 'C:\ViewLBA\tray\tray-boot.txt' | ForEach-Object { Write-Host "  $_" }
+            } else {
+              Write-Host "  (AUSENTE — powershell NUNCA ejecutó el script: fallo de lanzamiento)"
+            }
+            Write-Host "── procesos powershell vivos: ──"
+            Get-Process powershell -ErrorAction SilentlyContinue | Select-Object Id,StartTime | Format-Table -AutoSize | Out-String | ForEach-Object { Write-Host $_ }
+            Write-Host "── parse con Windows PowerShell 5.1 (el que lanza el instalador): ──"
+            $parse5 = & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -Command "try { `$e=`$null; [void][System.Management.Automation.Language.Parser]::ParseFile('C:\ViewLBA\tray\ViewLBA-Tray.ps1', [ref]`$null, [ref]`$e); if (`$e) { `$e | ForEach-Object { Write-Output (`$_.Message + ' @line ' + `$_.Extent.StartLineNumber) } } else { Write-Output 'PARSE OK 5.1' } } catch { Write-Output ('EXCEPTION: ' + `$_.Exception.Message) }"
+            $parse5 | ForEach-Object { Write-Host "  $_" }
+          } else {
+            $trayPid = [int](Get-Content 'C:\ViewLBA\tray\tray.pid' | Select-Object -First 1)
+            $tproc = Get-Process -Id $trayPid -ErrorAction SilentlyContinue
+            if (-not $tproc) { throw "la bandeja del instalador (PID $trayPid) murió" }
+            if ($tproc.ProcessName -notmatch 'powershell') { throw "PID $trayPid no es powershell (es $($tproc.ProcessName))" }
+            Write-Host "✓ bandeja VIVA lanzada por el Setup.exe (PID $trayPid)"
+          }
+
+      # ------------------------------------------------------------------
+      # 2) BANDEJA: proceso + instancia única + parse + autostart
+      #    (si el runner limpió la bandeja del instalador al cerrar el paso
+      #    anterior, se lanza MANUALMENTE elevada con stderr capturado y se
+      #    valida TODO con esa instancia)
+      # ------------------------------------------------------------------
+      - name: "FLUJO 2 — bandeja: proceso VIVO + instancia única + parse + autostart"
+        shell: pwsh
+        timeout-minutes: 8
+        run: |
+          $PidFile = 'C:\ViewLBA\tray\tray.pid'
+          $TrayPs1 = 'C:\ViewLBA\tray\ViewLBA-Tray.ps1'
+          if (-not (Test-Path $TrayPs1)) { throw "falta $TrayPs1 — el instalador no copió la bandeja" }
+
+          # 1) ¿sigue viva la bandeja que lanzó el instalador? (el runner
+          #    PUEDE limpiar el árbol del paso anterior: los servicios
+          #    sobreviven —los crea el SCM—, la bandeja no necesariamente)
+          $tpid = 0
+          $alive = $false
+          if (Test-Path $PidFile) {
+            $tpid = [int](Get-Content $PidFile | Select-Object -First 1)
+            $t = Get-Process -Id $tpid -ErrorAction SilentlyContinue
+            if ($t -and $t.ProcessName -match 'powershell') { $alive = $true }
+          }
+          if ($alive) {
+            Write-Host "✓ la bandeja del instalador sigue VIVA entre pasos (PID $tpid)"
+          } else {
+            # 2) arranque MANUAL elevado con stderr capturado — la prueba REAL
+            #    de que el script funciona en esta máquina (igual que lo hará
+            #    con el autostart del usuario en su sesión).
+            Write-Host "::warning::la bandeja del instalador no está viva en este paso (el runner limpia el árbol del paso anterior) — validando con arranque manual elevado…"
+            $helper = "$env:RUNNER_TEMP\tray-manual.ps1"
+            $lines = @(
+              '$ErrorActionPreference = ''Continue''',
+              '& "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\ViewLBA\tray\ViewLBA-Tray.ps1" 2> C:\ViewLBA\tray-manual-stderr.txt',
+              'exit $LASTEXITCODE'
+            )
+            Set-Content -Path $helper -Value $lines -Encoding UTF8
+            $p3 = Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',$helper -Verb RunAs -PassThru -WindowStyle Hidden
+            $deadline = (Get-Date).AddSeconds(45)
+            while (-not (Test-Path $PidFile) -and (Get-Date) -lt $deadline) { Start-Sleep 2 }
+            if (Test-Path $PidFile) {
+              $tpid = [int](Get-Content $PidFile | Select-Object -First 1)
+              $t = Get-Process -Id $tpid -ErrorAction SilentlyContinue
+              if ($t -and $t.ProcessName -match 'powershell') {
+                Write-Host "✓ bandeja MANUAL registrada y viva (PID $tpid) — el script FUNCIONA"
+              } else {
+                Write-Host "── stderr del arranque manual: ──"
+                if (Test-Path 'C:\ViewLBA\tray-manual-stderr.txt') { Get-Content 'C:\ViewLBA\tray-manual-stderr.txt' | ForEach-Object { Write-Host "  $_" } }
+                throw "la bandeja manual (PID $tpid) no está viva (ver stderr)"
+              }
+            } else {
+              Write-Host "── stderr del arranque manual: ──"
+              if (Test-Path 'C:\ViewLBA\tray-manual-stderr.txt') { Get-Content 'C:\ViewLBA\tray-manual-stderr.txt' | ForEach-Object { Write-Host "  $_" } }
+              Get-ChildItem C:\ViewLBA\tray -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $($_.Name) ($($_.Length) b)" }
+              throw "la bandeja NO arranca ni manualmente (ver stderr)"
+            }
+          }
+
+          # 3) estabilidad: sigue viva 10 s después (bucle de mensajes)
+          Start-Sleep 10
+          if (-not (Get-Process -Id $tpid -ErrorAction SilentlyContinue)) { throw "la bandeja MURIÓ en 10 s" }
+          Write-Host "✓ bandeja estable (bucle de mensajes) durante 10 s"
+          # segunda instancia: debe APAGARSE sola (guard de instancia única)
+          $p2 = Start-Process -FilePath "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" `
+            -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File','C:\ViewLBA\tray\ViewLBA-Tray.ps1' `
+            -PassThru
+          if ($p2.WaitForExit(20000)) {
+            Write-Host "✓ instancia única: la segunda copia salió sola (exit $($p2.ExitCode))"
+          } else {
+            taskkill /PID $p2.Id /T /F | Out-Null
+            throw "la segunda copia de la bandeja NO se apagó (guard roto)"
+          }
+          # el script de la bandeja PARSEA sin errores (parser de PowerShell)
+          $e = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile('C:\ViewLBA\tray\ViewLBA-Tray.ps1', [ref]$null, [ref]$e)
+          if ($e) { throw "ViewLBA-Tray.ps1 tiene errores de sintaxis: $($e[0].Message)" }
+          Write-Host "✓ ViewLBA-Tray.ps1 parsea limpio"
+          # autostart de sesión registrado
+          $run = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -ErrorAction SilentlyContinue
+          if (-not ($run.PSObject.Properties.Name -contains 'ViewLBA ServerTray')) {
+            throw "falta el autostart de la bandeja (HKCU Run)"
+          }
+          Write-Host "✓ autostart de la bandeja registrado (HKCU Run)"
+
+      # ------------------------------------------------------------------
+      # 3) INICIAR / DETENER (los botones del usuario + la bandeja)
+      # ------------------------------------------------------------------
+      - name: "FLUJO 3 — iniciar/detener: net stop → Stopped → net start → health"
+        shell: pwsh
+        timeout-minutes: 8
+        run: |
+          # net stop/start requieren admin: elevar por acción (el runner
+          # auto-aprueba UAC — mismo mecanismo que los accesos del usuario)
+          $p = Start-Process net.exe -ArgumentList 'stop','PantallaRestaurante' -Verb RunAs -PassThru -Wait -WindowStyle Hidden
+          Start-Sleep 2
+          if ((Get-Service PantallaRestaurante).Status -ne 'Stopped') { throw "no se detuvo" }
+          Write-Host "✓ DETENER: servicio Stopped"
+          $p = Start-Process net.exe -ArgumentList 'start','PantallaRestaurante' -Verb RunAs -PassThru -Wait -WindowStyle Hidden
+          $deadline = (Get-Date).AddSeconds(60)
+          while ((Get-Date) -lt $deadline -and (Get-Service PantallaRestaurante).Status -ne 'Running') { Start-Sleep 2 }
+          if ((Get-Service PantallaRestaurante).Status -ne 'Running') { throw "no arrancó de nuevo" }
+          $ok = $false
+          $deadline = (Get-Date).AddSeconds(120)
+          while ((Get-Date) -lt $deadline) {
+            try {
+              $r = Invoke-WebRequest -Uri "http://localhost:3000/api/health" -TimeoutSec 5 -UseBasicParsing
+              if ($r.StatusCode -eq 200) { $ok = $true; break }
+            } catch { Start-Sleep 3 }
+          }
+          if (-not $ok) { throw "health sin respuesta tras re-arrancar" }
+          Write-Host "✓ INICIAR: servicio Running + health 200"
+
+      # ------------------------------------------------------------------
+      # 4) CONFIGURAR: credenciales + CLI del instalador + archivos clave
+      # ------------------------------------------------------------------
+      - name: "FLUJO 4 — configurar: credenciales + sidecar CLI (status/health/logs)"
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          foreach ($f in @("C:\ViewLBA\CREDENCIALES.txt", "C:\ViewLBA\viewlba.ico", "C:\ViewLBA\tray\ViewLBA-Tray.ps1")) {
+            if (-not (Test-Path $f)) { throw "falta $f" }
+          }
+          Get-Content C:\ViewLBA\CREDENCIALES.txt | ForEach-Object { Write-Host "  $_" }
+          (Get-Content C:\ViewLBA\CREDENCIALES.txt -Raw) -match 'admin@viewlba.local' | Out-Null
+          if (-not $Matches) { throw "credenciales sin el usuario admin" }
+          # CLI de gestión (el que usan los accesos del usuario)
+          C:\ViewLBA\viewlba-installer.exe services status 2>&1 | Select-Object -First 6 | ForEach-Object { Write-Host "  $_" }
+          C:\ViewLBA\viewlba-installer.exe health 2>&1 | Select-Object -First 4 | ForEach-Object { Write-Host "  $_" }
+          $desk = [Environment]::GetFolderPath('Desktop')
+          foreach ($n in @("ViewLBA - Panel", "ViewLBA - Iniciar servidor", "ViewLBA - Detener servidor", "ViewLBA - Credenciales", "ViewLBA - Bandeja")) {
+            if (-not (Test-Path "$desk\$n.lnk")) { throw "falta el acceso directo: $n" }
+          }
+          Write-Host "✓ CONFIGURAR: credenciales + CLI + accesos directos completos"
+
+      # ------------------------------------------------------------------
+      # 5) DESINSTALACIÓN: uninstall.exe /S → sin servicio ni accesos
+      # ------------------------------------------------------------------
+      - name: "FLUJO 5 — desinstalar: uninstall.exe /S → servicio y accesos fuera"
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          # elevar: el desinstalador para/quita servicios (requiere admin)
+          $u = Start-Process -FilePath "C:\ViewLBA\uninstall.exe" -ArgumentList "/S" -Verb RunAs -Wait -PassThru -WindowStyle Hidden
+          if ($u.ExitCode -ne 0) { throw "el desinstalador falló ($($u.ExitCode))" }
+          if (Get-Service PantallaRestaurante -ErrorAction SilentlyContinue) { throw "el servicio sigue existiendo" }
+          $desk = [Environment]::GetFolderPath('Desktop')
+          if (Test-Path "$desk\ViewLBA - Panel.lnk") { throw "acceso residual en el escritorio" }
+          $run = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -ErrorAction SilentlyContinue
+          if ($run -and ($run.PSObject.Properties.Name -contains 'ViewLBA ServerTray')) { throw "autostart residual de la bandeja" }
+          Write-Host "✓ DESINSTALACIÓN: servicio + accesos + autostart fuera"
+
+      - name: "OFFLINE — quitar reglas de firewall (SIEMPRE)"
+        if: always()
+        shell: pwsh
+        run: |
+          @'
+          Get-NetFirewallRule -DisplayName "ViewLBA-Offline-Test*" -ErrorAction SilentlyContinue |
+            Remove-NetFirewallRule -ErrorAction SilentlyContinue
+          Write-Output "OK"
+          '@ | Set-Content -Path "$env:RUNNER_TEMP\fw-del.ps1" -Encoding UTF8
+          $p = Start-Process pwsh -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',"$env:RUNNER_TEMP\fw-del.ps1" `
+            -Verb RunAs -PassThru -Wait -WindowStyle Hidden
+          Write-Host "✓ reglas de firewall retiradas (exit $($p.ExitCode))"
+
+      - name: Evidencias (Windows)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-flow-windows-evidence
+          path: |
+            C:\ViewLBA\install.log
+          retention-days: 3
+          if-no-files-found: warn

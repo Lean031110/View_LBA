@@ -192,8 +192,11 @@ Section "Instalar ${APPNAME}" SecMain
   after_install:
   Delete "$INSTDIR\install-config.json"
 
-  ; ---- 4. Bandeja del sistema (notificación persistente) ----------------
-  DetailPrint "Instalando la bandeja del sistema (iniciar/detener con clic derecho)…"
+  ; ---- 4. Bandeja del sistema (icono PERMANENTE junto al reloj) --------
+  ; Menú: Iniciar · Detener · Reiniciar · Configurar · Panel · Salir.
+  ; Icono VERDE = activo / ROJO = detenido / AMARILLO = transición.
+  ; Autostart con la sesión (HKCU Run) — el icono SIEMPRE está.
+  DetailPrint "Instalando la bandeja del sistema (iniciar/detener/configurar)…"
   SetOutPath "$INSTDIR\tray"
   File "${TRAY_PS1}"
   SetOutPath "$INSTDIR"
@@ -242,9 +245,47 @@ Section "Instalar ${APPNAME}" SecMain
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" "NoRepair" "1"
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
-  ; Lanzar la bandeja AHORA (para este primer uso)
-  nsExec::Exec 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$INSTDIR\tray\ViewLBA-Tray.ps1"'
-  Pop $0
+  ; Lanzar la bandeja AHORA (para este primer uso).
+  ; ⚠⚠⚠ 21.er build (v3.2.0): NO usar nsExec::Exec SIN /TIMEOUT aquí — REGRESIÓN
+  ; FATAL: nsExec ESPERA a que el proceso termine, y la bandeja es un bucle
+  ; de mensajes INFINITO → Setup.exe colgado 22+ min. `Exec` no espera.
+  ; ⚠ 23.er build (evidencia): marcadores pre/post-Exec + resultado del
+  ; CreateProcess en tray-launch.txt — si el arranque falla, el CI lo VE.
+  ; Forma del comando: la MISMA que funcionó en los builds 15-20 de v3.2.0
+  ; (powershell.exe del PATH, sin ruta absoluta citada).
+  DetailPrint "Lanzando la bandeja del sistema (icono junto al reloj)…"
+  FileOpen $1 "$INSTDIR\tray\tray-launch.txt" w
+  FileWrite $1 "pre-exec ${VERSION}$\r$\n"
+  FileClose $1
+  ClearErrors
+  Exec 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$INSTDIR\tray\ViewLBA-Tray.ps1"'
+  ${If} ${Errors}
+    ClearErrors
+    ; fallback: cmd /c start (proceso desvinculado del instalador)
+    Exec '"$SYSDIR\cmd.exe" /c start "" powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$INSTDIR\tray\ViewLBA-Tray.ps1"'
+    ${If} ${Errors}
+      FileOpen $1 "$INSTDIR\tray\tray-launch.txt" a
+      FileSeek $1 0 END
+      FileWrite $1 "exec: ERROR (ambos intentos fallaron — CreateProcess)$\r$\n"
+      FileClose $1
+      ClearErrors
+      DetailPrint "Aviso: no se pudo lanzar la bandeja (se iniciará con Windows)."
+    ${Else}
+      FileOpen $1 "$INSTDIR\tray\tray-launch.txt" a
+      FileSeek $1 0 END
+      FileWrite $1 "exec: OK (fallback cmd/start)$\r$\n"
+      FileClose $1
+    ${EndIf}
+  ${Else}
+    FileOpen $1 "$INSTDIR\tray\tray-launch.txt" a
+    FileSeek $1 0 END
+    FileWrite $1 "exec: OK (directo)$\r$\n"
+    FileClose $1
+  ${EndIf}
+  FileOpen $1 "$INSTDIR\tray\tray-launch.txt" a
+  FileSeek $1 0 END
+  FileWrite $1 "post-exec$\r$\n"
+  FileClose $1
 SectionEnd
 
 ; ---------------------------------------------------------------------------
