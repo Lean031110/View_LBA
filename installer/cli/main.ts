@@ -18,6 +18,7 @@
  */
 import { existsSync, readFileSync } from "node:fs"
 import { resolve } from "node:path"
+import { dlopen } from "bun:ffi"
 import { ask, askPassword, closeStdin } from "../../scripts/lib/prompt"
 import { initializeProduction } from "../../scripts/lib/production-init"
 import { readEnvFile } from "../../scripts/lib/env-file"
@@ -539,29 +540,66 @@ async function main(): Promise<number> {
 }
 
 // ---------- Protocolo de finalización ----------
-// ⚠ SALIDA DURA (bug real del 15.º build, Windows): el sidecar --config
-// completaba TODA la instalación (30 s, reporte impreso) pero el PROCESO
-// nunca terminaba — handles colgados del árbol bun→prisma→engine dejan el
-// event loop vivo y el watchdog unref NO disparaba. La cadena completa
-// (cmd /c → NSIS → Setup.exe) esperaba a ESTE proceso → instalación colgada
-// de 20+ minutos pese a estar sana (servicio Running, health ok).
-// Protocolo: closeStdin() primero (readline), gracia de 300 ms para vaciar
-// el stdout (pipe de cmd /c), y process.exit EXPLÍCITO con el código real.
-// El catch sigue siendo consola + exit(1) — la misma garantía.
+// ⚠⚠ SALIDA A NIVEL DE SO (bugs reales del 15.º-16.º build, Windows): el
+// sidecar completaba TODA la instalación (migraciones, servicio Running,
+// health ok, reporte impreso) pero el PROCESO nunca terminaba:
+//   · 15.º build: exit natural + watchdog unref de 6 s → el timer NUNCA
+//     disparó → cadena cmd /c → NSIS → Setup.exe colgada 20+ min.
+//   · 16.º build: process.exit() tras «await setTimeout(300)» → colgado
+//     IGUAL (bun-compile/Windows: los handles nativos del árbol
+//     bun→prisma→schema-engine impiden la salida a nivel de JS).
+// La cadena completa espera a ESTE proceso: la ÚNICA salida garantizada
+// es a nivel de SISTEMA OPERATIVO (nada de event loop, nada de handles):
+//   · Windows: kernel32.ExitProcess vía FFI (terminación inmediata).
+//   · POSIX:   process.exit (comportamiento correcto comprobado: .deb,
+//     AppImage y CLI completan y salen con su código).
+// La gracia de 200 ms es SÍNCRONA (Atomics.wait): NO depende del event
+// loop — un setTimeout JAMÁS dispararía con el loop colgado (16.º build).
 main()
-  .then(async (code) => {
+  .then((code) => {
     process.exitCode = code
     closeStdin()
-    await new Promise((r) => setTimeout(r, 300))
-    process.exit(code)
+    syncSleep(200) // vaciar el stdout (pipe de cmd /c) SIN event loop
+    osExit(code)
   })
-  .catch(async (e) => {
+  .catch((e) => {
     console.error("\n✗ Error:", (e as Error).message)
     process.exitCode = 1
     closeStdin()
-    await new Promise((r) => setTimeout(r, 300))
-    process.exit(1)
+    syncSleep(200)
+    osExit(1)
   })
+
+/** Sueño SÍNCRONO sin event loop (Atomics.wait). Sin SharedArrayBuffer:
+ * sin gracia — la salida es inmediata de todos modos. */
+function syncSleep(ms: number): void {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+  } catch {
+    /* sin Atomics.wait: omitir la gracia */
+  }
+}
+
+/**
+ * Salida INMEDIATA a nivel de sistema operativo. En Windows usa
+ * kernel32.ExitProcess vía FFI (bun:ffi) — ni el event loop ni los
+ * handles colgados pueden impedirla. Fallback: process.exit (correcto
+ * en POSIX; en Windows es el último recurso si FFI no está disponible).
+ */
+function osExit(code: number): never {
+  if (process.platform === "win32") {
+    try {
+      const k32 = dlopen("kernel32", {
+        ExitProcess: { args: ["uint32"], returns: "void" },
+      })
+      ;(k32.symbols.ExitProcess as (c: number) => void)(code)
+    } catch {
+      /* sin FFI → process.exit abajo */
+    }
+  }
+  process.exit(code)
+  throw new Error("inalcanzable: osExit")
+}
 
 // Exportado para tests del protocolo (spawn de este archivo).
 export { checkExisting, RecordingRunner }

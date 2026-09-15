@@ -10,6 +10,7 @@
  * (p. ej. la secuencia NSSM de Windows sin Windows) y modo --dry-run.
  */
 import { spawnSync } from "node:child_process"
+import { reapIfAlive } from "../../scripts/lib/reap"
 
 export interface RunOptions {
   cwd?: string
@@ -61,16 +62,10 @@ export class RealRunner implements CmdRunner {
       stdio: ["ignore", "pipe", "pipe"],
     } as never)
     // Hijo VIVO pese a que spawnSync devolvió (quirk de bun en Windows:
-    // pipes cerrados antes que el proceso — 15.º build: un bun.exe vivo
-    // mantenía colgada toda la cadena cmd→NSIS→Setup.exe). Si ya murió,
-    // process.kill lanza ESRCH y no se hace nada.
-    if (r.pid) {
-      try {
-        process.kill(r.pid, "SIGTERM")
-      } catch {
-        /* ya murió — caso normal */
-      }
-    }
+    // pipes cerrados antes que el proceso — 15.º-16.º build: un bun.exe
+    // vivo con su árbol mantenía colgada toda la cadena cmd→NSIS→Setup).
+    // reapIfAlive usa taskkill /T /F en Windows (mata el árbol del hijo).
+    reapIfAlive(r.pid)
     return {
       status: r.status ?? null,
       stdout: r.stdout ?? "",
