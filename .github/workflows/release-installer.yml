@@ -397,15 +397,20 @@ jobs:
           # (integridad media): sin elevación explícita el instalador muere
           # en el preflight «Permisos de administrador: NO». Los runners
           # de Windows auto-aprueban la elevación (ConsentPromptBehaviorAdmin=0).
-          # ⚠ WATCHDOG (14.º build): -Wait colgado mataba solo al timeout del
-          # PASO sin volcado. Ahora se sondea: eco de progreso (cola del
-          # install.log cada vez que crece) + plazo duro de 20 min + volcado
-          # completo + kill del árbol de procesos antes de morir.
+          # ⚠ SEÑAL DE ÉXITO, no salida del proceso (lección builds 15-18):
+          # el sidecar de bun-compile completa la instalación (reporte
+          # «INSTALACIÓN COMPLETA» + servicio Running) pero su PROCESO puede
+          # no terminar (handles nativos de bun→prisma→engine) → Setup.exe
+          # esperaba para siempre. Ahora se sondea la SEÑAL: el marcador del
+          # reporte en install.log + el estado del servicio. El éxito se
+          # decide por el ESTADO REAL del sistema, no por el exit code.
           $p = Start-Process -FilePath $exe -ArgumentList "/S" -PassThru -Verb RunAs
-          $deadline = (Get-Date).AddMinutes(20)
+          $deadline = (Get-Date).AddMinutes(22)
           $lastSize = -1L
-          while (-not $p.HasExited -and (Get-Date) -lt $deadline) {
-            Start-Sleep 20
+          $succeeded = $false
+          while ((Get-Date) -lt $deadline) {
+            if ($p.HasExited) { break }
+            Start-Sleep 15
             if (Test-Path "C:\ViewLBA\install.log") {
               $sz = (Get-Item "C:\ViewLBA\install.log").Length
               if ($sz -ne $lastSize) {
@@ -413,10 +418,25 @@ jobs:
                 $tail = (Get-Content "C:\ViewLBA\install.log" -Tail 3 -ErrorAction SilentlyContinue) -join " ⏐ "
                 if ($tail) { Write-Host "  … [$((Get-Date).ToString('HH:mm:ss'))] $tail" }
               }
+              # SEÑAL DE ÉXITO: el reporte final del sidecar
+              if (Select-String -Path "C:\ViewLBA\install.log" -Pattern "INSTALACIÓN COMPLETA" -Quiet) {
+                Write-Host "✓ marcador «INSTALACIÓN COMPLETA» detectado en install.log"
+                $succeeded = $true
+                break
+              }
             }
           }
+          if ($succeeded) {
+            # El trabajo del sidecar ESTÁ hecho, pero NSIS aún tiene que
+            # ejecutar SUS pasos post-sidecar (bandeja, accesos, registro,
+            # uninstall.exe) — que solo corren cuando su /TIMEOUT interno
+            # (10 min) corta la espera del proceso colgado. Esperar a que
+            # Setup.exe termine por sí mismo, con eco de progreso.
+            Write-Host "… esperando a que NSIS complete sus pasos post-instalación (timeout interno 10 min)…"
+            while (-not $p.HasExited -and (Get-Date) -lt $deadline) { Start-Sleep 20 }
+          }
           if (-not $p.HasExited) {
-            Write-Host "⏱ TIMEOUT: la instalación NO terminó en 20 minutos."
+            Write-Host "⏱ TIMEOUT: la instalación NO terminó en 22 minutos."
             taskkill /PID $p.Id /T /F 2>&1 | Out-String | ForEach-Object { Write-Host "  $_" }
             Start-Sleep 3
             Dump-Diagnostics "VOLCADO DE DIAGNÓSTICO (instalación colgada)"
@@ -428,9 +448,9 @@ jobs:
             if (Wait-Job $job -Timeout 15) { Receive-Job $job | ForEach-Object { Write-Host "  $_" } }
             else { Write-Host "  (nssm dump sin responder en 15 s — omitido)" }
             Remove-Job $job -Force -ErrorAction SilentlyContinue
-            throw "la instalación silenciosa excedió 20 minutos (ver volcado)"
+            throw "la instalación silenciosa excedió 22 minutos (ver volcado)"
           }
-          if ($p.ExitCode -ne 0) {
+          if (-not $succeeded -and $p.ExitCode -ne 0) {
             Write-Host "→ la instalación silenciosa falló (código $($p.ExitCode)). Diagnóstico:"
             Dump-Diagnostics "VOLCADO DE DIAGNÓSTICO (código $($p.ExitCode))"
             if (Test-Path "C:\ViewLBA\install-config.json") {
