@@ -5,6 +5,51 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato está basado en [Keep a Changelog](https://keepachangelog.com/es/1.1.0/),
 y este proyecto adhiere a [SemVer](https://semver.org/lang/es/).
 
+## [3.2.1] — 2026-09-16 — Bandeja permanente + fix del Setup.exe colgado + CI de flujo completo por SO
+
+### Arreglado
+
+- **El Setup.exe de Windows ya NO se queda colgado tras una instalación
+  PERFECTA** (regresión de v3.2.0: instalación completa en 35 s, servicio
+  Running, health 200… y el instalador esperaba para siempre hasta que el
+  runner lo mataba a los 22 min). Causa raíz: el NSIS lanzaba la bandeja
+  con `nsExec::Exec`, que **ESPERA a que el proceso termine** — y la bandeja
+  es un bucle de mensajes infinito. Ahora se lanza con `Exec` (no espera) y
+  el test de regresión `tests/installer/tray.test.ts` ROMPE el build si
+  alguien vuelve a escribir nsExec para la bandeja.
+
+- **La bandeja de Windows ya NO muere en silencio al arranque** (causa raíz
+  encontrada con instrumentación CI: `tray-launch.txt` = «exec: OK» pero
+  `tray-boot.txt` ausente y error de parse 5.1 «Unexpected token @line
+  174»). El `.ps1` estaba en UTF-8 sin BOM y Windows PowerShell 5.1 (en-US,
+  CP1252) lee los bytes crudos: el guion largo `—` (0x94 en CP1252) es una
+  **comilla curva = TERMINADOR de cadena** → el parse moría → powershell
+  jamás ejecutaba el script. Fix: `ViewLBA-Tray.ps1` en **ASCII 100 % puro**
+  (inmune a cualquier codepage) + test de regresión de ASCII puro.
+
+### Añadido
+
+- **Bandeja del sistema PERMANENTE (lo pedido: «icono permanente en la
+  barra de tareas como indicador de que está activo y cuando le den clic
+  salgan opciones de iniciar, detener y configurar»)**:
+  - Windows: icono de color según estado (VERDE activo / ROJO detenido /
+    AMARILLO transición), menú Iniciar · Detener · Reiniciar ·
+    Configurar… · Abrir Panel · Salir, ventana «Configurar» (estado en
+    vivo, credenciales, carpetas app/datos/logs, control del servicio),
+    globos de notificación al cambiar de estado, refresco 5 s, instancia
+    única por pid-file, autostart con la sesión (HKCU Run).
+  - Linux: `viewlba-tray` (Python3 + GTK/AppIndicator con fallback
+    StatusIcon y degradación elegante sin escritorio), menú y ventana
+    equivalentes vía pkexec+systemd; el .deb instala el script + iconos de
+    estado hicolor (running/stopped/waiting × 22/32/48) + .desktop +
+    autostart XDG + limpieza en postrm; `viewlba-server tray|configure`.
+- **CI nuevo `installer-flow.yml` (en cada push/PR, no solo en tags)**:
+  flujo completo por SO en runners reales — instalar → bandeja →
+  iniciar/detener → configurar → **100 % OFFLINE real** (Linux: iptables
+  REJECT con solo loopback; Windows: firewall outbound BLOCK de
+  sidecar+bun+nssm) → desinstalar. 28 tests nuevos de bandeja (141 del
+  installer en total).
+
 ## [3.2.0] — 2026-09-13 — Instaladores nativos + PIN simple + smoke del flujo completo
 
 ### Arreglado
