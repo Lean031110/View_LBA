@@ -36,6 +36,8 @@ Unicode true
 !define COMPANY "ViewLBA"
 !define URL_PANEL "http://localhost:3000"
 !define SERVICE_APP "PantallaRestaurante"
+!define SERVICE_REALTIME "PantallaRestauranteRealtime"
+!define SERVICE_STREAM "PantallaRestauranteStream"
 ; Ubicación canónica del servidor (la misma que espera el sidecar/tray/manager)
 !define APP_DIR "C:\PantallaRestaurante"
 
@@ -162,20 +164,31 @@ Section "Instalar ${APPNAME}" SecMain
   ; La salida se REDIRIGE a $INSTDIR\install.log: en /S (silencioso) el
   ; detalle de nsExec NO es visible y el error real quedaba tragado
   ; (lección de los builds 9-10: sin el log el diagnóstico era imposible).
-  nsExec::ExecToLog 'cmd /c ""$INSTDIR\viewlba-installer.exe" --config "$INSTDIR\install-config.json" > "$INSTDIR\install.log" 2>&1"'
-  Pop $0
-  ${If} $0 != 0
-    MessageBox MB_RETRYCANCEL|MB_ICONSTOP \
-      "La instalación del servicio terminó con código $0.$\r$\n$\r$\nRevisa $INSTDIR\install.log.$\r$\n¿Reintentar la instalación del servicio?" /SD IDCANCEL IDRETRY retry_install
-    Abort "Instalación del servicio fallida (código $0)."
-  ${EndIf}
-  Goto after_install
+  ; ⚠ /TIMEOUT=600000 (10 min — lección de los builds 15-18): el sidecar
+  ; de bun-compile en CI completaba TODA la instalación (servicio Running,
+  ; health ok) en 39-309 s pero su PROCESO a veces no terminaba (handles
+  ; nativos de bun→prisma→engine) → ExecToLog esperaba para siempre. Con
+  ; 10 min de margen (20× el instalar más lento observado) el wait se
+  ; acota; el estado REAL se verifica después con el servicio (abajo).
   retry_install:
-    nsExec::ExecToLog 'cmd /c ""$INSTDIR\viewlba-installer.exe" --config "$INSTDIR\install-config.json" > "$INSTDIR\install.log" 2>&1"'
-    Pop $0
-    ${If} $0 != 0
-      Abort "La reinstalación del servicio falló (código $0)."
-    ${EndIf}
+  nsExec::ExecToLog /TIMEOUT=600000 'cmd /c ""$INSTDIR\viewlba-installer.exe" --config "$INSTDIR\install-config.json" > "$INSTDIR\install.log" 2>&1"'
+  Pop $0
+  ${If} $0 == 0
+    Goto after_install
+  ${EndIf}
+  ; ¿Timeout (-1) o código ≠ 0? VERIFICAR EL ESTADO REAL: el sidecar puede
+  ; haber COMPLETADO la instalación (reporte «INSTALACIÓN COMPLETA» en el
+  ; install.log, servicio registrado y Running) aunque su proceso no haya
+  ; terminado limpiamente. El servicio es la verdad del sistema.
+  nsExec::ExecToLog 'cmd /c "sc query ${SERVICE_APP} | find RUNNING > nul"'
+  Pop $1
+  ${If} $1 == 0
+    DetailPrint "Instalación completada (servicio ${SERVICE_APP} RUNNING — salida del instalador: $0)."
+    Goto after_install
+  ${EndIf}
+  MessageBox MB_RETRYCANCEL|MB_ICONSTOP \
+    "La instalación del servicio terminó con código $0.$\r$\n$\r$\nRevisa $INSTDIR\install.log.$\r$\n¿Reintentar la instalación del servicio?" /SD IDCANCEL IDRETRY retry_install
+  Abort "Instalación del servicio fallida (código $0)."
   after_install:
   Delete "$INSTDIR\install-config.json"
 
@@ -270,9 +283,17 @@ FunctionEnd
 ; ---------------------------------------------------------------------------
 Section "Uninstall"
   ; 1. Quitar servicios + aplicación (sidecar — puede tardar ~1 min)
+  ; ⚠ /TIMEOUT=300000 (lección builds 15-18): el sidecar puede no terminar
+  ; su proceso pese a completar el trabajo; con el timeout el wait se acota
+  ; y la eliminación del servicio se fuerza si quedó vivo.
   DetailPrint "Deteniendo y desinstalando los servicios…"
-  nsExec::ExecToLog '"$INSTDIR\viewlba-installer.exe" uninstall --confirm'
+  nsExec::ExecToLog /TIMEOUT=300000 '"$INSTDIR\viewlba-installer.exe" uninstall --confirm'
   Pop $0
+  ${If} $0 != 0
+    DetailPrint "Uninstall terminó con salida $0 — verificando/forzando eliminación del servicio…"
+    nsExec::ExecToLog 'cmd /c "sc stop ${SERVICE_APP} & sc delete ${SERVICE_APP} & sc stop ${SERVICE_REALTIME} & sc delete ${SERVICE_REALTIME} & sc stop ${SERVICE_STREAM} & sc delete ${SERVICE_STREAM} > nul 2>&1"'
+    Pop $0
+  ${EndIf}
 
   ; 2. Bandeja: quitar autostart y cerrarla
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APPNAME}Tray"

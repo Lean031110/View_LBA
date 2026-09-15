@@ -557,13 +557,17 @@ async function main(): Promise<number> {
 // loop — un setTimeout JAMÁS dispararía con el loop colgado (16.º build).
 main()
   .then((code) => {
+    console.error(`[exit] main() resuelto — código ${code}`) // traza (18.º build): ¿hasta dónde llega la salida?
     process.exitCode = code
     closeStdin()
+    console.error("[exit] closeStdin() hecho")
     syncSleep(200) // vaciar el stdout (pipe de cmd /c) SIN event loop
+    console.error("[exit] gracia hecha — osExit()")
     osExit(code)
   })
   .catch((e) => {
     console.error("\n✗ Error:", (e as Error).message)
+    console.error("[exit] error de main() — osExit(1)")
     process.exitCode = 1
     closeStdin()
     syncSleep(200)
@@ -595,12 +599,18 @@ function osExit(code: number): never {
       const k32 = dlopen("kernel32", {
         ExitProcess: { args: ["u32"], returns: "void" },
       })
+      console.error("[osExit] ExitProcess(kernel32)…")
       ;(k32.symbols.ExitProcess as (c: number) => void)(code)
+      console.error("[osExit] ERROR FATAL: ExitProcess REGRESÓ")
     } catch (e) {
       console.error(`[osExit] FFI no disponible (${(e as Error).message}) — fallback process.exit`)
     }
   }
   process.exit(code)
+  // Último recurso (18.º build: en el sidecar real ni siquiera
+  // process.exit terminó — loop/handles nativos): abort() termina el
+  // proceso de forma anómala inmediata (SIGABRT).
+  process.abort?.()
   throw new Error("inalcanzable: osExit")
 }
 
