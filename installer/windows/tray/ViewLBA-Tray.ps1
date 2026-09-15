@@ -29,9 +29,6 @@
 
 $ErrorActionPreference = 'SilentlyContinue'
 
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-
 # Variables de script (accesibles desde TODOS los handlers de eventos:
 # los scriptblocks de WinForms resuelven nombres en el ámbito del script).
 $ServiceName = 'PantallaRestaurante'
@@ -44,8 +41,8 @@ $LogDir      = 'C:\PantallaRestaurante\logs'
 $CredFile    = 'C:\ViewLBA\CREDENCIALES.txt'
 
 # ---------------------------------------------------------------------------
-# Instancia única: si ya hay una bandeja corriendo, esta nueva se apaga
-# (el autostart + el acceso + el instalador podrían lanzarla dos veces).
+# Instancia única + registro INMEDIATO del pid (ANTES de Add-Type: cargar
+# WinForms tarda segundos y el CI/usuario no debe esperar para vernos).
 # Doble guard: pid-file (determinista, funciona con/sin elevación) + CIM
 # (cubre procesos lanzados antes de esta versión).
 # ---------------------------------------------------------------------------
@@ -65,6 +62,10 @@ try {
     $dir = Split-Path $PidFile -Parent
     if (Test-Path $dir) { Set-Content -Path $PidFile -Value $PID -Encoding ASCII }
 } catch { }
+
+# WinForms (tras el registro del pid: el arranque visible puede tardar)
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 
 # ---------------------------------------------------------------------------
 # Iconos de estado (dibujados en memoria — sin archivos extra)

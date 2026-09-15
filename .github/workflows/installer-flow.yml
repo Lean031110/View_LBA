@@ -256,7 +256,15 @@ jobs:
             sleep 2
           done
           systemctl is-active pantalla-restaurante.service
-          curl -fsS http://localhost:3000/api/health >/dev/null
+          # health con REINTENTOS: el servicio queda «active» antes de que
+          # Next.js termine de bindear el puerto 3000 (lección del 2.º build
+          # del flow: curl inmediato tras start → conexión rechazada).
+          ok=""
+          for i in $(seq 1 45); do
+            if curl -fsS http://localhost:3000/api/health >/dev/null 2>&1; then ok=1; break; fi
+            sleep 2
+          done
+          [[ -n "$ok" ]] || { echo "✗ health SIN respuesta tras re-arrancar EN OFFLINE"; sudo viewlba-server logs || true; exit 1; }
           echo "✓ 100 % OFFLINE: instalación + health + iniciar/detener SIN red externa"
 
       # ------------------------------------------------------------------
@@ -468,7 +476,11 @@ jobs:
         timeout-minutes: 5
         run: |
           $PidFile = 'C:\ViewLBA\tray\tray.pid'
-          if (-not (Test-Path $PidFile)) { throw "falta $PidFile — la bandeja no se registró" }
+          # la bandeja registra su pid AL ARRANCAR (antes de WinForms), pero
+          # powershell.exe tarda ~2-5 s en frío: SONDEAR hasta 60 s, no asumir.
+          $deadline = (Get-Date).AddSeconds(60)
+          while (-not (Test-Path $PidFile) -and (Get-Date) -lt $deadline) { Start-Sleep 2 }
+          if (-not (Test-Path $PidFile)) { throw "falta $PidFile — la bandeja no se registró en 60 s" }
           $tpid = [int](Get-Content $PidFile | Select-Object -First 1)
           $tproc = Get-Process -Id $tpid -ErrorAction SilentlyContinue
           if (-not $tproc) { throw "la bandeja (PID $tpid del tray.pid) NO está viva" }
