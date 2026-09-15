@@ -48,6 +48,7 @@ const OUT_FILE = join(OUT_DIR, `ViewLBA-Server-${VERSION}-x86_64.deb`)
 
 const PKG_DIR = "/opt/viewlba-server" // paquete (sidecar + runtime + manifest)
 const ICONS_SRC = join(REPO, "installer", "gui", "src-tauri", "icons")
+const TRAY_SRC = join(REPO, "installer", "linux", "tray")
 
 // --------------------------------------------------------------------------
 // Contrato del staging (falla ANTES de empaquetar si el payload está cojo)
@@ -101,7 +102,7 @@ writeFileSync(
   join(BIN, "viewlba-server"),
   `#!/bin/sh
 # viewlba-server — control simple del servidor ViewLBA (wrapper del sidecar).
-# Uso: viewlba-server {start|stop|restart|status|health|logs|panel|credentials}
+# Uso: viewlba-server {start|stop|restart|status|health|logs|panel|credentials|tray|configure}
 set -e
 PKG=${PKG_DIR}
 case "\${1:-status}" in
@@ -117,16 +118,22 @@ case "\${1:-status}" in
     exec xdg-open http://localhost:3000 ;;
   credentials)
     exec cat "$PKG/CREDENCIALES.txt" ;;
+  tray)
+    exec /usr/bin/viewlba-tray ;;
+  configure|configurar)
+    exec /usr/bin/viewlba-tray ;;
   *)
-    echo "uso: viewlba-server {start|stop|restart|status|health|logs|panel|credentials}" >&2
+    echo "uso: viewlba-server {start|stop|restart|status|health|logs|panel|credentials|tray|configure}" >&2
     exit 2 ;;
 esac
 `,
 )
 chmodSync(join(BIN, "viewlba-server"), 0o755)
-console.log("✓ /usr/bin/viewlba-server (start · stop · status · health · panel)")
+console.log("✓ /usr/bin/viewlba-server (start · stop · status · health · panel · tray · configure)")
 
-// 3) iconos (hicolor — mismos PNG del producto)
+// 3) iconos (hicolor — mismos PNG del producto + iconos de ESTADO de la
+//    bandeja: viewlba-running/-stopped/-waiting → círculo verde/rojo/amarillo
+//    que indican si el servidor está ACTIVO, detenido o en transición)
 const ICON_MAP: Array<[string, string]> = [
   ["32x32.png", "32x32"],
   ["128x128.png", "128x128"],
@@ -139,6 +146,23 @@ for (const [srcName, sizeDir] of ICON_MAP) {
   mkdirSync(dst, { recursive: true })
   cpSync(src, join(dst, "viewlba.png"))
 }
+// iconos de estado de la bandeja (los genera el build desde la misión)
+for (const f of readdirSync(join(TRAY_SRC, "icons"))) {
+  const m = f.match(/^viewlba-([a-z]+)_(\d+)\.png$/)
+  if (!m) continue
+  const dst = join(ROOT, "usr", "share", "icons", "hicolor", `${m[2]}x${m[2]}`, "apps")
+  mkdirSync(dst, { recursive: true })
+  cpSync(join(TRAY_SRC, "icons", f), join(dst, `viewlba-${m[1]}.png`))
+}
+console.log("✓ iconos hicolor (producto + estado bandeja)")
+
+// 3b) bandeja del sistema: viewlba-tray (Python3+GTK, sin dependencias del
+//     servidor) + lanzador de menú + autostart de sesión. El icono es el
+//     INDICADOR PERMANENTE (verde=activo/rojo=detenido) con menú
+//     Iniciar · Detener · Reiniciar · Configurar · Panel · Salir.
+const TRAY_BIN = join(ROOT, "usr", "bin", "viewlba-tray")
+cpSync(join(TRAY_SRC, "viewlba-tray.py"), TRAY_BIN)
+chmodSync(TRAY_BIN, 0o755)
 
 // 4) .desktop (menú de aplicaciones + copia al escritorio en el postinst)
 const APPS = join(ROOT, "usr", "share", "applications")
@@ -176,7 +200,42 @@ Categories=System;
 `,
   )
 }
-console.log("✓ accesos .desktop (Panel · Iniciar · Detener)")
+
+// Bandeja: lanzador de menú (abre el icono con Iniciar/Detener/Configurar)
+writeFileSync(
+  join(APPS, "viewlba-tray.desktop"),
+  `[Desktop Entry]
+Type=Application
+Name=ViewLBA — Bandeja
+Name[es]=ViewLBA — Bandeja
+Comment=Icono de estado junto al reloj: Iniciar · Detener · Configurar
+Comment[es]=Icono de estado junto al reloj: Iniciar · Detener · Configurar
+Exec=viewlba-tray
+Icon=viewlba-running
+Terminal=false
+Categories=System;Utility;
+StartupNotify=false
+`,
+)
+// Autostart de sesión (el icono SIEMPRE está — indicador permanente)
+const AUTOSTART = join(ROOT, "etc", "xdg", "autostart")
+mkdirSync(AUTOSTART, { recursive: true })
+writeFileSync(
+  join(AUTOSTART, "viewlba-tray.desktop"),
+  `[Desktop Entry]
+Type=Application
+Name=ViewLBA — Bandeja (indicador de estado)
+Name[es]=ViewLBA — Bandeja (indicador de estado)
+Comment=Icono de estado del servidor: VERDE activo · ROJO detenido
+Comment[es]=Icono de estado del servidor: VERDE activo · ROJO detenido
+Exec=viewlba-tray
+Icon=viewlba-running
+Terminal=false
+X-GNOME-Autostart-enabled=true
+Categories=System;
+`,
+)
+console.log("✓ accesos .desktop (Panel · Iniciar · Detener · Bandeja + autostart)")
 
 // --------------------------------------------------------------------------
 // DEBIAN/control
@@ -192,6 +251,7 @@ Architecture: amd64
 Maintainer: ViewLBA <soporte@viewlba.local>
 Installed-Size: ${installedSizeKB}
 Depends: systemd
+Recommends: python3, python3-gi, gir1.2-ayatanaappindicator3-0.1 | gir1.2-appindicator3-0.1
 Section: net
 Priority: optional
 Homepage: https://github.com/Lean031110/Pantalla_Restaurante
@@ -271,19 +331,31 @@ EOF_CRED
     fi
 
     # 4) accesos directos al ESCRITORIO del usuario que instala
+    #    (incluye la BANDEJA — el indicador permanente de estado)
     SUDO_USER=\${SUDO_USER:-}
     if [ -n "$SUDO_USER" ]; then
       USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6) || USER_HOME=""
       for D in "Desktop" "Escritorio" ".config/autostart-dir"; do
         DESK="$USER_HOME/$D"
         if [ -d "$DESK" ]; then
-          for F in viewlba-panel.desktop viewlba-start.desktop viewlba-stop.desktop; do
+          for F in viewlba-panel.desktop viewlba-start.desktop viewlba-stop.desktop viewlba-tray.desktop; do
             cp "/usr/share/applications/$F" "$DESK/$F" 2>/dev/null || true
             chmod 755 "$DESK/$F" 2>/dev/null || chmod +x "$DESK/$F" 2>/dev/null || true
           done
           break
         fi
       done
+      # autostart de sesión (XDG): el icono de la bandeja se carga solo
+      AUTOSTART_DIR="$USER_HOME/.config/autostart"
+      mkdir -p "$AUTOSTART_DIR" 2>/dev/null || true
+      cp /etc/xdg/autostart/viewlba-tray.desktop "$AUTOSTART_DIR/viewlba-tray.desktop" 2>/dev/null || true
+      chown "$SUDO_USER" "$AUTOSTART_DIR/viewlba-tray.desktop" 2>/dev/null || true
+    fi
+    # refrescar caché de iconos (viewlba-running/-stopped/-waiting)
+    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+      gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
+    elif command -v update-icon-caches >/dev/null 2>&1; then
+      update-icon-caches /usr/share/icons/hicolor 2>/dev/null || true
     fi
 
     # 5) resumen visible (estilo programa nativo)
@@ -293,6 +365,7 @@ EOF_CRED
     echo "  Panel:       http://localhost:3000"
     echo "  Credenciales: sudo cat $PKG/CREDENCIALES.txt"
     echo "  Control:      viewlba-server {start|stop|status|health|logs}"
+    echo "  Bandeja:     viewlba-tray (icono junto al reloj: Iniciar · Detener · Configurar)"
     echo "  El servidor se inicia automáticamente con el equipo."
     echo ""
     ;;
@@ -345,6 +418,17 @@ case "$1" in
     done
     systemctl daemon-reload 2>/dev/null || true
     userdel pantalla 2>/dev/null || true
+    # bandeja: quitar autostart/copias de escritorio del usuario que instaló
+    SUDO_USER=\${SUDO_USER:-}
+    if [ -n "$SUDO_USER" ]; then
+      USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6) || USER_HOME=""
+      rm -f "$USER_HOME/.config/autostart/viewlba-tray.desktop" 2>/dev/null || true
+      for D in "Desktop" "Escritorio"; do
+        for F in viewlba-panel.desktop viewlba-start.desktop viewlba-stop.desktop viewlba-tray.desktop; do
+          rm -f "$USER_HOME/$D/$F" 2>/dev/null || true
+        done
+      done
+    fi
     echo "viewlba-server: purgado. Los DATOS se conservaron en /var/lib/pantalla-restaurante"
     echo "                 (bórralos a mano si ya no los necesitas: sudo rm -rf /var/lib/pantalla-restaurante)"
     ;;
