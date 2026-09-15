@@ -49,7 +49,7 @@ jobs:
           }
           function osExit(code: number) {
             try {
-              const k32 = dlopen("kernel32", { ExitProcess: { args: ["uint32"], returns: "void" } })
+              const k32 = dlopen("kernel32", { ExitProcess: { args: ["u32"], returns: "void" } })
               log(`FFI dlopen(kernel32) OK — llamando ExitProcess(${code})`)
               ;(k32.symbols.ExitProcess as (c: number) => void)(code)
               log("ERROR FATAL: ExitProcess REGRESÓ (no debía)")
@@ -61,22 +61,17 @@ jobs:
 
           // Hijo «prisma-like»: cierra stdout/stderr al salir pero el
           // PROCESO sigue vivo (setInterval forever) — reproduce el quirk.
-          const CHILD = `
-          import { spawnSync } from "node:child_process"
-          console.log("hijo: salida útil (pipes se cierran con esto… NO)")
-          const r = spawnSync("cmd", ["/c", "exit 0"])
-          // El proceso hijo NO termina: intervalo eterno y stdout cerrado:
-          process.stdout.end?.()
-          setInterval(() => {}, 1000)
-          `
+          const CHILD_FILE = process.env.EXITDIAG_CHILD ?? ""
+          const CHILD_NOTE = "hijo real desde archivo"
 
           log("inicio")
           if (mode === "C" || mode === "D") {
-            const r = spawnSync(process.execPath, ["-e", CHILD], {
+            const r = spawnSync(CHILD_FILE, [], {
               encoding: "utf8", timeout: 10_000,
               stdin: "ignore", stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
             } as never)
             log(`spawnSync devolvió: status=${r.status} pid=${r.pid} stdout=${JSON.stringify((r.stdout||"").slice(0,40))}`)
+            log(`nota: ${CHILD_NOTE}`)
           }
           if (mode === "E") {
             log("durmiendo 500 ms SÍNCRONOS (Atomics.wait)…")
@@ -94,6 +89,15 @@ jobs:
           log("INALCANZABLE")
           while (true) { syncSleep(1000) }
           EOF
+          cat > "$RUNNER_TEMP/exitdiag/child.ts" <<'EOF'
+          // Hijo «prisma-like»: imprime su salida ÚTIL y luego NO termina
+          // (intervalo eterno, stdout cerrado) — reproduce el quirk de los
+          // hijos del CLI de prisma en Windows.
+          console.log("hijo: salida útil antes de cerrar stdout")
+          process.stdout.end?.()
+          setInterval(() => {}, 1000)
+          EOF
+          bun build --compile "$RUNNER_TEMP/exitdiag/child.ts" --outfile "$RUNNER_TEMP/exitdiag/child.exe" >/dev/null 2>&1 || echo "⚠ compile child falló"
           echo "listo"
 
       - name: "Compilar A/B/C/D/E (bun build --compile)"
@@ -138,6 +142,7 @@ jobs:
         timeout-minutes: 3
         run: |
           $t0 = Get-Date
+          $env:EXITDIAG_CHILD = "$env:RUNNER_TEMP\exitdiag\child.exe"
           $p = Start-Process -FilePath "$env:RUNNER_TEMP\exitdiag\prog-C.exe" -ArgumentList "C" -PassThru -NoNewWindow -RedirectStandardOutput $env:RUNNER_TEMP\exitdiag\c-out.txt
           if (-not ($p.WaitForExit(60000))) {
             Write-Host "C: ✗ COLGADO (60 s) — process.exit no termina con hijo vivo"
@@ -154,6 +159,7 @@ jobs:
         timeout-minutes: 3
         run: |
           $t0 = Get-Date
+          $env:EXITDIAG_CHILD = "$env:RUNNER_TEMP\exitdiag\child.exe"
           $p = Start-Process -FilePath "$env:RUNNER_TEMP\exitdiag\prog-D.exe" -ArgumentList "D" -PassThru -NoNewWindow -RedirectStandardOutput $env:RUNNER_TEMP\exitdiag\d-out.txt
           if (-not ($p.WaitForExit(60000))) {
             Write-Host "D: ✗ COLGADO (60 s) — ExitProcess no termina con hijo vivo (!)"

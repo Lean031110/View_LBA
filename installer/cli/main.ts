@@ -589,12 +589,15 @@ function syncSleep(ms: number): void {
 function osExit(code: number): never {
   if (process.platform === "win32") {
     try {
+      // ⚠ tipos de bun:ffi: «u32», NO «uint32» (bug del 17.º build: la
+      // spec inválida lanzaba «Unknown type uint32» ANTES de resolver
+      // ExitProcess → caía al fallback process.exit → cuelgue).
       const k32 = dlopen("kernel32", {
-        ExitProcess: { args: ["uint32"], returns: "void" },
+        ExitProcess: { args: ["u32"], returns: "void" },
       })
       ;(k32.symbols.ExitProcess as (c: number) => void)(code)
-    } catch {
-      /* sin FFI → process.exit abajo */
+    } catch (e) {
+      console.error(`[osExit] FFI no disponible (${(e as Error).message}) — fallback process.exit`)
     }
   }
   process.exit(code)
