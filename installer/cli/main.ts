@@ -585,21 +585,30 @@ function syncSleep(ms: number): void {
 }
 
 /**
- * Salida INMEDIATA a nivel de sistema operativo. En Windows usa
- * kernel32.ExitProcess vía FFI (bun:ffi) — ni el event loop ni los
- * handles colgados pueden impedirla. Fallback: process.exit (correcto
- * en POSIX; en Windows es el último recurso si FFI no está disponible).
+ * Salida INMEDIATA a nivel de sistema operativo. Cadena de mecanismos,
+ * del más duro al más suave (evidencia de los builds 15-19):
+ *   1. TerminateProcess(GetCurrentProcess()) — terminación INMEDIATA:
+ *      sin notificaciones DLL, sin event loop, sin handles. ExitProcess
+ *      NO sirve aquí (19.º build: el trace [osExit] ExitProcess(kernel32)…
+ *      se imprimió y el proceso SIGUIÓ VIVO — la DLL del engine de Prisma
+ *      en proceso bloquea DLL_PROCESS_DETACH dentro de ExitProcess).
+ *   2. ExitProcess (por si TerminateProcess no resuelve el handle).
+ *   3. process.exit (correcto en POSIX: .deb/AppImage/CLI salen bien).
+ *   4. process.abort() — último recurso.
  */
 function osExit(code: number): never {
   if (process.platform === "win32") {
     try {
-      // ⚠ tipos de bun:ffi: «u32», NO «uint32» (bug del 17.º build: la
-      // spec inválida lanzaba «Unknown type uint32» ANTES de resolver
-      // ExitProcess → caía al fallback process.exit → cuelgue).
+      // ⚠ tipos de bun:ffi: «u32»/«ptr», NO «uint32» (bug del 17.º build).
       const k32 = dlopen("kernel32", {
+        GetCurrentProcess: { args: [], returns: "ptr" },
+        TerminateProcess: { args: ["ptr", "u32"], returns: "bool" },
         ExitProcess: { args: ["u32"], returns: "void" },
       })
-      console.error("[osExit] ExitProcess(kernel32)…")
+      console.error("[osExit] TerminateProcess(GetCurrentProcess())…")
+      const proc = (k32.symbols.GetCurrentProcess as () => unknown)()
+      ;(k32.symbols.TerminateProcess as (h: unknown, c: number) => boolean)(proc, code)
+      console.error("[osExit] ERROR FATAL: TerminateProcess REGRESÓ — probando ExitProcess…")
       ;(k32.symbols.ExitProcess as (c: number) => void)(code)
       console.error("[osExit] ERROR FATAL: ExitProcess REGRESÓ")
     } catch (e) {
@@ -607,9 +616,7 @@ function osExit(code: number): never {
     }
   }
   process.exit(code)
-  // Último recurso (18.º build: en el sidecar real ni siquiera
-  // process.exit terminó — loop/handles nativos): abort() termina el
-  // proceso de forma anómala inmediata (SIGABRT).
+  // Último recurso: abort() termina el proceso de forma anómala inmediata.
   process.abort?.()
   throw new Error("inalcanzable: osExit")
 }

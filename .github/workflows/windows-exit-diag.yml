@@ -83,6 +83,21 @@ jobs:
           if (mode === "A" || mode === "C") {
             log(`process.exit(77)`)
             process.exit(77)
+          } else if (mode === "F") {
+            // TERMINATE de uno mismo: sin notificaciones DLL — el más duro
+            try {
+              const k32 = dlopen("kernel32", {
+                GetCurrentProcess: { args: [], returns: "ptr" },
+                TerminateProcess: { args: ["ptr", "u32"], returns: "bool" },
+              })
+              log("TerminateProcess(GetCurrentProcess())…")
+              const proc = (k32.symbols.GetCurrentProcess as () => unknown)()
+              const ok = (k32.symbols.TerminateProcess as (h: unknown, c: number) => boolean)(proc, 77)
+              log(`ERROR FATAL: TerminateProcess devolvió ${ok}`)
+            } catch (e) {
+              log(`TerminateProcess FFI FALLÓ: ${(e as Error).message}`)
+              process.exit(77)
+            }
           } else {
             osExit(77)
           }
@@ -103,10 +118,10 @@ jobs:
       - name: "Compilar A/B/C/D/E (bun build --compile)"
         shell: bash
         run: |
-          for M in A B C D E; do
+          for M in A B C D E F; do
             bun build --compile "$RUNNER_TEMP/exitdiag/prog.ts" --outfile "$RUNNER_TEMP/exitdiag/prog-$M" >/dev/null 2>&1 || { echo "✗ compile $M falló"; exit 1; }
           done
-          echo "✓ 5 binarios compilados"
+          echo "✓ 6 binarios compilados"
 
       - name: "A) process.exit (sin hijos) — ¿termina?"
         shell: pwsh
@@ -171,8 +186,24 @@ jobs:
           Write-Host "D: ✓ exit=$($p.ExitCode) duración=$([math]::Round($dt,1))s"
           Get-Content $env:RUNNER_TEMP\exitdiag\d-out.txt | ForEach-Object { Write-Host "  $_" }
 
+      - name: "F) TerminateProcess(GetCurrentProcess) — el más duro"
+        shell: pwsh
+        timeout-minutes: 3
+        run: |
+          $t0 = Get-Date
+          $p = Start-Process -FilePath "$env:RUNNER_TEMP\exitdiag\prog-F.exe" -ArgumentList "F" -PassThru -NoNewWindow -RedirectStandardOutput $env:RUNNER_TEMP\exitdiag\f-out.txt
+          if (-not ($p.WaitForExit(60000))) {
+            Write-Host "F: ✗ COLGADO (60 s) — TerminateProcess no terminó (!)"
+            taskkill /PID $p.Id /T /F | Out-Null
+            Get-Content $env:RUNNER_TEMP\exitdiag\f-out.txt | ForEach-Object { Write-Host "  $_" }
+            exit 1
+          }
+          $dt = ((Get-Date) - $t0).TotalSeconds
+          Write-Host "F: ✓ exit=$($p.ExitCode) duración=$([math]::Round($dt,1))s"
+          Get-Content $env:RUNNER_TEMP\exitdiag\f-out.txt | ForEach-Object { Write-Host "  $_" }
+
       - name: "Resumen de la matriz"
         shell: bash
         run: |
           echo "=== Matriz de salida (windows-latest, bun 1.4.2 compile) ==="
-          for f in a b c d e; do echo "--- $f ---"; cat "$RUNNER_TEMP/exitdiag/$f-out.txt" 2>/dev/null | tail -6; done
+          for f in a b c d e f; do echo "--- $f ---"; cat "$RUNNER_TEMP/exitdiag/$f-out.txt" 2>/dev/null | tail -6; done
