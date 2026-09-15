@@ -36,8 +36,8 @@ jobs:
       - name: "Escribir los programas de prueba"
         shell: bash
         run: |
-          mkdir -p /tmp/exitdiag
-          cat > /tmp/exitdiag/prog.ts <<'EOF'
+          mkdir -p "$RUNNER_TEMP/exitdiag"
+          cat > "$RUNNER_TEMP/exitdiag/prog.ts" <<'EOF'
           // argv[2] = modo: A | B | C | D | E
           import { spawnSync } from "node:child_process"
           import { dlopen } from "bun:ffi"
@@ -100,7 +100,7 @@ jobs:
         shell: bash
         run: |
           for M in A B C D E; do
-            bun build --compile /tmp/exitdiag/prog.ts --outfile /tmp/exitdiag/prog-$M >/dev/null 2>&1 || { echo "✗ compile $M falló"; exit 1; }
+            bun build --compile "$RUNNER_TEMP/exitdiag/prog.ts" --outfile "$RUNNER_TEMP/exitdiag/prog-$M" >/dev/null 2>&1 || { echo "✗ compile $M falló"; exit 1; }
           done
           echo "✓ 5 binarios compilados"
 
@@ -108,65 +108,65 @@ jobs:
         shell: pwsh
         run: |
           $t0 = Get-Date
-          $p = Start-Process -FilePath "/tmp/exitdiag/prog-A.exe" -ArgumentList "A" -PassThru -Wait -NoNewWindow -RedirectStandardOutput /tmp/exitdiag/a-out.txt
+          $p = Start-Process -FilePath "$env:RUNNER_TEMP\exitdiag\prog-A.exe" -ArgumentList "A" -PassThru -Wait -NoNewWindow -RedirectStandardOutput $env:RUNNER_TEMP\exitdiag\a-out.txt
           $dt = ((Get-Date) - $t0).TotalSeconds
           Write-Host "A: exit=$($p.ExitCode) duración=$([math]::Round($dt,1))s"
-          Get-Content /tmp/exitdiag/a-out.txt | ForEach-Object { Write-Host "  $_" }
+          Get-Content $env:RUNNER_TEMP\exitdiag\a-out.txt | ForEach-Object { Write-Host "  $_" }
           if ($dt -gt 15) { Write-Host "✗ A COLGADO"; exit 1 }
 
       - name: "B) ExitProcess vía FFI (sin hijos) — ¿termina?"
         shell: pwsh
         run: |
           $t0 = Get-Date
-          $p = Start-Process -FilePath "/tmp/exitdiag/prog-B.exe" -ArgumentList "B" -PassThru -Wait -NoNewWindow -RedirectStandardOutput /tmp/exitdiag/b-out.txt
+          $p = Start-Process -FilePath "$env:RUNNER_TEMP\exitdiag\prog-B.exe" -ArgumentList "B" -PassThru -Wait -NoNewWindow -RedirectStandardOutput $env:RUNNER_TEMP\exitdiag\b-out.txt
           $dt = ((Get-Date) - $t0).TotalSeconds
           Write-Host "B: exit=$($p.ExitCode) duración=$([math]::Round($dt,1))s"
-          Get-Content /tmp/exitdiag/b-out.txt | ForEach-Object { Write-Host "  $_" }
+          Get-Content $env:RUNNER_TEMP\exitdiag\b-out.txt | ForEach-Object { Write-Host "  $_" }
           if ($dt -gt 15) { Write-Host "✗ B COLGADO"; exit 1 }
 
       - name: "E) Atomics.wait — ¿el hilo principal vive?"
         shell: pwsh
         run: |
           $t0 = Get-Date
-          $p = Start-Process -FilePath "/tmp/exitdiag/prog-E.exe" -ArgumentList "E" -PassThru -Wait -NoNewWindow -RedirectStandardOutput /tmp/exitdiag/e-out.txt
+          $p = Start-Process -FilePath "$env:RUNNER_TEMP\exitdiag\prog-E.exe" -ArgumentList "E" -PassThru -Wait -NoNewWindow -RedirectStandardOutput $env:RUNNER_TEMP\exitdiag\e-out.txt
           $dt = ((Get-Date) - $t0).TotalSeconds
           Write-Host "E: exit=$($p.ExitCode) duración=$([math]::Round($dt,1))s"
-          Get-Content /tmp/exitdiag/e-out.txt | ForEach-Object { Write-Host "  $_" }
+          Get-Content $env:RUNNER_TEMP\exitdiag\e-out.txt | ForEach-Object { Write-Host "  $_" }
 
       - name: "C) process.exit TRAS hijo vivo — ¿termina?"
         shell: pwsh
         timeout-minutes: 3
         run: |
           $t0 = Get-Date
-          $p = Start-Process -FilePath "/tmp/exitdiag/prog-C.exe" -ArgumentList "C" -PassThru -NoNewWindow -RedirectStandardOutput /tmp/exitdiag/c-out.txt
+          $p = Start-Process -FilePath "$env:RUNNER_TEMP\exitdiag\prog-C.exe" -ArgumentList "C" -PassThru -NoNewWindow -RedirectStandardOutput $env:RUNNER_TEMP\exitdiag\c-out.txt
           if (-not ($p.WaitForExit(60000))) {
             Write-Host "C: ✗ COLGADO (60 s) — process.exit no termina con hijo vivo"
             taskkill /PID $p.Id /T /F | Out-Null
-            Get-Content /tmp/exitdiag/c-out.txt | ForEach-Object { Write-Host "  $_" }
+            Get-Content $env:RUNNER_TEMP\exitdiag\c-out.txt | ForEach-Object { Write-Host "  $_" }
             exit 0   # diagnóstico: NO fallar el workflow
           }
           $dt = ((Get-Date) - $t0).TotalSeconds
           Write-Host "C: ✓ exit=$($p.ExitCode) duración=$([math]::Round($dt,1))s"
-          Get-Content /tmp/exitdiag/c-out.txt | ForEach-Object { Write-Host "  $_" }
+          Get-Content $env:RUNNER_TEMP\exitdiag\c-out.txt | ForEach-Object { Write-Host "  $_" }
 
       - name: "D) ExitProcess (FFI) TRAS hijo vivo — ¿termina?"
         shell: pwsh
         timeout-minutes: 3
         run: |
           $t0 = Get-Date
-          $p = Start-Process -FilePath "/tmp/exitdiag/prog-D.exe" -ArgumentList "D" -PassThru -NoNewWindow -RedirectStandardOutput /tmp/exitdiag/d-out.txt
+          $p = Start-Process -FilePath "$env:RUNNER_TEMP\exitdiag\prog-D.exe" -ArgumentList "D" -PassThru -NoNewWindow -RedirectStandardOutput $env:RUNNER_TEMP\exitdiag\d-out.txt
           if (-not ($p.WaitForExit(60000))) {
             Write-Host "D: ✗ COLGADO (60 s) — ExitProcess no termina con hijo vivo (!)"
             taskkill /PID $p.Id /T /F | Out-Null
-            Get-Content /tmp/exitdiag/d-out.txt | ForEach-Object { Write-Host "  $_" }
+            Get-Content $env:RUNNER_TEMP\exitdiag\d-out.txt | ForEach-Object { Write-Host "  $_" }
             exit 1
           }
           $dt = ((Get-Date) - $t0).TotalSeconds
           Write-Host "D: ✓ exit=$($p.ExitCode) duración=$([math]::Round($dt,1))s"
-          Get-Content /tmp/exitdiag/d-out.txt | ForEach-Object { Write-Host "  $_" }
+          Get-Content $env:RUNNER_TEMP\exitdiag\d-out.txt | ForEach-Object { Write-Host "  $_" }
 
       - name: "Resumen de la matriz"
         shell: bash
         run: |
           echo "=== Matriz de salida (windows-latest, bun 1.4.2 compile) ==="
-          for f in a b c d e; do echo "--- $f ---"; cat /tmp/exitdiag/$f-out.txt 2>/dev/null | tail -6; done
+          for f in a b c d e; do echo "--- $f ---"; cat "$RUNNER_TEMP/exitdiag/$f-out.txt" 2>/dev/null | tail -6; done
