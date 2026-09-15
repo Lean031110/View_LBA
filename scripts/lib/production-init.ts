@@ -121,7 +121,20 @@ export const MISMATCH_ABORT = "Database target mismatch: aborting to prevent mod
 
 /** Ejecuta un comando con env EXPLÍCITO (sin depender del shell heredado). */
 function runWithEnv(cmd: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs = 180_000, cwd?: string): { stdout: string; stderr: string; status: number | null } {
-  const r = spawnSync(cmd, args, { encoding: "utf8", env, cwd: cwd ?? PROJECT_ROOT, timeout: timeoutMs })
+  // stdio[0]="ignore" (lección del 14.º build, Windows): el sidecar corre
+  // bajo «cmd /c … > install.log» con el stdin heredado ABIERTO del nsExec
+  // de NSIS; un hijo que espere stdin colgaría la instalación completa.
+  // Se usan las DOS formas (stdin + stdio[0]): bun admite ambas y node
+  // ignora la que no conoce — compatible en cualquier runtime.
+  const r = spawnSync(cmd, args, {
+    encoding: "utf8",
+    env,
+    cwd: cwd ?? PROJECT_ROOT,
+    timeout: timeoutMs,
+    stdin: "ignore",
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  } as never)
   return { stdout: r.stdout ?? "", stderr: r.stderr ?? "", status: r.status }
 }
 
