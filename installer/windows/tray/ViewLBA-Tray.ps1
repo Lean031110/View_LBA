@@ -29,6 +29,13 @@
 
 $ErrorActionPreference = 'SilentlyContinue'
 
+# ---------------------------------------------------------------------------
+# TRAZA DE ARRANQUE — la PRIMERA acción del script (evidencia para el CI y
+# el diagnóstico: si este archivo no aparece, powershell NUNCA ejecutó el
+# script → el problema está en el LANZAMIENTO, no en la lógica).
+# ---------------------------------------------------------------------------
+try { Set-Content -Path 'C:\ViewLBA\tray\tray-boot.txt' -Value "boot pid=$PID" -Encoding ASCII } catch { }
+
 # Variables de script (accesibles desde TODOS los handlers de eventos:
 # los scriptblocks de WinForms resuelven nombres en el ámbito del script).
 $ServiceName = 'PantallaRestaurante'

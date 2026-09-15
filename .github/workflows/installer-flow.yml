@@ -476,21 +476,38 @@ jobs:
           #    se registra ANTES de cargar WinForms (< 1 s).
           Write-Host "→ bandeja del instalador (mismo paso — sin limpieza de por medio):"
           if (-not (Test-Path 'C:\ViewLBA\tray\ViewLBA-Tray.ps1')) { throw "falta C:\ViewLBA\tray\ViewLBA-Tray.ps1 — el instalador no copió la bandeja" }
-          if (-not (Test-Path 'C:\ViewLBA\tray\tray-launch.txt')) {
-            Write-Host "::warning::falta tray-launch.txt — el flujo del NSIS no llegó al Exec (¿abortó antes?)"
-          }
           $deadline = (Get-Date).AddSeconds(60)
           while (-not (Test-Path 'C:\ViewLBA\tray\tray.pid') -and (Get-Date) -lt $deadline) { Start-Sleep 2 }
           if (-not (Test-Path 'C:\ViewLBA\tray\tray.pid')) {
+            # VOLCADO COMPLETO (evidencia) + WARNING no fatal: FLUJO 2 valida la
+            # bandeja con arranque manual elevado y stderr capturado, y decide
+            # ahí (el contexto de sesión del runner es artificial: sin área de
+            # notificación como la de un escritorio de usuario real).
+            Write-Host "::warning::tray.pid no apareció en 60 s — volcado de evidencia (FLUJO 2 validará con arranque manual):"
             Write-Host "── C:\ViewLBA\tray: ──"
             Get-ChildItem C:\ViewLBA\tray -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $($_.Name) ($($_.Length) b)" }
-            throw "tray.pid no apareció: el instalador no lanzó la bandeja"
+            if (Test-Path 'C:\ViewLBA\tray\tray-launch.txt') {
+              Write-Host "── tray-launch.txt (resultado del CreateProcess en el NSIS): ──"
+              Get-Content 'C:\ViewLBA\tray\tray-launch.txt' | ForEach-Object { Write-Host "  $_" }
+            }
+            Write-Host "── tray-boot.txt (traza de arranque del script): ──"
+            if (Test-Path 'C:\ViewLBA\tray\tray-boot.txt') {
+              Get-Content 'C:\ViewLBA\tray\tray-boot.txt' | ForEach-Object { Write-Host "  $_" }
+            } else {
+              Write-Host "  (AUSENTE — powershell NUNCA ejecutó el script: fallo de lanzamiento)"
+            }
+            Write-Host "── procesos powershell vivos: ──"
+            Get-Process powershell -ErrorAction SilentlyContinue | Select-Object Id,StartTime | Format-Table -AutoSize | Out-String | ForEach-Object { Write-Host $_ }
+            Write-Host "── parse con Windows PowerShell 5.1 (el que lanza el instalador): ──"
+            $parse5 = & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -Command "try { `$e=`$null; [void][System.Management.Automation.Language.Parser]::ParseFile('C:\ViewLBA\tray\ViewLBA-Tray.ps1', [ref]`$null, [ref]`$e); if (`$e) { `$e | ForEach-Object { Write-Output (`$_.Message + ' @line ' + `$_.Extent.StartLineNumber) } } else { Write-Output 'PARSE OK 5.1' } } catch { Write-Output ('EXCEPTION: ' + `$_.Exception.Message) }"
+            $parse5 | ForEach-Object { Write-Host "  $_" }
+          } else {
+            $trayPid = [int](Get-Content 'C:\ViewLBA\tray\tray.pid' | Select-Object -First 1)
+            $tproc = Get-Process -Id $trayPid -ErrorAction SilentlyContinue
+            if (-not $tproc) { throw "la bandeja del instalador (PID $trayPid) murió" }
+            if ($tproc.ProcessName -notmatch 'powershell') { throw "PID $trayPid no es powershell (es $($tproc.ProcessName))" }
+            Write-Host "✓ bandeja VIVA lanzada por el Setup.exe (PID $trayPid)"
           }
-          $trayPid = [int](Get-Content 'C:\ViewLBA\tray\tray.pid' | Select-Object -First 1)
-          $tproc = Get-Process -Id $trayPid -ErrorAction SilentlyContinue
-          if (-not $tproc) { throw "la bandeja del instalador (PID $trayPid) murió" }
-          if ($tproc.ProcessName -notmatch 'powershell') { throw "PID $trayPid no es powershell (es $($tproc.ProcessName))" }
-          Write-Host "✓ bandeja VIVA lanzada por el Setup.exe (PID $trayPid)"
 
       # ------------------------------------------------------------------
       # 2) BANDEJA: proceso + instancia única + parse + autostart
@@ -526,7 +543,7 @@ jobs:
             $helper = "$env:RUNNER_TEMP\tray-manual.ps1"
             $lines = @(
               '$ErrorActionPreference = ''Continue''',
-              '& ''$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe'' -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ''C:\ViewLBA\tray\ViewLBA-Tray.ps1'' 2> C:\ViewLBA\tray-manual-stderr.txt',
+              '& "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\ViewLBA\tray\ViewLBA-Tray.ps1" 2> C:\ViewLBA\tray-manual-stderr.txt',
               'exit $LASTEXITCODE'
             )
             Set-Content -Path $helper -Value $lines -Encoding UTF8

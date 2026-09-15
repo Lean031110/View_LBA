@@ -246,24 +246,46 @@ Section "Instalar ${APPNAME}" SecMain
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
   ; Lanzar la bandeja AHORA (para este primer uso).
-  ; ⚠⚠⚠ 21.er build (v3.2.0): NO usar nsExec::Exec aquí — REGRESIÓN FATAL.
-  ; nsExec::Exec ESPERA a que el proceso termine, y la bandeja es un bucle
-  ; de mensajes INFINITO ([Windows.Forms.Application]::Run()) → Setup.exe
-  ; quedaba colgado PARA SIEMPRE tras una instalación PERFECTA (el runner
-  ; lo mató a los 22 min: PID hijo = powershell.exe de la bandeja). El
-  ; comando NO-wait de NSIS es `Exec` (documentado: ejecuta y devuelve
-  ; el control inmediatamente). tests/installer/tray.test.ts lo protege.
+  ; ⚠⚠⚠ 21.er build (v3.2.0): NO usar nsExec::Exec SIN /TIMEOUT aquí — REGRESIÓN
+  ; FATAL: nsExec ESPERA a que el proceso termine, y la bandeja es un bucle
+  ; de mensajes INFINITO → Setup.exe colgado 22+ min. `Exec` no espera.
+  ; ⚠ 23.er build (evidencia): marcadores pre/post-Exec + resultado del
+  ; CreateProcess en tray-launch.txt — si el arranque falla, el CI lo VE.
+  ; Forma del comando: la MISMA que funcionó en los builds 15-20 de v3.2.0
+  ; (powershell.exe del PATH, sin ruta absoluta citada).
   DetailPrint "Lanzando la bandeja del sistema (icono junto al reloj)…"
-  ; marcador de diagnóstico (evidencia para el CI): el flujo llegó al Exec.
   FileOpen $1 "$INSTDIR\tray\tray-launch.txt" w
-  FileWrite $1 "exec ${VERSION}$\r$\n"
+  FileWrite $1 "pre-exec ${VERSION}$\r$\n"
   FileClose $1
-  ; ⚠ Exec (a secas) NO apila nada: sin Pop (a diferencia de nsExec).
-  Exec '"$WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$INSTDIR\tray\ViewLBA-Tray.ps1"'
+  ClearErrors
+  Exec 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$INSTDIR\tray\ViewLBA-Tray.ps1"'
   ${If} ${Errors}
-    DetailPrint "Aviso: no se pudo lanzar la bandeja (se iniciará con Windows)."
     ClearErrors
+    ; fallback: cmd /c start (proceso desvinculado del instalador)
+    Exec '"$SYSDIR\cmd.exe" /c start "" powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$INSTDIR\tray\ViewLBA-Tray.ps1"'
+    ${If} ${Errors}
+      FileOpen $1 "$INSTDIR\tray\tray-launch.txt" a
+      FileSeek $1 0 END
+      FileWrite $1 "exec: ERROR (ambos intentos fallaron — CreateProcess)$\r$\n"
+      FileClose $1
+      ClearErrors
+      DetailPrint "Aviso: no se pudo lanzar la bandeja (se iniciará con Windows)."
+    ${Else}
+      FileOpen $1 "$INSTDIR\tray\tray-launch.txt" a
+      FileSeek $1 0 END
+      FileWrite $1 "exec: OK (fallback cmd/start)$\r$\n"
+      FileClose $1
+    ${EndIf}
+  ${Else}
+    FileOpen $1 "$INSTDIR\tray\tray-launch.txt" a
+    FileSeek $1 0 END
+    FileWrite $1 "exec: OK (directo)$\r$\n"
+    FileClose $1
   ${EndIf}
+  FileOpen $1 "$INSTDIR\tray\tray-launch.txt" a
+  FileSeek $1 0 END
+  FileWrite $1 "post-exec$\r$\n"
+  FileClose $1
 SectionEnd
 
 ; ---------------------------------------------------------------------------
