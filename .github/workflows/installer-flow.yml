@@ -468,12 +468,37 @@ jobs:
           }
           Write-Host "✓ /api/health 200 — INSTALACIÓN completa SIN red externa"
 
+          # ── BANDEJA LANZADA POR EL INSTALADOR (mismo paso: el runner puede
+          #    limpiar el árbol de procesos AL TERMINAR EL PASO — los servicios
+          #    sobreviven porque los crea el SCM; la bandeja es hija del
+          #    Setup.exe, así que su prueba de vida va AQUÍ, no en el paso
+          #    siguiente). El Setup.exe la lanza con Exec (no espera): el pid
+          #    se registra ANTES de cargar WinForms (< 1 s).
+          Write-Host "→ bandeja del instalador (mismo paso — sin limpieza de por medio):"
+          if (-not (Test-Path 'C:\ViewLBA\tray\ViewLBA-Tray.ps1')) { throw "falta C:\ViewLBA\tray\ViewLBA-Tray.ps1 — el instalador no copió la bandeja" }
+          if (-not (Test-Path 'C:\ViewLBA\tray\tray-launch.txt')) {
+            Write-Host "::warning::falta tray-launch.txt — el flujo del NSIS no llegó al Exec (¿abortó antes?)"
+          }
+          $deadline = (Get-Date).AddSeconds(60)
+          while (-not (Test-Path 'C:\ViewLBA\tray\tray.pid') -and (Get-Date) -lt $deadline) { Start-Sleep 2 }
+          if (-not (Test-Path 'C:\ViewLBA\tray\tray.pid')) {
+            Write-Host "── C:\ViewLBA\tray: ──"
+            Get-ChildItem C:\ViewLBA\tray -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $($_.Name) ($($_.Length) b)" }
+            throw "tray.pid no apareció: el instalador no lanzó la bandeja"
+          }
+          $trayPid = [int](Get-Content 'C:\ViewLBA\tray\tray.pid' | Select-Object -First 1)
+          $tproc = Get-Process -Id $trayPid -ErrorAction SilentlyContinue
+          if (-not $tproc) { throw "la bandeja del instalador (PID $trayPid) murió" }
+          if ($tproc.ProcessName -notmatch 'powershell') { throw "PID $trayPid no es powershell (es $($tproc.ProcessName))" }
+          Write-Host "✓ bandeja VIVA lanzada por el Setup.exe (PID $trayPid)"
+
       # ------------------------------------------------------------------
-      # 2) BANDEJA: el instalador la lanza con Exec → proceso VIVO + instancia única
-      #    (con VOLCADO de diagnóstico si el pid no aparece: procesos,
-      #    accesos, registro y arranque manual con stderr capturado)
+      # 2) BANDEJA: proceso + instancia única + parse + autostart
+      #    (si el runner limpió la bandeja del instalador al cerrar el paso
+      #    anterior, se lanza MANUALMENTE elevada con stderr capturado y se
+      #    valida TODO con esa instancia)
       # ------------------------------------------------------------------
-      - name: "FLUJO 2 — bandeja: lanzada por el instalador, VIVA, y con instancia única"
+      - name: "FLUJO 2 — bandeja: proceso VIVO + instancia única + parse + autostart"
         shell: pwsh
         timeout-minutes: 8
         run: |
@@ -481,40 +506,43 @@ jobs:
           $TrayPs1 = 'C:\ViewLBA\tray\ViewLBA-Tray.ps1'
           if (-not (Test-Path $TrayPs1)) { throw "falta $TrayPs1 — el instalador no copió la bandeja" }
 
-          # sondear el pid hasta 60 s (arranque en frío de powershell)
-          $deadline = (Get-Date).AddSeconds(60)
-          while (-not (Test-Path $PidFile) -and (Get-Date) -lt $deadline) { Start-Sleep 2 }
+          # 1) ¿sigue viva la bandeja que lanzó el instalador? (el runner
+          #    PUEDE limpiar el árbol del paso anterior: los servicios
+          #    sobreviven —los crea el SCM—, la bandeja no necesariamente)
           $tpid = 0
-          if (Test-Path $PidFile) { $tpid = [int](Get-Content $PidFile | Select-Object -First 1) }
-
-          if ($tpid -eq 0) {
-            # ── VOLCADO DE DIAGNÓSTICO: ¿llegaron a correr los pasos post-
-            #    sidecar del NSIS (accesos, registro)? ¿hay powershell vivo?
-            Write-Host "::warning::tray.pid no apareció en 60 s — volcando diagnóstico…"
-            $desk = [Environment]::GetFolderPath('Desktop')
-            foreach ($n in @("ViewLBA - Panel", "ViewLBA - Bandeja")) {
-              Write-Host ("  acceso {0}: {1}" -f $n, (Test-Path "$desk\$n.lnk"))
-            }
-            $run = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -ErrorAction SilentlyContinue
-            Write-Host ("  autostart HKCU Run: {0}" -f ($run.PSObject.Properties.Name -contains 'ViewLBA ServerTray'))
-            Write-Host "  procesos powershell/pwsh vivos:"
-            Get-Process powershell,pwsh -ErrorAction SilentlyContinue |
-              Select-Object Id,ProcessName,StartTime | Format-Table -AutoSize | Out-String | ForEach-Object { Write-Host $_ }
-            # arranque MANUAL de la bandeja (elevado como el instalador) con
-            # stderr capturado: la prueba REAL de que el script funciona.
-            Write-Host "  → lanzando la bandeja MANUALMENTE (elevada, stderr capturado)…"
-            @'
-            $ErrorActionPreference = 'Continue'
-            & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\ViewLBA\tray\ViewLBA-Tray.ps1" 2> C:\ViewLBA\tray-manual-stderr.txt
-            exit $LASTEXITCODE
-            '@ | Set-Content -Path "$env:RUNNER_TEMP\tray-manual.ps1" -Encoding UTF8
-            $p3 = Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',"$env:RUNNER_TEMP\tray-manual.ps1" -Verb RunAs -PassThru -WindowStyle Hidden
+          $alive = $false
+          if (Test-Path $PidFile) {
+            $tpid = [int](Get-Content $PidFile | Select-Object -First 1)
+            $t = Get-Process -Id $tpid -ErrorAction SilentlyContinue
+            if ($t -and $t.ProcessName -match 'powershell') { $alive = $true }
+          }
+          if ($alive) {
+            Write-Host "✓ la bandeja del instalador sigue VIVA entre pasos (PID $tpid)"
+          } else {
+            # 2) arranque MANUAL elevado con stderr capturado — la prueba REAL
+            #    de que el script funciona en esta máquina (igual que lo hará
+            #    con el autostart del usuario en su sesión).
+            Write-Host "::warning::la bandeja del instalador no está viva en este paso (el runner limpia el árbol del paso anterior) — validando con arranque manual elevado…"
+            $helper = "$env:RUNNER_TEMP\tray-manual.ps1"
+            $lines = @(
+              '$ErrorActionPreference = ''Continue''',
+              '& ''$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe'' -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ''C:\ViewLBA\tray\ViewLBA-Tray.ps1'' 2> C:\ViewLBA\tray-manual-stderr.txt',
+              'exit $LASTEXITCODE'
+            )
+            Set-Content -Path $helper -Value $lines -Encoding UTF8
+            $p3 = Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',$helper -Verb RunAs -PassThru -WindowStyle Hidden
             $deadline = (Get-Date).AddSeconds(45)
             while (-not (Test-Path $PidFile) -and (Get-Date) -lt $deadline) { Start-Sleep 2 }
             if (Test-Path $PidFile) {
               $tpid = [int](Get-Content $PidFile | Select-Object -First 1)
-              Write-Host "✓ bandeja MANUAL registrada (PID $tpid) — el script FUNCIONA"
-              Write-Host "::warning::la bandeja del instalador no se observó en el runner (probable contexto de sesión del runner elevado); validada con arranque manual"
+              $t = Get-Process -Id $tpid -ErrorAction SilentlyContinue
+              if ($t -and $t.ProcessName -match 'powershell') {
+                Write-Host "✓ bandeja MANUAL registrada y viva (PID $tpid) — el script FUNCIONA"
+              } else {
+                Write-Host "── stderr del arranque manual: ──"
+                if (Test-Path 'C:\ViewLBA\tray-manual-stderr.txt') { Get-Content 'C:\ViewLBA\tray-manual-stderr.txt' | ForEach-Object { Write-Host "  $_" } }
+                throw "la bandeja manual (PID $tpid) no está viva (ver stderr)"
+              }
             } else {
               Write-Host "── stderr del arranque manual: ──"
               if (Test-Path 'C:\ViewLBA\tray-manual-stderr.txt') { Get-Content 'C:\ViewLBA\tray-manual-stderr.txt' | ForEach-Object { Write-Host "  $_" } }
@@ -523,11 +551,7 @@ jobs:
             }
           }
 
-          $tproc = Get-Process -Id $tpid -ErrorAction SilentlyContinue
-          if (-not $tproc) { throw "la bandeja (PID $tpid del tray.pid) NO está viva" }
-          if ($tproc.ProcessName -notmatch 'powershell') { throw "PID $tpid no es powershell (es $($tproc.ProcessName))" }
-          Write-Host "✓ bandeja VIVA (PID $tpid)"
-          # y sigue viva 10 s después (bucle de mensajes estable)
+          # 3) estabilidad: sigue viva 10 s después (bucle de mensajes)
           Start-Sleep 10
           if (-not (Get-Process -Id $tpid -ErrorAction SilentlyContinue)) { throw "la bandeja MURIÓ en 10 s" }
           Write-Host "✓ bandeja estable (bucle de mensajes) durante 10 s"

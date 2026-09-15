@@ -254,6 +254,10 @@ Section "Instalar ${APPNAME}" SecMain
   ; comando NO-wait de NSIS es `Exec` (documentado: ejecuta y devuelve
   ; el control inmediatamente). tests/installer/tray.test.ts lo protege.
   DetailPrint "Lanzando la bandeja del sistema (icono junto al reloj)…"
+  ; marcador de diagnóstico (evidencia para el CI): el flujo llegó al Exec.
+  FileOpen $1 "$INSTDIR\tray\tray-launch.txt" w
+  FileWrite $1 "exec ${VERSION}$\r$\n"
+  FileClose $1
   ; ⚠ Exec (a secas) NO apila nada: sin Pop (a diferencia de nsExec).
   Exec '"$WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$INSTDIR\tray\ViewLBA-Tray.ps1"'
   ${If} ${Errors}
