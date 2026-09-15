@@ -52,9 +52,20 @@ describe("Bandeja Windows (ViewLBA-Tray.ps1)", () => {
   })
 
   test("menú con las opciones pedidas: Iniciar · Detener · Configurar", () => {
-    for (const item of ["Iniciar servidor", "Detener servidor", "Reiniciar servidor", "Configurar…", "Abrir Panel", "Salir"]) {
+    for (const item of ["Iniciar servidor", "Detener servidor", "Reiniciar servidor", "Configurar...", "Abrir Panel", "Salir"]) {
       expect(ps1).toContain(item)
     }
+  })
+
+  test("100 % ASCII — PS 5.1 sin BOM no puede romperlo con el codepage (regresión del 5.º build)", () => {
+    // EVIDENCIA del build 5: el .ps1 en UTF-8 sin BOM con em-dash (0x94 en
+    // CP1252 = comilla curva = TERMINADOR de cadena) rompía el parse de
+    // Windows PowerShell 5.1 → la bandeja NUNCA ARRANCABA. ASCII puro =
+    // inmune en cualquier codepage de cualquier Windows.
+    const raw = readFileSync(TRAY_PS1)
+    const bad: number[] = []
+    raw.forEach((b, i) => { if (b > 127) bad.push(i) })
+    expect(bad).toEqual([])
   })
 
   test("ventana «Configurar…» con control completo (estado + acciones + carpetas)", () => {

@@ -1,26 +1,26 @@
 # ============================================================================
-# ViewLBA-Tray.ps1 — Bandeja del sistema para ViewLBA Server (Windows)
+# ViewLBA-Tray.ps1 - Bandeja del sistema para ViewLBA Server (Windows)
 #
-# MISIÓN (pedida por el usuario): «un icono PERMANENTE en la barra de tareas
-# como indicador de que está activo y que al hacer clic sobre él salgan
-# opciones de iniciar, detener y configurar».
+# MISION (pedida por el usuario): 'un icono PERMANENTE en la barra de tareas
+# como indicador de que esta activo y que al hacer clic sobre el salgan
+# opciones de iniciar, detener y configurar'.
 #
-#   · Icono SIEMPRE visible junto al reloj (autostart con la sesión):
-#       VERDE  = servidor EN EJECUCIÓN (activo)
+#   | Icono SIEMPRE visible junto al reloj (autostart con la sesion):
+#       VERDE  = servidor EN EJECUCION (activo)
 #       ROJO   = servidor DETENIDO
-#       AMARILLO = arrancando / deteniendo / transición
-#   · Clic derecho → Iniciar servidor · Detener servidor · Reiniciar ·
-#                    Configurar… · Abrir Panel · Estado · Salir
-#   · «Configurar…» abre una ventana de control: estado en vivo, URL del
+#       AMARILLO = arrancando / deteniendo / transicion
+#   | Clic derecho -> Iniciar servidor | Detener servidor | Reiniciar |
+#                    Configurar... | Abrir Panel | Estado | Salir
+#   | 'Configurar...' abre una ventana de control: estado en vivo, URL del
 #     panel, credenciales, carpetas (app/logs/datos) y control del
-#     servicio. La configuración completa del restaurante (temas, pantallas,
+#     servicio. La configuracion completa del restaurante (temas, pantallas,
 #     licencias, usuarios) vive en el Panel web.
-#   · Globo de notificación al arrancar y al cambiar de estado.
-#   · Refresco automático cada 5 s (estado del servicio Windows).
+#   | Globo de notificacion al arrancar y al cambiar de estado.
+#   | Refresco automatico cada 5 s (estado del servicio Windows).
 #
-# Requisitos: Windows 10/11 con PowerShell 5.1 (preinstalado) — CERO
+# Requisitos: Windows 10/11 con PowerShell 5.1 (preinstalado) - CERO
 # dependencias adicionales. El servidor (bun) ya viene en el paquete y el
-# servicio se instala automáticamente con el Setup.exe.
+# servicio se instala automaticamente con el Setup.exe.
 #
 # Se lanza oculto (el instalador crea el acceso y la clave de autostart):
 #   powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden \
@@ -30,27 +30,27 @@
 $ErrorActionPreference = 'SilentlyContinue'
 
 # ---------------------------------------------------------------------------
-# TRAZA DE ARRANQUE — la PRIMERA acción del script (evidencia para el CI y
-# el diagnóstico: si este archivo no aparece, powershell NUNCA ejecutó el
-# script → el problema está en el LANZAMIENTO, no en la lógica).
+# TRAZA DE ARRANQUE - la PRIMERA accion del script (evidencia para el CI y
+# el diagnostico: si este archivo no aparece, powershell NUNCA ejecuto el
+# script -> el problema esta en el LANZAMIENTO, no en la logica).
 # ---------------------------------------------------------------------------
 try { Set-Content -Path 'C:\ViewLBA\tray\tray-boot.txt' -Value "boot pid=$PID" -Encoding ASCII } catch { }
 
 # Variables de script (accesibles desde TODOS los handlers de eventos:
-# los scriptblocks de WinForms resuelven nombres en el ámbito del script).
+# los scriptblocks de WinForms resuelven nombres en el ambito del script).
 $ServiceName = 'PantallaRestaurante'
 $PanelUrl    = 'http://localhost:3000'
 $AppName     = 'ViewLBA Server'
-# Ubicaciones canónicas del servidor (las instala el Setup.exe)
+# Ubicaciones canonicas del servidor (las instala el Setup.exe)
 $AppDir      = 'C:\PantallaRestaurante\app'
 $DataDir     = 'C:\PantallaRestaurante\data'
 $LogDir      = 'C:\PantallaRestaurante\logs'
 $CredFile    = 'C:\ViewLBA\CREDENCIALES.txt'
 
 # ---------------------------------------------------------------------------
-# Instancia única + registro INMEDIATO del pid (ANTES de Add-Type: cargar
+# Instancia unica + registro INMEDIATO del pid (ANTES de Add-Type: cargar
 # WinForms tarda segundos y el CI/usuario no debe esperar para vernos).
-# Guard por pid-file: determinista, sin WMI, funciona con/sin elevación
+# Guard por pid-file: determinista, sin WMI, funciona con/sin elevacion
 # (el autostart, el acceso directo y el instalador comparten este archivo).
 # ---------------------------------------------------------------------------
 $PidFile = 'C:\ViewLBA\tray\tray.pid'
@@ -72,7 +72,7 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
 # ---------------------------------------------------------------------------
-# Iconos de estado (dibujados en memoria — sin archivos extra)
+# Iconos de estado (dibujados en memoria - sin archivos extra)
 # ---------------------------------------------------------------------------
 function New-StateIcon([int]$R, [int]$G, [int]$B, [string]$Glyph) {
     $bmp = New-Object System.Drawing.Bitmap 16, 16
@@ -97,7 +97,7 @@ function New-StateIcon([int]$R, [int]$G, [int]$B, [string]$Glyph) {
 
 $IconRun  = New-StateIcon  46 204 113 ''    # verde  (activo)
 $IconStop = New-StateIcon 231  76  60 'x'   # rojo   (detenido)
-$IconWait = New-StateIcon 241 196  15 '…'   # amarillo (transición)
+$IconWait = New-StateIcon 241 196  15 '...'   # amarillo (transicion)
 
 # ---------------------------------------------------------------------------
 # Estado del servicio
@@ -115,7 +115,7 @@ function Get-ServiceState {
 }
 
 # ---------------------------------------------------------------------------
-# Controles (UAC estándar de Windows por acción)
+# Controles (UAC estandar de Windows por accion)
 # ---------------------------------------------------------------------------
 function Start-Server {
     Start-Process -FilePath 'net.exe' -ArgumentList 'start', $ServiceName -Verb RunAs -WindowStyle Hidden
@@ -141,11 +141,11 @@ function Open-Panel {
 
 function Open-File([string]$path) {
     if (Test-Path $path) { Start-Process 'explorer.exe' -ArgumentList $path }
-    else { [System.Windows.Forms.MessageBox]::Show("No se encontró: $path", $AppName, 'OK', 'Information') | Out-Null }
+    else { [System.Windows.Forms.MessageBox]::Show("No se encontro: $path", $AppName, 'OK', 'Information') | Out-Null }
 }
 
 # ---------------------------------------------------------------------------
-# Ventana «Configurar…» (centro de control del usuario)
+# Ventana 'Configurar...' (centro de control del usuario)
 # ---------------------------------------------------------------------------
 $script:cfgForm   = $null
 $script:cfgLabel = $null   # etiqueta de estado en vivo
@@ -154,24 +154,24 @@ $script:cfgTimer = $null   # refresco de la ventana
 function Update-CfgStatus {
     if (-not $script:cfgLabel -or $script:cfgLabel.IsDisposed) { return }
     switch (Get-ServiceState) {
-        'running'  { $script:cfgLabel.Text = 'Estado: EN EJECUCIÓN'; $script:cfgLabel.ForeColor = [System.Drawing.Color]::FromArgb(0, 140, 80) }
-        'starting' { $script:cfgLabel.Text = 'Estado: iniciando…';   $script:cfgLabel.ForeColor = [System.Drawing.Color]::FromArgb(180, 140, 0) }
+        'running'  { $script:cfgLabel.Text = 'Estado: EN EJECUCION'; $script:cfgLabel.ForeColor = [System.Drawing.Color]::FromArgb(0, 140, 80) }
+        'starting' { $script:cfgLabel.Text = 'Estado: iniciando...';   $script:cfgLabel.ForeColor = [System.Drawing.Color]::FromArgb(180, 140, 0) }
         'stopped'  { $script:cfgLabel.Text = 'Estado: DETENIDO';     $script:cfgLabel.ForeColor = [System.Drawing.Color]::FromArgb(190, 40, 30) }
-        'stopping' { $script:cfgLabel.Text = 'Estado: deteniendo…';  $script:cfgLabel.ForeColor = [System.Drawing.Color]::FromArgb(180, 140, 0) }
+        'stopping' { $script:cfgLabel.Text = 'Estado: deteniendo...';  $script:cfgLabel.ForeColor = [System.Drawing.Color]::FromArgb(180, 140, 0) }
         'missing'  { $script:cfgLabel.Text = 'Estado: servicio NO instalado'; $script:cfgLabel.ForeColor = [System.Drawing.Color]::Gray }
         default    { $script:cfgLabel.Text = "Estado: $(Get-ServiceState)";   $script:cfgLabel.ForeColor = [System.Drawing.Color]::DimGray }
     }
 }
 
 function Open-ConfigWindow {
-    # Una sola ventana: si ya está abierta, al frente.
+    # Una sola ventana: si ya esta abierta, al frente.
     if ($script:cfgForm -and -not $script:cfgForm.IsDisposed) {
         [void]$script:cfgForm.Activate()
         return
     }
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text = "Configurar — $AppName"
+    $form.Text = "Configurar - $AppName"
     $form.Size = New-Object System.Drawing.Size 500, 420
     $form.StartPosition = 'CenterScreen'
     $form.FormBorderStyle = 'FixedDialog'
@@ -182,7 +182,7 @@ function Open-ConfigWindow {
     $lblEstado.Location = New-Object System.Drawing.Point 16, 16
     $lblEstado.Size = New-Object System.Drawing.Size 460, 24
     $lblEstado.Font = New-Object System.Drawing.Font ('Segoe UI', 11, [System.Drawing.FontStyle]::Bold)
-    $lblEstado.Text = 'Estado: …'
+    $lblEstado.Text = 'Estado: ...'
     $form.Controls.Add($lblEstado)
     $script:cfgLabel = $lblEstado
 
@@ -196,11 +196,11 @@ function Open-ConfigWindow {
     $lblUrl = New-Object System.Windows.Forms.Label
     $lblUrl.Location = New-Object System.Drawing.Point 16, 70
     $lblUrl.Size = New-Object System.Drawing.Size 460, 20
-    $lblUrl.Text = "Panel (configuración completa): $PanelUrl"
+    $lblUrl.Text = "Panel (configuracion completa): $PanelUrl"
     $form.Controls.Add($lblUrl)
 
-    # Botonera 2×4 (Iniciar · Detener · Reiniciar · Panel · Credenciales ·
-    # Datos · Programa · Logs) — TODO lo que el usuario pidió en «configurar».
+    # Botonera 2x4 (Iniciar | Detener | Reiniciar | Panel | Credenciales |
+    # Datos | Programa | Logs) - TODO lo que el usuario pidio en 'configurar'.
     $defs = @(
         @{ T = 'Iniciar servidor';      X = 16;  Y = 100; A = { Start-Server;    Update-CfgStatus } }
         @{ T = 'Detener servidor';      X = 248; Y = 100; A = { Stop-Server;     Update-CfgStatus } }
@@ -224,7 +224,7 @@ function Open-ConfigWindow {
     $lblNota.Location = New-Object System.Drawing.Point 16, 278
     $lblNota.Size = New-Object System.Drawing.Size 460, 64
     $lblNota.ForeColor = [System.Drawing.Color]::DimGray
-    $lblNota.Text = "Toda la configuración del restaurante (temas, pantallas,`r`nlicencias, usuarios) se hace desde el Panel web.`r`nEl servidor se inicia automáticamente con Windows."
+    $lblNota.Text = "Toda la configuracion del restaurante (temas, pantallas,`r`nlicencias, usuarios) se hace desde el Panel web.`r`nEl servidor se inicia automaticamente con Windows."
     $form.Controls.Add($lblNota)
 
     $btnCerrar = New-Object System.Windows.Forms.Button
@@ -234,7 +234,7 @@ function Open-ConfigWindow {
     $btnCerrar.Add_Click({ $script:cfgForm.Close() })
     $form.Controls.Add($btnCerrar)
 
-    # Refresco en vivo mientras la ventana está abierta (3 s)
+    # Refresco en vivo mientras la ventana esta abierta (3 s)
     $timer = New-Object System.Windows.Forms.Timer
     $timer.Interval = 3000
     $timer.Add_Tick({ Update-CfgStatus })
@@ -254,7 +254,7 @@ function Open-ConfigWindow {
 }
 
 # ---------------------------------------------------------------------------
-# Bandeja + menú contextual (Iniciar · Detener · Configurar · Panel · Salir)
+# Bandeja + menu contextual (Iniciar | Detener | Configurar | Panel | Salir)
 # ---------------------------------------------------------------------------
 $tray = New-Object System.Windows.Forms.NotifyIcon
 $tray.Text = "$AppName"
@@ -267,7 +267,7 @@ $mTitle = New-Object System.Windows.Forms.ToolStripMenuItem $AppName
 $mTitle.Enabled = $false
 [void]$menu.Items.Add($mTitle)
 
-$mEstado = New-Object System.Windows.Forms.ToolStripMenuItem 'Estado: …'
+$mEstado = New-Object System.Windows.Forms.ToolStripMenuItem 'Estado: ...'
 $mEstado.Enabled = $false
 [void]$menu.Items.Add($mEstado)
 [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
@@ -286,7 +286,7 @@ $mRestart.Add_Click({ Restart-Server })
 
 [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 
-$mConfig = New-Object System.Windows.Forms.ToolStripMenuItem 'Configurar…'
+$mConfig = New-Object System.Windows.Forms.ToolStripMenuItem 'Configurar...'
 $mConfig.Add_Click({ Open-ConfigWindow })
 [void]$menu.Items.Add($mConfig)
 
@@ -310,7 +310,7 @@ $tray.ContextMenuStrip = $menu
 $tray.Add_DoubleClick({ Open-ConfigWindow })
 
 # ---------------------------------------------------------------------------
-# Refresco periódico (5 s) + globos de cambio de estado
+# Refresco periodico (5 s) + globos de cambio de estado
 # ---------------------------------------------------------------------------
 $script:lastState = ''
 
@@ -318,17 +318,17 @@ function Refresh-Now {
     $state = Get-ServiceState
     switch ($state) {
         'running'  { $tray.Icon = $IconRun.Icon;  $tray.Text = "$AppName - En ejecucion"; $mEstado.Text = 'Estado: EN EJECUCION'; $mStart.Enabled = $false; $mStop.Enabled = $true;  $mRestart.Enabled = $true }
-        'starting' { $tray.Icon = $IconWait.Icon; $tray.Text = "$AppName - Iniciando…";   $mEstado.Text = 'Estado: iniciando…';   $mStart.Enabled = $false; $mStop.Enabled = $true;  $mRestart.Enabled = $false }
+        'starting' { $tray.Icon = $IconWait.Icon; $tray.Text = "$AppName - Iniciando...";   $mEstado.Text = 'Estado: iniciando...';   $mStart.Enabled = $false; $mStop.Enabled = $true;  $mRestart.Enabled = $false }
         'stopped'  { $tray.Icon = $IconStop.Icon; $tray.Text = "$AppName - Detenido";     $mEstado.Text = 'Estado: DETENIDO';     $mStart.Enabled = $true;  $mStop.Enabled = $false; $mRestart.Enabled = $false }
-        'stopping' { $tray.Icon = $IconWait.Icon; $tray.Text = "$AppName - Deteniendo…";  $mEstado.Text = 'Estado: deteniendo…';  $mStart.Enabled = $true;  $mStop.Enabled = $false; $mRestart.Enabled = $false }
+        'stopping' { $tray.Icon = $IconWait.Icon; $tray.Text = "$AppName - Deteniendo...";  $mEstado.Text = 'Estado: deteniendo...';  $mStart.Enabled = $true;  $mStop.Enabled = $false; $mRestart.Enabled = $false }
         'missing'  { $tray.Icon = $IconStop.Icon; $tray.Text = "$AppName - Sin servicio"; $mEstado.Text = 'Estado: servicio NO instalado'; $mStart.Enabled = $false; $mStop.Enabled = $false; $mRestart.Enabled = $false }
         default    { $tray.Icon = $IconWait.Icon; $tray.Text = "$AppName - $state";       $mEstado.Text = "Estado: $state" }
     }
-    # Globo SOLO al cambiar de estado (no cada tick — no molestar).
+    # Globo SOLO al cambiar de estado (no cada tick - no molestar).
     if ($script:lastState -and $script:lastState -ne $state) {
         switch ($state) {
-            'running' { Show-Balloon 'ViewLBA activo' 'El servidor está EN EJECUCIÓN. Listo para usar.' 'Info' }
-            'stopped' { Show-Balloon 'ViewLBA detenido' 'El servidor se DETUVO. Las pantallas dejarán de actualizarse.' 'Warning' }
+            'running' { Show-Balloon 'ViewLBA activo' 'El servidor esta EN EJECUCION. Listo para usar.' 'Info' }
+            'stopped' { Show-Balloon 'ViewLBA detenido' 'El servidor se DETUVO. Las pantallas dejaran de actualizarse.' 'Warning' }
         }
     }
     $script:lastState = $state
@@ -350,9 +350,9 @@ $script:timer.Start()
 Refresh-Now
 
 # Globo de bienvenida (el icono queda como indicador permanente de estado)
-Show-Balloon "$AppName" 'Icono de estado activo: VERDE en ejecución · ROJO detenido. Clic derecho para Iniciar / Detener / Configurar.' 'Info'
+Show-Balloon "$AppName" 'Icono de estado activo: VERDE en ejecucion | ROJO detenido. Clic derecho para Iniciar / Detener / Configurar.' 'Info'
 
 # ---------------------------------------------------------------------------
-# Bucle de mensajes (la bandeja vive mientras no elijan «Salir»)
+# Bucle de mensajes (la bandeja vive mientras no elijan 'Salir')
 # ---------------------------------------------------------------------------
 [System.Windows.Forms.Application]::Run()
