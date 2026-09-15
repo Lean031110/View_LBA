@@ -135,7 +135,24 @@ function runWithEnv(cmd: string, args: string[], env: NodeJS.ProcessEnv, timeout
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   } as never)
+  reapIfAlive(r.pid)
   return { stdout: r.stdout ?? "", stderr: r.stderr ?? "", status: r.status }
+}
+
+/**
+ * Mata un hijo que quedó VIVO pese a que spawnSync devolvió (quirk de bun
+ * en Windows: los pipes del hijo cerraron ANTES que el proceso — bug real
+ * del 15.º build: el CLI de prisma bajo bun dejaba un bun.exe vivo y con
+ * él toda la cadena cmd→NSIS→Setup.exe colgada). Si ya murió (caso
+ * normal), process.kill lanza ESRCH y no se hace nada.
+ */
+function reapIfAlive(pid: number | undefined): void {
+  if (!pid) return
+  try {
+    process.kill(pid, "SIGTERM")
+  } catch {
+    /* ya murió y fue reaped — caso normal */
+  }
 }
 
 /** Env de hijo: heredado + DATABASE_URL explícita (la fuente controlada). */

@@ -538,26 +538,29 @@ async function main(): Promise<number> {
   return runManager(subcommand)
 }
 
-// ---------- Protocolo de finalización (FASE 31: bug readline/stdin de Bun) ----------
+// ---------- Protocolo de finalización ----------
+// ⚠ SALIDA DURA (bug real del 15.º build, Windows): el sidecar --config
+// completaba TODA la instalación (30 s, reporte impreso) pero el PROCESO
+// nunca terminaba — handles colgados del árbol bun→prisma→engine dejan el
+// event loop vivo y el watchdog unref NO disparaba. La cadena completa
+// (cmd /c → NSIS → Setup.exe) esperaba a ESTE proceso → instalación colgada
+// de 20+ minutos pese a estar sana (servicio Running, health ok).
+// Protocolo: closeStdin() primero (readline), gracia de 300 ms para vaciar
+// el stdout (pipe de cmd /c), y process.exit EXPLÍCITO con el código real.
+// El catch sigue siendo consola + exit(1) — la misma garantía.
 main()
-  .then((code) => {
+  .then(async (code) => {
     process.exitCode = code
     closeStdin()
-    const watchdog: NodeJS.Timeout = setTimeout(() => {
-      console.error("[watchdog] cleanup completado pero el proceso sigue vivo (handle colgado de Bun); forzando salida.")
-      process.exit(process.exitCode ?? 0)
-    }, 6000)
-    watchdog.unref?.()
+    await new Promise((r) => setTimeout(r, 300))
+    process.exit(code)
   })
-  .catch((e) => {
+  .catch(async (e) => {
     console.error("\n✗ Error:", (e as Error).message)
     process.exitCode = 1
     closeStdin()
-    const watchdog: NodeJS.Timeout = setTimeout(() => {
-      console.error("[watchdog] salida forzada tras error (handle colgado de Bun).")
-      process.exit(1)
-    }, 6000)
-    watchdog.unref?.()
+    await new Promise((r) => setTimeout(r, 300))
+    process.exit(1)
   })
 
 // Exportado para tests del protocolo (spawn de este archivo).

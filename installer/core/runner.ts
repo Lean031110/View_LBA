@@ -60,6 +60,17 @@ export class RealRunner implements CmdRunner {
       stdin: "ignore",
       stdio: ["ignore", "pipe", "pipe"],
     } as never)
+    // Hijo VIVO pese a que spawnSync devolvió (quirk de bun en Windows:
+    // pipes cerrados antes que el proceso — 15.º build: un bun.exe vivo
+    // mantenía colgada toda la cadena cmd→NSIS→Setup.exe). Si ya murió,
+    // process.kill lanza ESRCH y no se hace nada.
+    if (r.pid) {
+      try {
+        process.kill(r.pid, "SIGTERM")
+      } catch {
+        /* ya murió — caso normal */
+      }
+    }
     return {
       status: r.status ?? null,
       stdout: r.stdout ?? "",
