@@ -3,6 +3,20 @@ name: Release Installers
 # ============================================================================
 # Build + Release de los instaladores oficiales de ViewLBA Server.
 #
+# v3.2.1 — BANDEJA PERMANENTE + FIX DEL CUELGUE DEL SETUP.exe:
+#   · FIX CRÍTICO (21.er build de v3.2.0): la bandeja se lanzaba con
+#     nsExec::Exec, que ESPERA a que el proceso termine — y la bandeja es
+#     un bucle de mensajes INFINITO → Setup.exe colgado 22+ min tras una
+#     instalación PERFECTA. Ahora se lanza con `Exec` (no espera) y el
+#     timeout de validación baja a 12 min.
+#   · BANDEJA (lo que pidió el usuario): icono PERMANENTE con indicador
+#     de estado (verde=activo/rojo=detenido) y menú Iniciar · Detener ·
+#     Reiniciar · Configurar · Panel. Windows: ViewLBA-Tray.ps1 (con
+#     ventana de configuración + instancia única + globos). Linux:
+#     viewlba-tray (Python3+GTK/AppIndicator) + iconos de estado hicolor
+#     + autostart XDG. El flujo COMPLETO por SO (incluida la prueba
+#     100 % OFFLINE con iptables/firewall) está en installer-flow.yml.
+#
 # v3.2 — INSTALADORES NATIVOS Y SIMPLES (feedback real del usuario):
 #   · Windows: Setup.exe con NSIS puro (sin Tauri, sin Rust). Instala TODO
 #     (el runtime bun va DENTRO del paquete: no hace falta node ni bun),
@@ -142,12 +156,19 @@ jobs:
           [[ -n "$ok" ]] || { echo "✗ /api/health sin respuesta"; sudo viewlba-server logs || true; exit 1; }
           cat /tmp/health.json; echo
 
-          echo "→ credenciales + accesos:"
+          echo "→ credenciales + accesos + bandeja:"
           sudo test -s /opt/viewlba-server/CREDENCIALES.txt
           test -f /usr/share/applications/viewlba-panel.desktop
           test -f /usr/share/applications/viewlba-start.desktop
+          test -f /usr/share/applications/viewlba-tray.desktop
           test -x /usr/bin/viewlba-server
+          test -x /usr/bin/viewlba-tray
+          test -s /etc/xdg/autostart/viewlba-tray.desktop
+          for s in running stopped waiting; do
+            test -s "/usr/share/icons/hicolor/22x22/apps/viewlba-$s.png" || { echo "✗ falta icono viewlba-$s"; exit 1; }
+          done
           sudo viewlba-server status | grep -E "pantalla-restaurante" | head -3
+          echo "✓ bandeja: script + autostart + iconos de estado (verde/rojo/amarillo)"
 
           echo "→ ciclo stop/start (los botones del usuario):"
           sudo viewlba-server stop   || true
@@ -211,6 +232,12 @@ jobs:
             || { echo "✗ el .deb NO contiene el runtime bun (autosuficiencia)"; exit 1; }
           grep -q "usr/share/applications/viewlba-panel.desktop" /tmp/deb-contents.txt \
             || { echo "✗ el .deb NO crea accesos directos"; exit 1; }
+          grep -q "usr/bin/viewlba-tray" /tmp/deb-contents.txt \
+            || { echo "✗ el .deb NO instala la bandeja (viewlba-tray)"; exit 1; }
+          grep -q "etc/xdg/autostart/viewlba-tray.desktop" /tmp/deb-contents.txt \
+            || { echo "✗ el .deb NO instala el autostart de la bandeja"; exit 1; }
+          grep -q "icons/hicolor/22x22/apps/viewlba-running.png" /tmp/deb-contents.txt \
+            || { echo "✗ el .deb NO instala los iconos de estado de la bandeja"; exit 1; }
           # ⚠ dpkg-deb --contents lista SOLO el archivo data: DEBIAN/postinst
           # NO aparece ahí (bug del 9.º build: grep silencioso → set -e mataba
           # el paso sin mensaje). El control se valida extrayéndolo.
@@ -357,7 +384,7 @@ jobs:
       # /api/health 200. Igual que lo hará el usuario (doble clic → listo).
       - name: "VALIDACIÓN REAL: Setup.exe /S → servicio + health + net stop/start + uninstall"
         shell: pwsh
-        timeout-minutes: 30
+        timeout-minutes: 15
         run: |
           $exe = "dist/release/windows/out/ViewLBA-Server-Setup-$env:VERSION.exe"
           if (-not (Test-Path $exe)) { throw "falta el Setup.exe" }
@@ -397,20 +424,16 @@ jobs:
           # (integridad media): sin elevación explícita el instalador muere
           # en el preflight «Permisos de administrador: NO». Los runners
           # de Windows auto-aprueban la elevación (ConsentPromptBehaviorAdmin=0).
-          # ⚠ SEÑAL DE ÉXITO, no salida del proceso (lección builds 15-18):
-          # el sidecar de bun-compile completa la instalación (reporte
-          # «INSTALACIÓN COMPLETA» + servicio Running) pero su PROCESO puede
-          # no terminar (handles nativos de bun→prisma→engine) → Setup.exe
-          # esperaba para siempre. Ahora se sondea la SEÑAL: el marcador del
-          # reporte en install.log + el estado del servicio. El éxito se
-          # decide por el ESTADO REAL del sistema, no por el exit code.
+          # v3.2.1: la bandeja ya se lanza con Exec (NO nsExec) → el Setup.exe
+          # TERMINA SOLO tras completar; 12 min de margen (regresión del
+          # 21.er build: nsExec::Exec esperaba el bucle infinito de la bandeja).
           $p = Start-Process -FilePath $exe -ArgumentList "/S" -PassThru -Verb RunAs
-          $deadline = (Get-Date).AddMinutes(22)
+          $deadline = (Get-Date).AddMinutes(12)
           $lastSize = -1L
           $succeeded = $false
           while ((Get-Date) -lt $deadline) {
             if ($p.HasExited) { break }
-            Start-Sleep 15
+            Start-Sleep 10
             if (Test-Path "C:\ViewLBA\install.log") {
               $sz = (Get-Item "C:\ViewLBA\install.log").Length
               if ($sz -ne $lastSize) {
@@ -418,37 +441,15 @@ jobs:
                 $tail = (Get-Content "C:\ViewLBA\install.log" -Tail 3 -ErrorAction SilentlyContinue) -join " ⏐ "
                 if ($tail) { Write-Host "  … [$((Get-Date).ToString('HH:mm:ss'))] $tail" }
               }
-              # SEÑAL DE ÉXITO: el reporte final del sidecar
-              if (Select-String -Path "C:\ViewLBA\install.log" -Pattern "INSTALACIÓN COMPLETA" -Quiet) {
-                Write-Host "✓ marcador «INSTALACIÓN COMPLETA» detectado en install.log"
-                $succeeded = $true
-                break
-              }
+              if (Select-String -Path "C:\ViewLBA\install.log" -Pattern "INSTALACIÓN COMPLETA" -Quiet) { $succeeded = $true }
             }
           }
-          if ($succeeded) {
-            # El trabajo del sidecar ESTÁ hecho, pero NSIS aún tiene que
-            # ejecutar SUS pasos post-sidecar (bandeja, accesos, registro,
-            # uninstall.exe) — que solo corren cuando su /TIMEOUT interno
-            # (10 min) corta la espera del proceso colgado. Esperar a que
-            # Setup.exe termine por sí mismo, con eco de progreso.
-            Write-Host "… esperando a que NSIS complete sus pasos post-instalación (timeout interno 10 min)…"
-            while (-not $p.HasExited -and (Get-Date) -lt $deadline) { Start-Sleep 20 }
-          }
           if (-not $p.HasExited) {
-            Write-Host "⏱ TIMEOUT: la instalación NO terminó en 22 minutos."
+            Write-Host "⏱ TIMEOUT: Setup.exe NO terminó en 12 minutos."
             taskkill /PID $p.Id /T /F 2>&1 | Out-String | ForEach-Object { Write-Host "  $_" }
             Start-Sleep 3
             Dump-Diagnostics "VOLCADO DE DIAGNÓSTICO (instalación colgada)"
-            # nssm dump puede quedarse esperando (lección del 15.º build: lo
-            # colgó 10 min y comió el timeout del paso) → job con plazo duro.
-            $job = Start-Job -ScriptBlock {
-              & "C:\PantallaRestaurante\app\runtime\nssm.exe" dump PantallaRestaurante 2>&1 | Select-Object -First 25
-            }
-            if (Wait-Job $job -Timeout 15) { Receive-Job $job | ForEach-Object { Write-Host "  $_" } }
-            else { Write-Host "  (nssm dump sin responder en 15 s — omitido)" }
-            Remove-Job $job -Force -ErrorAction SilentlyContinue
-            throw "la instalación silenciosa excedió 22 minutos (ver volcado)"
+            throw "Setup.exe colgado (¿regresión del nsExec de la bandeja?)"
           }
           if (-not $succeeded -and $p.ExitCode -ne 0) {
             Write-Host "→ la instalación silenciosa falló (código $($p.ExitCode)). Diagnóstico:"
@@ -459,6 +460,7 @@ jobs:
             }
             throw "la instalación silenciosa falló (código $($p.ExitCode))"
           }
+          Write-Host "✓ Setup.exe TERMINÓ solo (exit $($p.ExitCode)) — sin cuelgue"
 
           Write-Host "→ servicio registrado y corriendo:"
           $svc = Get-Service -Name PantallaRestaurante -ErrorAction SilentlyContinue
@@ -504,18 +506,33 @@ jobs:
           $err = powershell.exe -NoProfile -Command "try { [void][System.Management.Automation.Language.Parser]::ParseFile('C:\ViewLBA\tray\ViewLBA-Tray.ps1', [ref]$null, [ref]\$e); if (\$e) { exit 1 } } catch { exit 1 }; exit 0"
           if ($LASTEXITCODE -ne 0) { Write-Host "::warning::el parser reportó problemas en ViewLBA-Tray.ps1" }
 
+          # bandeja VIVA: el instalador la lanza con Exec → proceso registrado
+          $PidFile = 'C:\ViewLBA\tray\tray.pid'
+          if (Test-Path $PidFile) {
+            $tpid = [int](Get-Content $PidFile | Select-Object -First 1)
+            $tproc = Get-Process -Id $tpid -ErrorAction SilentlyContinue
+            if ($tproc -and $tproc.ProcessName -match 'powershell') {
+              Write-Host "✓ bandeja VIVA (PID $tpid) — icono de estado instalado"
+            } else {
+              Write-Host "::warning::la bandeja no está viva (PID $tpid)"
+            }
+          } else {
+            Write-Host "::warning::falta tray.pid — la bandeja no llegó a lanzarse"
+          }
+
           Write-Host "→ ciclo stop/start (los botones del usuario):"
-          net stop PantallaRestaurante | Write-Host
+          # elevar por acción (token filtrado del runner: net.exe requiere admin)
+          $p = Start-Process net.exe -ArgumentList 'stop','PantallaRestaurante' -Verb RunAs -PassThru -Wait -WindowStyle Hidden
           Start-Sleep 2
           if ((Get-Service PantallaRestaurante).Status -ne 'Stopped') { throw "no se detuvo" }
-          net start PantallaRestaurante | Write-Host
+          $p = Start-Process net.exe -ArgumentList 'start','PantallaRestaurante' -Verb RunAs -PassThru -Wait -WindowStyle Hidden
           $deadline = (Get-Date).AddSeconds(60)
           while ((Get-Date) -lt $deadline -and (Get-Service PantallaRestaurante).Status -ne 'Running') { Start-Sleep 2 }
           if ((Get-Service PantallaRestaurante).Status -ne 'Running') { throw "no arrancó de nuevo" }
           Write-Host "✓ stop/start correcto"
 
           Write-Host "→ desinstalación (conserva datos, quita servicio + accesos):"
-          $u = Start-Process -FilePath "C:\ViewLBA\uninstall.exe" -ArgumentList "/S" -Wait -PassThru
+          $u = Start-Process -FilePath "C:\ViewLBA\uninstall.exe" -ArgumentList "/S" -Verb RunAs -Wait -PassThru -WindowStyle Hidden
           if ($u.ExitCode -ne 0) { throw "el desinstalador falló ($($u.ExitCode))" }
           if (Get-Service PantallaRestaurante -ErrorAction SilentlyContinue) { throw "el servicio sigue existiendo tras desinstalar" }
           $desk = [Environment]::GetFolderPath('Desktop')
