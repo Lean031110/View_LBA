@@ -72,12 +72,15 @@ describe("Bandeja Windows (ViewLBA-Tray.ps1)", () => {
     expect(ps1).toContain("EN EJECUC")
   })
 
-  test("instancia única (autostart + instalador no duplican la bandeja)", () => {
+  test("instancia única por pid-file (autostart + instalador no duplican la bandeja)", () => {
     expect(ps1).toContain("tray.pid")
     expect(ps1).toMatch(/Get-Process -Id \(\[int\]\$other\)/)
-    expect(ps1).toMatch(/Get-CimInstance Win32_Process/)
-    expect(ps1).toMatch(/ViewLBA-Tray\\\.ps1/)
-    expect(ps1).toContain("if ($already) { exit 0 }")
+    expect(ps1).toContain("if ($proc -and $proc.ProcessName -match 'powershell') { exit 0 }")
+    // el pid se registra ANTES de cargar WinForms (arranque rápido)
+    const pidPos = ps1.indexOf("Set-Content -Path $PidFile")
+    const addTypePos = ps1.indexOf("Add-Type -AssemblyName System.Windows.Forms")
+    expect(pidPos).toBeGreaterThan(0)
+    expect(pidPos).toBeLessThan(addTypePos)
   })
 
   test("refresco periódico del estado (timer ≤ 10 s)", () => {

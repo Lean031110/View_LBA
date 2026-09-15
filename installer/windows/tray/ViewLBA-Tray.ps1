@@ -43,8 +43,8 @@ $CredFile    = 'C:\ViewLBA\CREDENCIALES.txt'
 # ---------------------------------------------------------------------------
 # Instancia única + registro INMEDIATO del pid (ANTES de Add-Type: cargar
 # WinForms tarda segundos y el CI/usuario no debe esperar para vernos).
-# Doble guard: pid-file (determinista, funciona con/sin elevación) + CIM
-# (cubre procesos lanzados antes de esta versión).
+# Guard por pid-file: determinista, sin WMI, funciona con/sin elevación
+# (el autostart, el acceso directo y el instalador comparten este archivo).
 # ---------------------------------------------------------------------------
 $PidFile = 'C:\ViewLBA\tray\tray.pid'
 if (Test-Path $PidFile) {
@@ -54,9 +54,6 @@ if (Test-Path $PidFile) {
         if ($proc -and $proc.ProcessName -match 'powershell') { exit 0 }
     } catch { }
 }
-$already = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
-    Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match 'ViewLBA-Tray\.ps1' }
-if ($already) { exit 0 }
 # registrar ESTA instancia (el CI y las siguientes copias usan este pid)
 try {
     $dir = Split-Path $PidFile -Parent
