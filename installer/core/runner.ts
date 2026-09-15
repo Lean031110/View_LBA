@@ -53,7 +53,13 @@ export class RealRunner implements CmdRunner {
       timeout: opts.timeoutMs ?? 180_000,
       shell: opts.shell ?? false,
       windowsHide: true,
-    })
+      // stdio[0]="ignore" (lección del 14.º build): ningún hijo del
+      // instalador debe esperar stdin — bajo «cmd /c … > install.log» (NSIS)
+      // un hijo interactivo colgaría la instalación entera. Doble forma
+      // (stdin + stdio[0]): bun admite ambas, node ignora la que no conoce.
+      stdin: "ignore",
+      stdio: ["ignore", "pipe", "pipe"],
+    } as never)
     return {
       status: r.status ?? null,
       stdout: r.stdout ?? "",

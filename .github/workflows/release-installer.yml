@@ -357,29 +357,81 @@ jobs:
       # /api/health 200. Igual que lo hará el usuario (doble clic → listo).
       - name: "VALIDACIÓN REAL: Setup.exe /S → servicio + health + net stop/start + uninstall"
         shell: pwsh
-        timeout-minutes: 15
+        timeout-minutes: 30
         run: |
           $exe = "dist/release/windows/out/ViewLBA-Server-Setup-$env:VERSION.exe"
           if (-not (Test-Path $exe)) { throw "falta el Setup.exe" }
+
+          # Volcado de diagnóstico COMPLETO (lección del 14.º build: el /S
+          # colgado murió al timeout del paso SIN volcar nada — el install.log
+          # del runner se perdió y no hubo evidencia de la fase).
+          function Dump-Diagnostics([string]$Titulo) {
+            Write-Host "--- $Titulo ---"
+            if (Test-Path "C:\ViewLBA\install.log") {
+              Write-Host "--- install.log (salida REAL del instalador durante el /S) ---"
+              Get-Content "C:\ViewLBA\install.log" | ForEach-Object { Write-Host "  $_" }
+            } else {
+              Write-Host "  (sin install.log — el instalador ni siquiera llegó a ejecutarse)"
+            }
+            Write-Host "--- procesos vivos (viewlba/bun/nssm/Setup/consola) ---"
+            Get-Process | Where-Object { $_.Name -match "viewlba|bun|nssm|Setup|cmd|node" } |
+              Select-Object Id,Name,@{n='CPU';e={try{[math]::Round($_.CPU,1)}catch{'?'}}},@{n='Start';e={try{$_.StartTime.ToString('HH:mm:ss')}catch{'?'}}} |
+              Format-Table -AutoSize | Out-String | ForEach-Object { Write-Host $_ }
+            Write-Host "--- servicio PantallaRestaurante ---"
+            Get-Service PantallaRestaurante -ErrorAction SilentlyContinue | Format-Table -AutoSize | Out-String | ForEach-Object { Write-Host $_ }
+            if (Test-Path "C:\PantallaRestaurante\logs") {
+              Write-Host "--- logs del app instalado ---"
+              Get-ChildItem "C:\PantallaRestaurante\logs" | ForEach-Object {
+                Write-Host "  $($_.Name) ($($_.Length) bytes)"
+                if ($_.Name -match '\.(log|txt)$') {
+                  Get-Content $_.FullName -Tail 40 | ForEach-Object { Write-Host "    $_" }
+                }
+              }
+            } else {
+              Write-Host "  (sin C:\PantallaRestaurante\logs — no llegó a la fase de servicios)"
+            }
+          }
 
           Write-Host "→ instalación silenciosa (como el usuario, sin preguntas)…"
           # -Verb RunAs: los pasos del runner corren con token FILTRADO
           # (integridad media): sin elevación explícita el instalador muere
           # en el preflight «Permisos de administrador: NO». Los runners
           # de Windows auto-aprueban la elevación (ConsentPromptBehaviorAdmin=0).
-          $p = Start-Process -FilePath $exe -ArgumentList "/S" -Wait -PassThru -Verb RunAs
+          # ⚠ WATCHDOG (14.º build): -Wait colgado mataba solo al timeout del
+          # PASO sin volcado. Ahora se sondea: eco de progreso (cola del
+          # install.log cada vez que crece) + plazo duro de 20 min + volcado
+          # completo + kill del árbol de procesos antes de morir.
+          $p = Start-Process -FilePath $exe -ArgumentList "/S" -PassThru -Verb RunAs
+          $deadline = (Get-Date).AddMinutes(20)
+          $lastSize = -1L
+          while (-not $p.HasExited -and (Get-Date) -lt $deadline) {
+            Start-Sleep 20
+            if (Test-Path "C:\ViewLBA\install.log") {
+              $sz = (Get-Item "C:\ViewLBA\install.log").Length
+              if ($sz -ne $lastSize) {
+                $lastSize = $sz
+                $tail = (Get-Content "C:\ViewLBA\install.log" -Tail 3 -ErrorAction SilentlyContinue) -join " ⏐ "
+                if ($tail) { Write-Host "  … [$((Get-Date).ToString('HH:mm:ss'))] $tail" }
+              }
+            }
+          }
+          if (-not $p.HasExited) {
+            Write-Host "⏱ TIMEOUT: la instalación NO terminó en 20 minutos."
+            taskkill /PID $p.Id /T /F 2>&1 | Out-String | ForEach-Object { Write-Host "  $_" }
+            Start-Sleep 3
+            Dump-Diagnostics "VOLCADO DE DIAGNÓSTICO (instalación colgada)"
+            if (Test-Path "C:\ViewLBA\viewlba-installer.exe") {
+              Write-Host "--- nssm dump (si el servicio llegó a crearse) ---"
+              & "C:\PantallaRestaurante\app\runtime\nssm.exe" dump PantallaRestaurante 2>&1 | Select-Object -First 25 | ForEach-Object { Write-Host "  $_" }
+            }
+            throw "la instalación silenciosa excedió 20 minutos (ver volcado)"
+          }
           if ($p.ExitCode -ne 0) {
             Write-Host "→ la instalación silenciosa falló (código $($p.ExitCode)). Diagnóstico:"
-            # El instalador dejó SU salida en install.log (redirección del NSIS)
-            if (Test-Path "C:\ViewLBA\install.log") {
-              Write-Host "--- install.log (salida REAL del instalador durante el /S) ---"
-              Get-Content "C:\ViewLBA\install.log" | Select-Object -First 60 | ForEach-Object { Write-Host "  $_" }
-            } else {
-              Write-Host "  (sin install.log — el instalador ni siquiera llegó a ejecutarse)"
-            }
-            if (Test-Path "C:\ViewLBA\viewlba-installer.exe") {
-              Write-Host "--- viewlba-installer --config (re-ejecución visible, token del paso) ---"
-              & C:\ViewLBA\viewlba-installer.exe --config C:\ViewLBA\install-config.json 2>&1 | Select-Object -First 30 | ForEach-Object { Write-Host "  $_" }
+            Dump-Diagnostics "VOLCADO DE DIAGNÓSTICO (código $($p.ExitCode))"
+            if (Test-Path "C:\ViewLBA\install-config.json") {
+              Write-Host "--- install-config.json usado ---"
+              Get-Content "C:\ViewLBA\install-config.json" | ForEach-Object { Write-Host "  $_" }
             }
             throw "la instalación silenciosa falló (código $($p.ExitCode))"
           }
