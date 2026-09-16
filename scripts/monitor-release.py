@@ -6,7 +6,7 @@ import urllib.request
 
 TOKEN = sys.argv[1]
 RUN_ID = sys.argv[2]
-API = "https://api.github.com/repos/Lean031110/Pantalla_Restaurante"
+API = "https://api.github.com/repos/Lean031110/View_LBA"
 
 def get(url: str):
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {TOKEN}", "User-Agent": "monitor"})

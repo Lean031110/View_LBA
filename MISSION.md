@@ -5,7 +5,8 @@
 > Ubicación fija: `/home/z/my-project/MISSION.md` (raíz del proyecto, versionado en git).
 > El progreso de cada fase se registra en `PRODUCTION_PLAN.md` y en `worklog.md`.
 
-**Repo:** https://github.com/Lean031110/Pantalla_Restaurante
+**Repo:** https://github.com/Lean031110/View_LBA
+**Nota:** el repo fue renombrado en su día (GitHub redirige el nombre antiguo hacia el actual); usa siempre la URL de arriba.
 **Fecha del encargo:** 2026-09-09
 **Estado:** EN EJECUCIÓN (fases en orden obligatorio 0→43)
 
@@ -15,7 +16,7 @@
 
 Estás trabajando sobre el repositorio:
 
-https://github.com/Lean031110/Pantalla_Restaurante
+https://github.com/Lean031110/View_LBA
 
 Tu objetivo es llevar el proyecto existente a un estado REALMENTE APTO PARA PRODUCCIÓN para un sistema de cartelería digital de restaurante 24/7, manteniendo la arquitectura actual siempre que sea viable.
 

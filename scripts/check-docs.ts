@@ -88,6 +88,31 @@ for (const docFile of ["CONTRIBUTING.md", "docs/INSTALLATION.md"]) {
 }
 ok("CONTRIBUTING.md y docs/INSTALLATION.md clonan el repo correcto")
 
+// 2b. Tooling de release: NINGÚN script activo puede apuntar al nombre
+//     antiguo del repo (regresión v3.2.2: publish-github.sh usaba
+//     Pantalla_Restaurante con curl -sf sin -L → 301 silencioso; el
+//     Homepage del .deb apuntaba al nombre viejo).
+const RELEASE_TOOLING = [
+  "installer/linux/build-deb.ts",
+  "installer/package/bundle-server.ts",
+  "installer/package/appimage.sh",
+  "installer/package/appimage-gui.sh",
+  "installer/windows/viewlba-setup.nsi",
+  "scripts/publish-github.sh",
+  "scripts/monitor-release.py",
+  "scripts/monitor-release2.sh",
+  "MISSION.md",
+  "README-LAN.md",
+]
+for (const toolFile of RELEASE_TOOLING) {
+  if (!existsSync(toolFile)) continue
+  const text = readFileSync(toolFile, "utf8")
+  if (/Pantalla_Restaurante/.test(text)) {
+    fail(`${toolFile} referencia el nombre antiguo del repo (Pantalla_Restaurante) — API calls sin redirect y metadatos del .deb quedarían rotos`)
+  }
+}
+ok(`tooling de release sin el nombre antiguo (${RELEASE_TOOLING.filter((f) => existsSync(f)).length} archivos)`)
+
 // ---------------------------------------------------------------------------
 // 3. Enlaces relativos del README → archivos existentes
 // ---------------------------------------------------------------------------

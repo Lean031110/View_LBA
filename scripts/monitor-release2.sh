@@ -5,7 +5,7 @@ set -uo pipefail
 RUN="${1:?run_id requerido}"
 MAX_MIN="${2:-45}"
 TOKEN="${GITHUB_TOKEN:?}"
-API="https://api.github.com/repos/Lean031110/Pantalla_Restaurante/actions"
+API="https://api.github.com/repos/Lean031110/View_LBA/actions"
 START=$(date +%s)
 LAST=""
 

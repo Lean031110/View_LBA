@@ -154,6 +154,28 @@ instaladores funcionan completamente offline y traen todas las dependencias»)
   fallido es indistinguible de cualquier otra muerte silenciosa).
 
 
+### Arreglado (pre-publicación — auditoría del artefacto real en Debian 13)
+
+- **`Homepage` del .deb apuntaba al nombre antiguo del repo** —
+  `installer/linux/build-deb.ts` escribía
+  `github.com/Lean031110/Pantalla_Restaurante` en el control del paquete;
+  GitHub redirige (301) pero la metadata publicada debía apuntar al repo
+  real (`View_LBA`). Corregido.
+- **Tooling de release contra el nombre antiguo (301 silencioso)** —
+  `scripts/publish-github.sh` (REPO=), `scripts/monitor-release.py` y
+  `scripts/monitor-release2.sh` (API=) llamaban al API del repo viejo con
+  `curl -sf`/urllib SIN seguir redirects: GitHub responde 301 y las
+  llamadas fallan o pasan por alto. Apuntados a `View_LBA`.
+- **`check-docs.ts` ahora también protege el TOOLING de release** (guard
+  nuevo): 10 archivos activos (build-deb, bundle-server, appimage, NSIS,
+  publish/monitores, MISSION, README-LAN) NO pueden volver a contener el
+  nombre antiguo del repo — antes el gate solo cubría README/CONTRIBUTING/
+  INSTALLATION. MISSION.md apunta al repo real.
+- **Validación local del artefacto en Debian 13 (trixie)**: el .deb se
+  construyó y probó FUERA de los runners de CI — payload smoke completo
+  (migrate + seed + arranque + health + UI + mini-services + SIGTERM),
+  bandeja con el runtime bun empaquetado y `Depends: systemd` único.
+
 ## [3.2.1] — 2026-09-16 — Bandeja permanente + fix del Setup.exe colgado + CI de flujo completo por SO
 
 ### Arreglado
