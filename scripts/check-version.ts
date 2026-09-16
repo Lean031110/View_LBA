@@ -62,7 +62,7 @@ const gradleProps = readFileSync(
 );
 const m = gradleProps.match(/^VERSION_CODE=(\d+)$/m);
 if (!m) fail("falta VERSION_CODE en android-license-generator/gradle.properties");
-const code = Number(m[1]);
+const code = Number(m?.[1] ?? 0);
 if (code < 2) fail(`VERSION_CODE=${code} no es monótono (v1.0.0 publicada con 1)`);
 console.log(`✓ VERSION_CODE = ${code} (monótono > 1)`);
 

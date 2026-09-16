@@ -145,7 +145,6 @@ function menuEnabled(item: MenuItem, state: string): boolean {
 function serviceState(): string {
   try {
     const r = spawnSync(SYSTEMCTL, ["is-active", SERVICE], {
-      captureOutput: true,
       encoding: "utf8",
       timeout: 5000,
     })
@@ -225,7 +224,7 @@ async function notify(icon: string, title: string, body: string): Promise<void> 
 
 function pidFile(): string {
   const runtime = process.env.XDG_RUNTIME_DIR || "/tmp"
-  return `${runtime}/viewlba-tray-${process.getuid()}.pid`
+  return `${runtime}/viewlba-tray-${process.getuid?.() ?? 0}.pid`
 }
 
 function acquireSingleInstance(): boolean {
@@ -681,8 +680,10 @@ async function main(): Promise<number> {
   // bienvenida (si hay demonio de notificaciones)
   notify(currentIcon(), "Bandeja de ViewLBA activa", `Servidor: ${STATE_LABEL[state] ?? state}. Menú: clic derecho en el icono.`)
 
-  process.on("SIGTERM", () => shutdown(0))
-  process.on("SIGINT", () => shutdown(0))
+  // bun-types no declara las señales de node:process en on(); el runtime
+  // (bun, que es quien ejecuta la bandeja) las acepta tal cual.
+  process.on("SIGTERM" as never, () => shutdown(0))
+  process.on("SIGINT" as never, () => shutdown(0))
 
   scheduleTick()
   schedulePing()

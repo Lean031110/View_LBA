@@ -584,7 +584,7 @@ export async function runInstall(config: InstallConfig, deps: InstallDeps): Prom
       if (!result.ok) throw new PhaseError("admin", result.error ?? "no se pudo crear el admin", undefined, undefined, "admin")
       adminCreated = result.adminCreated
       if (config.restaurantName && config.restaurantName !== "Mi Restaurante") {
-        await applyRestaurantName(config.restaurantName, ctx.env.DATABASE_URL)
+        await applyRestaurantName(config.restaurantName, ctx.env.DATABASE_URL ?? "")
       }
       return result.adminCreated ? `admin ${config.adminEmail} creado` : "ya existían admins"
     })

@@ -41,17 +41,21 @@ async function apiLogin(): Promise<string> {
  * firmamos con la clave DUMMY de test (sin secretos reales).
  */
 async function ensureActiveLicense(cookie: string): Promise<void> {
-  const st = await fetch(`${BASE}/api/license`, { headers: { cookie } }).then((r) => r.json())
+  const st = (await fetch(`${BASE}/api/license`, { headers: { cookie } }).then((r) => r.json())) as {
+    status?: string
+  }
   if (st?.status === "active") {
     console.log("  licencia ya activa")
     return
   }
   // 1. código de solicitud del SERVIDOR (identidad real de esta máquina)
-  const rc = await fetch(`${BASE}/api/license/request-code`, {
+  const rc = (await fetch(`${BASE}/api/license/request-code`, {
     method: "POST",
     headers: { cookie, "Content-Type": "application/json" },
     body: JSON.stringify({ customerName: "La Terraza Grill & Bar" }),
-  }).then((r) => r.json())
+  }).then((r) => r.json())) as {
+    requestCode?: string
+  }
   if (!rc?.requestCode) throw new Error("request-code falló: " + JSON.stringify(rc).slice(0, 200))
   // 2. el "emisor" (claves DUMMY de E2E) abre el código y emite el token
   const opened = openE2eRequestCode(rc.requestCode as string)
@@ -82,11 +86,13 @@ async function ensureActiveLicense(cookie: string): Promise<void> {
     E2E_LICENSE_PRIVATE_KEY
   )
   // 3. activar (el servidor revalida firma + binding de ESTA máquina)
-  const act = await fetch(`${BASE}/api/license/activate`, {
+  const act = (await fetch(`${BASE}/api/license/activate`, {
     method: "POST",
     headers: { cookie, "Content-Type": "application/json" },
     body: JSON.stringify({ token }),
-  }).then((r) => r.json())
+  }).then((r) => r.json())) as {
+    ok?: boolean
+  }
   if (!act?.ok) throw new Error("activate falló: " + JSON.stringify(act).slice(0, 200))
   console.log("  licencia activada para la identidad de esta máquina")
 }

@@ -37,6 +37,7 @@
 
 import net from "node:net"
 import { Buffer } from "node:buffer"
+import { readFileSync } from "node:fs"
 
 // ---------------------------------------------------------------------------
 // Tipos de valor (representación JS de cada tipo D-Bus)
@@ -734,7 +735,7 @@ export class DBusConnection {
       addresses.push(opts.address)
     } else {
       if (process.env.DBUS_SESSION_BUS_ADDRESS) addresses.push(process.env.DBUS_SESSION_BUS_ADDRESS)
-      const uid = process.getuid()
+      const uid = process.getuid?.() ?? 0
       if (process.env.XDG_RUNTIME_DIR) addresses.push(`unix:path=${process.env.XDG_RUNTIME_DIR}/bus`)
       addresses.push(`unix:path=/run/user/${uid}/bus`)
     }
@@ -791,7 +792,7 @@ export class DBusConnection {
 
       this.sock.on("connect", () => {
         // SASL: byte NUL + AUTH EXTERNAL <hex(uid ascii)>
-        const uidHex = Buffer.from(String(process.getuid()), "utf8").toString("hex")
+        const uidHex = Buffer.from(String(process.getuid?.() ?? 0), "utf8").toString("hex")
         this.sock.write(Buffer.concat([Buffer.from([0]), Buffer.from(`AUTH EXTERNAL ${uidHex}\r\n`, "utf8")]))
       })
 
@@ -1120,8 +1121,7 @@ let cachedMachineId: string | undefined
 function machineId(): string {
   if (cachedMachineId) return cachedMachineId
   try {
-    const fs = require("node:fs") as typeof import("node:fs")
-    cachedMachineId = fs.readFileSync("/etc/machine-id", "utf8").trim()
+    cachedMachineId = readFileSync("/etc/machine-id", "utf8").trim()
   } catch {
     cachedMachineId = "00000000000000000000000000000000"
   }

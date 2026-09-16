@@ -77,6 +77,43 @@ instaladores funcionan completamente offline y traen todas las dependencias»)
   + **regresión offline**: el build ROMPE si el control vuelve a depender
   de python/gir/appindicator.
 
+### Añadido (mismo día — verificación de TODO + README pro)
+
+- **`tsconfig.installer.json` — el instalador y la bandeja ahora son
+  TypeScript ESTRICTO**: `installer/**` (CLI, adaptadores, build-deb,
+  bandeja D-Bus) y `scripts/**` antes no los tipaba NADIE (el tsconfig
+  principal solo incluye `src/**`); solo corrían con bun. Gate nuevo en
+  el job quality de la CI (`bun run typecheck:installer`) + fixes de los
+  errores que el gate destapó:
+  - `scripts/restore.ts` importaba `purgeInvalidThemes` del barril
+    `src/lib/themes` — que NO lo re-exportaba → **`bun run db:restore`
+    crasheaba al importar** (el CLI de restauración estaba roto).
+    Re-exportado. El typecheck lo habría cazado a tiempo.
+  - `installer/linux/tray/dbus.ts`: `require()` de node:fs → import
+    estático (lint) y `process.getuid` defensivo.
+  - `installer/linux/tray/tray.ts`: opción `captureOutput` redundante
+    eliminada (node:child_process ya captura siempre en modo sync;
+    verificado en runtime con bun) y `getuid` defensivo.
+  - `installer/core/install.ts` + `scripts/manual-screenshots.ts` +
+    `scripts/check-version.ts`: null-safety y tipado de respuestas fetch.
+- **`scripts/check-docs.ts` — gate de coherencia de documentación** (nuevo
+  paso del job quality): badges de Actions al repo REAL y a workflows que
+  existen, instrucciones `git clone` correctas en README/CONTRIBUTING/
+  INSTALLATION, todos los enlaces relativos del README resuelven, índice
+  de docs completo (cada `docs/*.md` enlazado desde el README), screenshots
+  presentes y **conteos publicados fieles al código** (specs/tests/
+  escenarios E2E exactos; tests unitarios en banda estático↔runtime).
+- **README.md reescrito** (pro, completo y sin errores): badges + clone +
+  `package.json` apuntaban a `Pantalla_Restaurante` cuando el repo real es
+  `View_LBA` (corregido en los 4 sitios); conteos actualizados (776 tests ·
+  E2E 9 specs/52 tests/22 escenarios · 15 secciones del panel); nueva
+  sección **Bandeja del sistema** (tabla Windows/Linux); sección de
+  instaladores con la prueba offline real de la CI; índice de docs ampliado
+  (+EMISOR DE LICENCIAS, +SEGURIDAD DE LICENCIAS); badge nuevo del
+  workflow Installer Flow CI.
+- CI: nombre del job E2E actualizado (52 tests / 22 escenarios) y
+  comentario del paso de tests con las cifras reales.
+
 ## [3.2.1] — 2026-09-16 — Bandeja permanente + fix del Setup.exe colgado + CI de flujo completo por SO
 
 ### Arreglado
