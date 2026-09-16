@@ -160,10 +160,16 @@ jobs:
           sudo test -x /opt/viewlba-server/runtime/bunx || { echo "✗ runtime/bunx roto o ausente (regresión v3.2.2)"; exit 1; }
           BUNX_V=$(sudo /opt/viewlba-server/runtime/bunx --version 2>&1 | head -1)
           echo "✓ runtime/bunx ejecuta desde el árbol instalado (bun $BUNX_V)"
-          # .bin/prisma del paquete resuelve (regresión v3.2.2: apuntaba al runner)
-          sudo test -e /opt/viewlba-server/resources/server/node_modules/.bin/prisma \
-            || { echo "✗ node_modules/.bin/prisma roto (target absoluto del runner)"; exit 1; }
-          echo "✓ .bin/prisma resuelve desde el árbol instalado"
+          # CLI de prisma resuelve en la APP instalada (/opt/pantalla-restaurante):
+          # el postinst PODA resources/server del PAQUETE tras copiar la app
+          # (diseño: el .deb conserva solo sidecar+runtime+manifest), y el
+          # instalador invoca prisma por ruta directa (resolvePrismaCli), no
+          # vía .bin — este es el contrato que debe funcionar en producción.
+          sudo test -e /opt/pantalla-restaurante/node_modules/prisma/build/index.js \
+            || { echo "✗ el CLI de prisma no resuelve en la app instalada (/opt/pantalla-restaurante)"; exit 1; }
+          echo "✓ CLI de prisma presente en la app instalada (resolvePrismaCli)"
+          # (el .bin/prisma del ARTEFACTO pre-poda lo valida release-installer.yml
+          # sobre el .deb final: dpkg-deb -c + extracción + test -e)
           # autocomprobación de la bandeja (crítico: unidad + wrapper + runtime)
           sudo /usr/bin/viewlba-tray --check
           # iconos de estado (verde=activo rojo=detenido amarillo=transición)
