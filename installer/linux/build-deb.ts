@@ -25,7 +25,7 @@
  * Regla de la misión: sin comandos POSIX en este script (fs + dpkg-deb).
  */
 import { spawnSync } from "node:child_process"
-import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -85,14 +85,38 @@ mkdirSync(pkg, { recursive: true })
 // aquí, el shim queda como COPIA del index.js y su resolución relativa
 // rompe (prisma busca prisma_schema_build_bg.wasm EN .bin/ → ENOENT —
 // bug real del tercer build de v3.2.0). dpkg-deb/tar preserva symlinks.
-cpSync(STAGING, pkg, { recursive: true, dereference: false })
-console.log("✓ payload copiado a /opt/viewlba-server")
+cpSync(STAGING, pkg, { recursive: true, dereference: false, verbatimSymlinks: true })
+console.log("✓ payload copiado a /opt/viewlba-server (symlinks verbatim — targets relativos intactos)")
 
 // Guard: el contrato .bin→symlink del payload DEBE llegar intacto al .deb
 const debBinPrisma = join(pkg, "resources", "server", "node_modules", ".bin", "prisma")
 if (existsSync(debBinPrisma) && !lstatSync(debBinPrisma).isSymbolicLink()) {
   console.error("✗ node_modules/.bin/prisma NO es un symlink — la resolución del wasm de prisma romperá en destino")
   process.exit(1)
+}
+
+// Guard: NINGÚN symlink del .deb puede tener target ABSOLUTO — en la máquina
+// del usuario apuntaría a una ruta del runner/entorno de build que no existe
+// (regresión real de v3.2.0–v3.2.2, descubierta probando el .deb real
+// descargado en otra máquina: bunx y .bin/prisma apuntaban a /home/runner/work/…).
+{
+  const absolute: string[] = []
+  const walk = (dir: string): void => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name)
+      if (e.isSymbolicLink()) {
+        const target = readlinkSync(p)
+        if (target.startsWith("/")) absolute.push(`${p.slice(ROOT.length)} → ${target}`)
+      } else if (e.isDirectory()) walk(p)
+    }
+  }
+  walk(ROOT)
+  if (absolute.length > 0) {
+    console.error("✗ el .deb contiene symlinks con target ABSOLUTO (rotos fuera del entorno de build):")
+    for (const l of absolute) console.error(`   ${l}`)
+    process.exit(1)
+  }
+  console.log("✓ guard de symlinks: 0 targets absolutos (todos resuelven relativos en destino)")
 }
 
 // 2) wrapper de línea de comandos: `viewlba-server start|stop|restart|status|health|logs|panel|credentials`

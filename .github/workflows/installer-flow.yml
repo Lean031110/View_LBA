@@ -144,6 +144,32 @@ jobs:
             echo "✗ el .deb depende de python/gir (regresión offline)"; exit 1
           fi
           echo "✓ bandeja sin dependencias del sistema (control: Depends: systemd únicamente)"
+          # REGRESIÓN v3.2.3: symlinks con target ABSOLUTO. En el runner la ruta
+          # del build EXISTE (resuelven por coincidencia) — en la máquina del
+          # usuario quedan ROTOS (v3.2.0–v3.2.2: bunx y .bin/prisma apuntaban a
+          # /home/runner/work/…). readlink no miente: ningún target puede empezar por /
+          ABS_LINKS=$(sudo find /opt/viewlba-server -type l -exec readlink {} + 2>/dev/null | grep -c '^/' || true)
+          if [ "$ABS_LINKS" != "0" ]; then
+            echo "✗ symlinks con target absoluto (rotos fuera del runner):"
+            sudo find /opt/viewlba-server -type l -exec readlink {} + 2>/dev/null | grep '^/' | head -5
+            exit 1
+          fi
+          echo "✓ 0 symlinks con target absoluto (resuelven en cualquier máquina)"
+          # bunx del paquete EJECUTA desde el árbol instalado (test -x SIGUE el
+          # enlace: falla si está roto) y responde --version con el bun empaquetado
+          sudo test -x /opt/viewlba-server/runtime/bunx || { echo "✗ runtime/bunx roto o ausente (regresión v3.2.2)"; exit 1; }
+          BUNX_V=$(sudo /opt/viewlba-server/runtime/bunx --version 2>&1 | head -1)
+          echo "✓ runtime/bunx ejecuta desde el árbol instalado (bun $BUNX_V)"
+          # CLI de prisma resuelve en la APP instalada (/opt/pantalla-restaurante):
+          # el postinst PODA resources/server del PAQUETE tras copiar la app
+          # (diseño: el .deb conserva solo sidecar+runtime+manifest), y el
+          # instalador invoca prisma por ruta directa (resolvePrismaCli), no
+          # vía .bin — este es el contrato que debe funcionar en producción.
+          sudo test -e /opt/pantalla-restaurante/node_modules/prisma/build/index.js \
+            || { echo "✗ el CLI de prisma no resuelve en la app instalada (/opt/pantalla-restaurante)"; exit 1; }
+          echo "✓ CLI de prisma presente en la app instalada (resolvePrismaCli)"
+          # (el .bin/prisma del ARTEFACTO pre-poda lo valida release-installer.yml
+          # sobre el .deb final: dpkg-deb -c + extracción + test -e)
           # autocomprobación de la bandeja (crítico: unidad + wrapper + runtime)
           sudo /usr/bin/viewlba-tray --check
           # iconos de estado (verde=activo rojo=detenido amarillo=transición)
