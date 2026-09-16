@@ -5,6 +5,43 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato está basado en [Keep a Changelog](https://keepachangelog.com/es/1.1.0/),
 y este proyecto adhiere a [SemVer](https://semver.org/lang/es/).
 
+## [3.2.3] — 2026-09-16 — .deb portátil: fix de los symlinks absolutos (rotos fuera del runner)
+
+### Arreglado — CRÍTICO (regresión desde v3.2.0)
+
+- **El .deb publicado llevaba 2 symlinks con target ABSOLUTO apuntando a la
+  ruta del runner de GitHub Actions** — descubierta al descargar el .deb
+  real de la release v3.2.2 y probarlo en una máquina DISTINTA del runner
+  (Debian 13, sin rutas de build):
+  - `runtime/bunx → /home/runner/work/View_LBA/View_LBA/…/runtime/bun`
+  - `node_modules/.bin/prisma → /home/runner/work/…/build/index.js`
+  Causa raíz: `fs.cpSync` **sin `verbatimSymlinks`** RESUELVE los targets
+  de los symlinks relativos del staging a rutas ABSOLUTAS del entorno de
+  build al copiar al árbol del .deb. La CI nunca lo detectó porque el
+  smoke y los FLUJOS 1–5 corren EN EL MISMO RUNNER donde esa ruta existe
+  (los enlaces resuelven por coincidencia); en la máquina del usuario
+  quedaban ROTOS.
+- **Impacto real**: la instalación normal NO se rompía (el instalador
+  invoca el CLI de prisma por ruta directa, no vía `.bin`; el servicio, el
+  panel y la bandeja usan `runtime/bun`) — pero cualquier uso de
+  `runtime/bunx` o `node_modules/.bin/prisma` del paquete instalado
+  fallaba con ENOENT, y el artefacto filtraba rutas internas del runner.
+- **Fix**: `cpSync(..., { dereference: false, verbatimSymlinks: true })` —
+  los targets se copian TAL CUAL (relativos se quedan relativos).
+- **Verificación añadida (no vuelve a pasar)**:
+  - `build-deb.ts`: guard post-build que escanea TODO el árbol del .deb y
+    ROMPE el build si algún symlink tiene target absoluto.
+  - `installer-flow.yml` (FLUJO 2): sobre el árbol instalado — 0 targets
+    absolutos (`readlink` no miente), `runtime/bunx` ejecuta y responde
+    `--version`, `.bin/prisma` resuelve.
+  - `release-installer.yml`: guard sobre el ARTEFACTO final (`dpkg-deb -c`)
+    antes de publicarlo + ejecución real de `bunx` extraído.
+  - `tests/installer/tray.test.ts`: test de regresión del wiring
+    (verbatimSymlinks + guard post-build presentes en build-deb.ts).
+- **Nota de release**: la release v3.2.2 se retiró (sus .debs llevaban los
+  enlaces rotos); v3.2.3 es la primera con el .deb portable verificado en
+  una máquina distinta del runner.
+
 ## [3.2.2] — 2026-09-16 — Bandeja Linux 100 % offline (cero dependencias del sistema)
 
 ### Auditoría offline de los instaladores (lo pedido: «verifica si los

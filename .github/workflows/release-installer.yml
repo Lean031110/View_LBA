@@ -116,6 +116,32 @@ jobs:
       - name: "Construir .deb nativo (dpkg-deb: payload + postinst + shortcuts)"
         run: bun installer/linux/build-deb.ts --staging=dist/release/linux/ViewLBA-Server --version="$VERSION" --out=dist/release/linux/out
 
+      # REGRESIÓN v3.2.3: symlinks con target ABSOLUTO dentro del .deb. En el
+      # runner la ruta del build EXISTE (resuelven por coincidencia) — en la
+      # máquina del usuario quedan ROTOS (v3.2.0–v3.2.2: bunx y .bin/prisma
+      # apuntaban a /home/runner/work/…). El build-deb ya lo guarda en origen;
+      # este check lo verifica sobre el ARTEFACTO final (dpkg-deb -c), que es
+      # lo que el usuario descarga.
+      - name: "Guard del .deb: 0 symlinks con target absoluto (rotos fuera del runner)"
+        run: |
+          set -euo pipefail
+          DEB="dist/release/linux/out/ViewLBA-Server-$VERSION-x86_64.deb"
+          ABS=$(dpkg-deb -c "$DEB" | grep '^l' | sed 's/.* -> //' | grep -c '^/' || true)
+          if [ "$ABS" != "0" ]; then
+            echo "✗ el .deb publicado llevaría symlinks rotos (targets absolutos del runner):"
+            dpkg-deb -c "$DEB" | grep '^l' | grep ' -> /' | head -5
+            exit 1
+          fi
+          echo "✓ 0 symlinks con target absoluto — el .deb es portable a cualquier máquina"
+          # bunx EJECUTA desde el paquete extraído (regresión v3.2.2)
+          dpkg-deb -x "$DEB" /tmp/deb-check && test -x /tmp/deb-check/opt/viewlba-server/runtime/bunx \
+            || { echo "✗ runtime/bunx roto en el .deb"; exit 1; }
+          /tmp/deb-check/opt/viewlba-server/runtime/bunx --version | head -1 | sed 's/^/✓ bunx del paquete ejecuta (bun /;s/$/)/'
+          test -e /tmp/deb-check/opt/viewlba-server/resources/server/node_modules/.bin/prisma \
+            || { echo "✗ .bin/prisma roto en el .deb"; exit 1; }
+          echo "✓ .bin/prisma resuelve dentro del .deb"
+          rm -rf /tmp/deb-check
+
       # VALIDACIÓN REAL: instalar el .deb EN ESTE RUNNER (systemd presente) y
       # demostrar que el servidor queda EN EJECUCIÓN con health 200. Nada de
       # «estructura correcta»: instalación de verdad, como la del usuario.

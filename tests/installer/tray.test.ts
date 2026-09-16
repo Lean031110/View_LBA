@@ -317,6 +317,21 @@ describe("Bandeja Linux — wiring del .deb (build-deb.ts)", () => {
       .filter((l) => /^(Depends|Recommends|Suggests|Pre-Depends|Enhances):/.test(l))
     expect(depLines).toEqual(["Depends: systemd"])
   })
+
+  test("REGRESIÓN v3.2.3: cpSync con verbatimSymlinks — los symlinks del .deb NO pueden quedar con target absoluto", () => {
+    // v3.2.0–v3.2.2 publicaron .debs con `runtime/bunx → /home/runner/work/…`
+    // y `.bin/prisma → /home/runner/work/…`: fs.cpSync SIN verbatimSymlinks
+    // RESUELVE los targets relativos del staging a rutas absolutas del
+    // ENTORNO DE BUILD → en la máquina del usuario son enlaces ROTOS. La CI
+    // no lo veía porque en el runner esa ruta existe (resuelven por
+    // coincidencia); solo probar el .deb en OTRA máquina lo destapa.
+    expect(deb).toContain("verbatimSymlinks: true")
+    expect(deb).toContain("dereference: false")
+    // Guard post-build: el script debe AUTO-VERIFICARSE y romper el build si
+    // algún symlink del árbol empaquetado tiene target absoluto.
+    expect(deb).toContain("readlinkSync")
+    expect(deb).toMatch(/symlinks con target ABSOLUTO|target absoluto/)
+  })
 })
 
 // ---------------------------------------------------------------------------
