@@ -351,6 +351,18 @@ EOF_CRED
       rm -rf "$PKG/resources/server"
     fi
 
+    # 3b) autostart XDG: asegurar que SIEMPRE exista (red defensiva). Si el
+    #     unpack no dejó el archivo (dpkg con path-exclude=/etc, imágenes
+    #     slim, etc.), se recupera desde el lanzador equivalente del menú:
+    #     la bandeja permanente lo necesita para autoarrancar con la sesión.
+    if [ ! -s /etc/xdg/autostart/viewlba-tray.desktop ]; then
+      if [ -s /usr/share/applications/viewlba-tray.desktop ]; then
+        mkdir -p /etc/xdg/autostart
+        cp /usr/share/applications/viewlba-tray.desktop /etc/xdg/autostart/viewlba-tray.desktop
+        echo "viewlba-server: autostart XDG restaurado desde el lanzador de menú"
+      fi
+    fi
+
     # 4) accesos directos al ESCRITORIO del usuario que instala
     #    (incluye la BANDEJA — el indicador permanente de estado)
     SUDO_USER=\${SUDO_USER:-}

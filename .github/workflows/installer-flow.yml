@@ -154,6 +154,9 @@ jobs:
             done
           done
           echo "✓ iconos de estado hicolor (22/32/48 × running/stopped/waiting)"
+          # diagnóstico: qué registró dpkg bajo /etc (evidencia si algo falta)
+          sudo dpkg -L viewlba-server | grep -E '^/etc/' || echo "⚠ dpkg NO registró archivos bajo /etc/ (¿path-exclude?)"
+          ls -la /etc/xdg/autostart/ 2>&1 || true
           # .desktop: menú + autostart de sesión
           for f in viewlba-panel.desktop viewlba-start.desktop viewlba-stop.desktop viewlba-tray.desktop; do
             test -s "/usr/share/applications/$f" || { echo "✗ falta $f"; exit 1; }

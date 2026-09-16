@@ -130,6 +130,17 @@ instaladores funcionan completamente offline y traen todas las dependencias»)
   bandeja de Linux como «Python3+GTK/AppIndicator» (era hasta v3.2.1) —
   actualizado a la bandeja TypeScript/D-Bus de v3.2.2.
 
+- **postinst (Linux): red defensiva del autostart XDG** — en los runners
+  reales de GitHub Actions el archivo unpacked
+  `/etc/xdg/autostart/viewlba-tray.desktop` no aparecía (FLUJO 2 fallaba
+  en `test -s` aunque el .deb lo contiene — verificado con
+  `dpkg-deb -c` localmente). El postinst ahora lo AUTO-REPARA desde el
+  lanzador equivalente del menú si falta o está vacío (también cubre
+  imágenes slim con `dpkg path-exclude=/etc/*`), y FLUJO 2 registra
+  `dpkg -L` + `ls` de `/etc/xdg` como evidencia. Test de regresión
+  incluido (`tray.test.ts`).
+
+
 ## [3.2.1] — 2026-09-16 — Bandeja permanente + fix del Setup.exe colgado + CI de flujo completo por SO
 
 ### Arreglado

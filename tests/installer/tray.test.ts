@@ -285,6 +285,15 @@ describe("Bandeja Linux — wiring del .deb (build-deb.ts)", () => {
     expect(deb).toContain("AUTOSTART_DIR")
   })
 
+  test("postinst restaura el autostart XDG si el unpack no lo dejó (red defensiva)", () => {
+    // REGRESIÓN: en los runners de GitHub Actions el archivo unpacked de
+    // /etc/xdg/autostart NO aparecía (test -s fallaba en FLUJO 2). El
+    // postinst debe auto-repararlo desde el lanzador del menú para que la
+    // bandeja permanente autoarrance con la sesión SIEMPRE.
+    expect(deb).toContain("if [ ! -s /etc/xdg/autostart/viewlba-tray.desktop ]; then")
+    expect(deb).toContain("cp /usr/share/applications/viewlba-tray.desktop /etc/xdg/autostart/viewlba-tray.desktop")
+  })
+
   test("el wrapper viewlba-server expone tray/configurar", () => {
     expect(deb).toContain("tray)")
     expect(deb).toContain("configure|configurar)")
