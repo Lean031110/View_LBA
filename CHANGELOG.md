@@ -141,6 +141,19 @@ instaladores funcionan completamente offline y traen todas las dependencias»)
   incluido (`tray.test.ts`).
 
 
+- **`installer-flow.yml` (FLUJO 2, Linux): CAUSA RAÍZ del fallo silencioso
+  de 3 runs** — `grep -q "com.canonical.dbusmenu" dbus.ts` buscaba en el
+  ARCHIVO EQUIVOCADO: la constante `MENU_IFACE` vive en **tray.ts** (dbus.ts
+  es la implementación del protocolo D-Bus, no conoce la interfaz del
+  menú). Un `grep -q` sin eco muere en SILENCIO absoluto → 3 diagnósticos
+  con instrumentación (dpkg -L + ls + validador de noble 24.04 probado
+  localmente: el archivo autostart PASA). Corregido: dbusmenu se busca en
+  tray.ts y dbus.ts se valida por lo que DEBE contener (SASL
+  `AUTH EXTERNAL`). Además, TODOS los checks del paso reportan ahora su
+  fallo con mensaje (lección: sin `|| { echo; exit 1; }` un grep -q
+  fallido es indistinguible de cualquier otra muerte silenciosa).
+
+
 ## [3.2.1] — 2026-09-16 — Bandeja permanente + fix del Setup.exe colgado + CI de flujo completo por SO
 
 ### Arreglado
