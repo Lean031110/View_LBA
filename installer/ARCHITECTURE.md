@@ -60,9 +60,20 @@ installer/
     paths.ts             layout FHS por defecto
     adapter.ts           ServiceAdapter: systemd (render de unidades de deploy/linux),
                          usuario de servicio, permisos, ufw/firewalld
+    tray/                BANDEJA del sistema (v3.2.2 — TypeScript puro sobre el
+                         bun EMPAQUETADO, cero dependencias del sistema):
+      tray.ts            StatusNotifierItem + DBusMenu + Notifications: icono
+                         verde/rojo/amarillo por estado, menú Iniciar · Detener
+                         · Reiniciar · Configurar… · Panel · Credenciales · Salir,
+                         refresco 5 s, instancia única, degradación headless
+      dbus.ts            implementación D-Bus mínima (wire format + SASL
+                         EXTERNAL + llamadas + lado servidor con Properties e
+                         introspección) — la bandeja NO usa python3-gi/GTK
+                         (un «Recommends» que dpkg -i NO instala offline)
   windows/
     paths.ts             layout C:\PantallaRestaurante
     adapter.ts           ServiceAdapter: NSSM + netsh (misma especificación que install.ps1)
+    tray/                bandeja Windows (PowerShell — integrado en el SO)
   cli/
     main.ts              entrada: modos interactivo / --json (GUI) / --unattended
     ui.ts                flujo interactivo de 12 pasos (usa scripts/lib/prompt)

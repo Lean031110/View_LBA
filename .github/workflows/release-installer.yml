@@ -13,9 +13,11 @@ name: Release Installers
 #     de estado (verde=activo/rojo=detenido) y menú Iniciar · Detener ·
 #     Reiniciar · Configurar · Panel. Windows: ViewLBA-Tray.ps1 (con
 #     ventana de configuración + instancia única + globos). Linux:
-#     viewlba-tray (Python3+GTK/AppIndicator) + iconos de estado hicolor
-#     + autostart XDG. El flujo COMPLETO por SO (incluida la prueba
-#     100 % OFFLINE con iptables/firewall) está en installer-flow.yml.
+#     viewlba-tray (TypeScript puro hablando D-Bus: StatusNotifierItem +
+#     DBusMenu + notificaciones, CERO dependencias del sistema) + iconos
+#     de estado hicolor + autostart XDG. El flujo COMPLETO por SO
+#     (incluida la prueba 100 % OFFLINE con iptables/firewall) está en
+#     installer-flow.yml.
 #
 # v3.2 — INSTALADORES NATIVOS Y SIMPLES (feedback real del usuario):
 #   · Windows: Setup.exe con NSIS puro (sin Tauri, sin Rust). Instala TODO
@@ -163,12 +165,20 @@ jobs:
           test -f /usr/share/applications/viewlba-tray.desktop
           test -x /usr/bin/viewlba-server
           test -x /usr/bin/viewlba-tray
+          # v3.2.2: la bandeja es TS sobre el bun EMPAQUETADO (cero deps del sistema)
+          test -s /opt/viewlba-server/tray/tray.ts
+          test -s /opt/viewlba-server/tray/dbus.ts
+          test -x /opt/viewlba-server/runtime/bun
+          if dpkg-query -W -f='${Depends}\n' viewlba-server 2>/dev/null | grep -qiE 'python|gir1|appindicator'; then
+            echo "✗ el .deb depende de python/gir (regresión offline v3.2.2)"; exit 1
+          fi
+          sudo /usr/bin/viewlba-tray --check
           test -s /etc/xdg/autostart/viewlba-tray.desktop
           for s in running stopped waiting; do
             test -s "/usr/share/icons/hicolor/22x22/apps/viewlba-$s.png" || { echo "✗ falta icono viewlba-$s"; exit 1; }
           done
           sudo viewlba-server status | grep -E "pantalla-restaurante" | head -3
-          echo "✓ bandeja: script + autostart + iconos de estado (verde/rojo/amarillo)"
+          echo "✓ bandeja: código TS + runtime bun + autostart + iconos de estado (verde/rojo/amarillo)"
 
           echo "→ ciclo stop/start (los botones del usuario):"
           sudo viewlba-server stop   || true
@@ -234,10 +244,19 @@ jobs:
             || { echo "✗ el .deb NO crea accesos directos"; exit 1; }
           grep -q "usr/bin/viewlba-tray" /tmp/deb-contents.txt \
             || { echo "✗ el .deb NO instala la bandeja (viewlba-tray)"; exit 1; }
+          grep -q "opt/viewlba-server/tray/tray.ts" /tmp/deb-contents.txt \
+            || { echo "✗ el .deb NO instala el código TS de la bandeja (offline real v3.2.2)"; exit 1; }
+          grep -q "opt/viewlba-server/tray/dbus.ts" /tmp/deb-contents.txt \
+            || { echo "✗ el .deb NO instala la librería D-Bus de la bandeja"; exit 1; }
           grep -q "etc/xdg/autostart/viewlba-tray.desktop" /tmp/deb-contents.txt \
             || { echo "✗ el .deb NO instala el autostart de la bandeja"; exit 1; }
           grep -q "icons/hicolor/22x22/apps/viewlba-running.png" /tmp/deb-contents.txt \
             || { echo "✗ el .deb NO instala los iconos de estado de la bandeja"; exit 1; }
+          # v3.2.2: control SIN dependencias del sistema para la bandeja
+          dpkg-deb --control "$DEB_OUT" /tmp/deb-ctl-pre
+          if grep -E '^(Depends|Recommends|Suggests):' /tmp/deb-ctl-pre/control | grep -qiE 'python|gir1|appindicator'; then
+            echo "✗ control con dependencias python/gir (regresión offline)"; exit 1
+          fi
           # ⚠ dpkg-deb --contents lista SOLO el archivo data: DEBIAN/postinst
           # NO aparece ahí (bug del 9.º build: grep silencioso → set -e mataba
           # el paso sin mensaje). El control se valida extrayéndolo.

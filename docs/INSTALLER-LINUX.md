@@ -10,9 +10,13 @@
 
 - Linux x86_64 con **systemd** (Debian/Ubuntu/RHEL/Fedora…).
 - **root** (o sudo): el postinst crea usuario de sistema y unidades systemd.
-- **NADA MÁS**: **Bun va dentro del paquete** (`/opt/viewlba-server/runtime`),
-  el build va precompilado y ffmpeg es opcional (OBS codifica en el
-  cliente). No se necesita Node.js, npm ni Bun instalados — 100 % offline.
+- **NADA MÁS** — de verdad (v3.2.2): **Bun va dentro del paquete**
+  (`/opt/viewlba-server/runtime`), el build va precompilado, ffmpeg es
+  opcional (OBS codifica en el cliente) y **la bandeja del sistema corre
+  sobre ese mismo bun empaquetado** — sin python3-gi, sin GTK, sin gir
+  (habla StatusNotifierItem/DBusMenu directamente por D-Bus). No se
+  necesita Node.js, npm, Bun ni Python instalados — 100 % offline, sin
+  red y sin instalar dependencias a mano.
 
 ## Instalar
 
@@ -54,11 +58,13 @@ Panel: `http://localhost:3000` (espera ~30 s tras el primer arranque).
 | Ruta | Contenido |
 |---|---|
 | `/opt/viewlba-server` | Paquete: sidecar `viewlba-installer` + `runtime/bun` + manifest + `CREDENCIALES.txt` |
+| `/opt/viewlba-server/tray` | Código de la BANDEJA (`tray.ts` + `dbus.ts` — TypeScript sobre el bun del paquete, **cero dependencias del sistema**: sin python3-gi, sin GTK) |
 | `/opt/pantalla-restaurante` | App (código + build standalone + `.env`) |
 | `/var/lib/pantalla-restaurante` | DB, media, backups |
 | `/var/log/pantalla-restaurante` | Logs (rotación por timer) |
 | `/etc/systemd/system/pantalla-restaurante*` | 3 servicios + target + 2 timers |
 | `/usr/bin/viewlba-server` | Comando de control simple |
+| `/usr/bin/viewlba-tray` | Bandeja del sistema (wrapper: la ejecuta con el bun EMPAQUETADO) |
 | `/usr/share/applications/viewlba-*.desktop` | Accesos (menú + escritorio) |
 
 Tras la instalación el paquete PODA el payload duplicado

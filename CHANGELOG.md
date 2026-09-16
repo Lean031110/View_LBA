@@ -5,6 +5,155 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato está basado en [Keep a Changelog](https://keepachangelog.com/es/1.1.0/),
 y este proyecto adhiere a [SemVer](https://semver.org/lang/es/).
 
+## [3.2.2] — 2026-09-16 — Bandeja Linux 100 % offline (cero dependencias del sistema)
+
+### Auditoría offline de los instaladores (lo pedido: «verifica si los
+instaladores funcionan completamente offline y traen todas las dependencias»)
+
+- **Windows (Setup.exe): VERIFICADO 100 % offline** — bun.exe + nssm.exe +
+  node_modules (vendored) + engines de Prisma viajan DENTRO del paquete; la
+  bandeja es PowerShell (integrado en Windows) y la generación de
+  credenciales usa PowerShell del propio SO. La CI ya lo prueba con reglas
+  de firewall outbound BLOCK (loopback exento) — instalación + health sin red.
+- **Linux (.deb, servidor): VERIFICADO 100 % offline** — runtime bun +
+  node_modules podado + engines empaquetados; `Depends: systemd` (presente
+  en cualquier Linux moderno). La CI ya lo prueba con iptables REJECT (solo
+  loopback) — instalación + health + iniciar/detener sin red.
+- **Linux (.deb, bandeja): HABÍA UN GAP REAL** — la bandeja era
+  Python3 + PyGObject (python3-gi) + GTK + gir1.2-ayatanaappindicator,
+  paquetes del SISTEMA declarados solo como `Recommends` → `dpkg -i` NO los
+  instala y una máquina offline NO puede conseguirlos → **la bandeja no
+  arrancaba** (degradación silenciosa: icono ausente, servidor intacto).
+
+### Arreglado
+
+- **La bandeja de Linux ya NO depende de NADA del sistema**: reescrita en
+  TypeScript PURO que corre con el MISMO runtime bun que el .deb ya trae
+  (`/opt/viewlba-server/runtime/bun`) hablando los protocolos de escritorio
+  directamente por el socket de sesión D-Bus:
+  - **StatusNotifierItem** (org.kde.StatusNotifierItem) — el icono de la
+    bandeja en KDE/XFCE/MATE/Cinnamon (nativo) y Ubuntu GNOME (vía
+    gnome-shell-extension-appindicator, preinstalado).
+  - **DBusMenu** (com.canonical.dbusmenu) — el menú
+    Iniciar servidor · Detener servidor · Reiniciar · Configurar… ·
+    Abrir Panel · Ver credenciales · Salir, con ítems que se
+    habilitan/deshabilitan según el estado real del servicio.
+  - **Notificaciones** (org.freedesktop.Notifications) — globos al cambiar
+    de estado.
+  - Implementación D-Bus propia (`installer/linux/tray/dbus.ts`): wire
+    format completo con las alineaciones del spec oficial (STRUCT a 8,
+    padding de array incluso vacío, VARIANT a 1), SASL EXTERNAL, llamadas
+    con correlación serial↔respuesta, lado servidor (métodos + propiedades
+    + introspección XML autogenerada). Firmas verificadas contra DOS
+    fuentes independientes (ksni —lado servidor— y
+    gnome-shell-extension-appindicator —lado consumidor—) y contra
+    **busctl** (referencia de systemd) como consumidor real.
+  - Clic izquierdo en el icono → abre el Panel (toda la configuración del
+    restaurante vive en el panel web; la ventana GTK anterior duplicaba
+    eso y exigía GTK para existir).
+  - Se conserva TODO el comportamiento clave: icono VERDE/ROJO/AMARILLO
+    por estado, refresco 5 s (1 s tras una acción), instancia única por
+    pid-file, re-registro si el watcher SNI (re)aparece, degradación
+    elegante headless (mensaje claro + exit 0), modo `--check` para CI.
+- **control del .deb**: `Depends: systemd` — ÚNICAMENTE. Eliminado el
+  `Recommends: python3, python3-gi, gir1.2-…` (que además `dpkg -i` no
+  instalaba): la bandeja ahora no exige ningún paquete del sistema.
+- `/usr/bin/viewlba-tray` es ahora un wrapper que ejecuta
+  `/opt/viewlba-server/tray/tray.ts` con el bun del paquete (el código
+  vive FUERA de `resources/server` → sobrevive a la poda del postinst).
+
+### Añadido
+
+- **`tests/installer/tray-dbus.test.ts`** (29 tests): golden vectors de
+  marshalling (bytes exactos de cada tipo D-Bus), round-trips de mensajes,
+  integración REAL con un dbus-daemon privado (SASL + Hello + RequestName +
+  errores + exportación), y **E2E completo**: watcher SNI simulado +
+  demonio de notificaciones simulado + systemctl/pkexec/xdg-open falsos →
+  la bandeja REAL (proceso aparte) se registra, muestra el menú completo,
+  cambia el icono al estado del servicio, ejecuta las acciones privilegiadas
+  y envía notificaciones.
+- CI: `installer-flow.yml` (FLUJO 2) y `release-installer.yml` validan la
+  bandeja nueva — código TS instalado + runtime bun del paquete + `--check`
+  + **regresión offline**: el build ROMPE si el control vuelve a depender
+  de python/gir/appindicator.
+
+### Añadido (mismo día — verificación de TODO + README pro)
+
+- **`tsconfig.installer.json` — el instalador y la bandeja ahora son
+  TypeScript ESTRICTO**: `installer/**` (CLI, adaptadores, build-deb,
+  bandeja D-Bus) y `scripts/**` antes no los tipaba NADIE (el tsconfig
+  principal solo incluye `src/**`); solo corrían con bun. Gate nuevo en
+  el job quality de la CI (`bun run typecheck:installer`) + fixes de los
+  errores que el gate destapó:
+  - `scripts/restore.ts` importaba `purgeInvalidThemes` del barril
+    `src/lib/themes` — que NO lo re-exportaba → **`bun run db:restore`
+    crasheaba al importar** (el CLI de restauración estaba roto).
+    Re-exportado. El typecheck lo habría cazado a tiempo.
+  - `installer/linux/tray/dbus.ts`: `require()` de node:fs → import
+    estático (lint) y `process.getuid` defensivo.
+  - `installer/linux/tray/tray.ts`: opción `captureOutput` redundante
+    eliminada (node:child_process ya captura siempre en modo sync;
+    verificado en runtime con bun) y `getuid` defensivo.
+  - `installer/core/install.ts` + `scripts/manual-screenshots.ts` +
+    `scripts/check-version.ts`: null-safety y tipado de respuestas fetch.
+- **`scripts/check-docs.ts` — gate de coherencia de documentación** (nuevo
+  paso del job quality): badges de Actions al repo REAL y a workflows que
+  existen, instrucciones `git clone` correctas en README/CONTRIBUTING/
+  INSTALLATION, todos los enlaces relativos del README resuelven, índice
+  de docs completo (cada `docs/*.md` enlazado desde el README), screenshots
+  presentes y **conteos publicados fieles al código** (specs/tests/
+  escenarios E2E exactos; tests unitarios en banda estático↔runtime).
+- **README.md reescrito** (pro, completo y sin errores): badges + clone +
+  `package.json` apuntaban a `Pantalla_Restaurante` cuando el repo real es
+  `View_LBA` (corregido en los 4 sitios); conteos actualizados (776 tests ·
+  E2E 9 specs/52 tests/22 escenarios · 15 secciones del panel); nueva
+  sección **Bandeja del sistema** (tabla Windows/Linux); sección de
+  instaladores con la prueba offline real de la CI; índice de docs ampliado
+  (+EMISOR DE LICENCIAS, +SEGURIDAD DE LICENCIAS); badge nuevo del
+  workflow Installer Flow CI.
+- CI: nombre del job E2E actualizado (52 tests / 22 escenarios) y
+  comentario del paso de tests con las cifras reales.
+
+
+### Arreglado (mismo día — bugs cazados por la CI de este PR)
+
+- **`installer-flow.yml` (FLUJO 2, Linux): el chequeo del runtime bun
+  empaquetado pasaba una EXPRESIÓN INVÁLIDA** — `bun --print '1
+  >/dev/null && console.log("runtime OK")'` mezclaba shell con JS: bun
+  parsea `>/dev/null` como literal de REGEX (`/dev/null` + flags
+  «null») y muere con «Invalid flag n/l in regular expression» → FLUJO 2
+  rojo en el primer run real del runner (el commit 326669a añadía la
+  línea pero nunca había corrido en CI). Corregido a `bun -e
+  'console.log("runtime OK")' | grep -q '^runtime OK$'` (verificado con
+  el bun 1.3.14 EXACTO que empaqueta el .deb).
+- **`release-installer.yml`**: comentario de cabecera aún describía la
+  bandeja de Linux como «Python3+GTK/AppIndicator» (era hasta v3.2.1) —
+  actualizado a la bandeja TypeScript/D-Bus de v3.2.2.
+
+- **postinst (Linux): red defensiva del autostart XDG** — en los runners
+  reales de GitHub Actions el archivo unpacked
+  `/etc/xdg/autostart/viewlba-tray.desktop` no aparecía (FLUJO 2 fallaba
+  en `test -s` aunque el .deb lo contiene — verificado con
+  `dpkg-deb -c` localmente). El postinst ahora lo AUTO-REPARA desde el
+  lanzador equivalente del menú si falta o está vacío (también cubre
+  imágenes slim con `dpkg path-exclude=/etc/*`), y FLUJO 2 registra
+  `dpkg -L` + `ls` de `/etc/xdg` como evidencia. Test de regresión
+  incluido (`tray.test.ts`).
+
+
+- **`installer-flow.yml` (FLUJO 2, Linux): CAUSA RAÍZ del fallo silencioso
+  de 3 runs** — `grep -q "com.canonical.dbusmenu" dbus.ts` buscaba en el
+  ARCHIVO EQUIVOCADO: la constante `MENU_IFACE` vive en **tray.ts** (dbus.ts
+  es la implementación del protocolo D-Bus, no conoce la interfaz del
+  menú). Un `grep -q` sin eco muere en SILENCIO absoluto → 3 diagnósticos
+  con instrumentación (dpkg -L + ls + validador de noble 24.04 probado
+  localmente: el archivo autostart PASA). Corregido: dbusmenu se busca en
+  tray.ts y dbus.ts se valida por lo que DEBE contener (SASL
+  `AUTH EXTERNAL`). Además, TODOS los checks del paso reportan ahora su
+  fallo con mensaje (lección: sin `|| { echo; exit 1; }` un grep -q
+  fallido es indistinguible de cualquier otra muerte silenciosa).
+
+
 ## [3.2.1] — 2026-09-16 — Bandeja permanente + fix del Setup.exe colgado + CI de flujo completo por SO
 
 ### Arreglado

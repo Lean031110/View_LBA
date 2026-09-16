@@ -8,11 +8,12 @@
 
 Pantalla TV · Panel de administración · Servidor de streaming RTMP integrado · 100 % LAN
 
-[![CI](https://github.com/Lean031110/Pantalla_Restaurante/actions/workflows/ci.yml/badge.svg)](https://github.com/Lean031110/Pantalla_Restaurante/actions/workflows/ci.yml)
+[![CI](https://github.com/Lean031110/View_LBA/actions/workflows/ci.yml/badge.svg)](https://github.com/Lean031110/View_LBA/actions/workflows/ci.yml)
+[![Instaladores](https://github.com/Lean031110/View_LBA/actions/workflows/installer-flow.yml/badge.svg)](https://github.com/Lean031110/View_LBA/actions/workflows/installer-flow.yml)
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-amber.svg)](LICENSE)
 [![Bun](https://img.shields.io/badge/runtime-Bun-f472b6)](https://bun.sh)
 [![Next.js](https://img.shields.io/badge/framework-Next.js%2016-black)](https://nextjs.org)
-[![Sin Internet](https://img.shields.io/badge/red-100%25%20LAN-22c55e)](#-arquitectura)
+[![Sin Internet](https://img.shields.io/badge/red-100%25%20LAN-22c55e)](#%EF%B8%8F-arquitectura)
 
 </div>
 
@@ -89,6 +90,18 @@ segundos**. Todo por la red local: el sistema funciona **sin depender de Interne
   controla su estado, resolución y audio de forma remota.
 - 👥 **Roles y auditoría** — ADMIN / OPERADOR / VISOR, registro de acciones y autenticación con
   contraseñas scrypt.
+- 🖥️ **Bandeja del sistema permanente** (v3.2.1) — un icono en la barra de tareas indica en todo
+  momento si el servidor está activo (VERDE), detenido (ROJO) o en transición (AMARILLO), con
+  menú **Iniciar · Detener · Reiniciar · Configurar… · Abrir Panel · Salir**, ventana de
+  configuración (estado, credenciales, carpetas, control del servicio), notificaciones al cambiar
+  de estado e inicio automático con la sesión. Sin depender de nada del sistema: PowerShell puro
+  en Windows, TypeScript puro hablando D-Bus en Linux (ver [Bandeja del sistema](#-bandeja-del-sistema)).
+- 💿 **Instaladores 100 % offline** (v3.2.x) — `ViewLBA-Server-Setup.exe` (Windows) y
+  `ViewLBA-Server.AppImage` / `.deb` (Linux) llevan DENTRO el runtime Bun, los `node_modules`
+  del servidor, los engines de Prisma, NSSM (Windows) y las plantillas systemd (Linux): se
+  instalan en una máquina **sin Internet** y el servidor queda arrancado y funcional. La CI lo
+  demuestra en cada push bloqueando la red de verdad (iptables REJECT / firewall BLOCK) durante
+  la instalación. Ver [Instalación (producción)](#instalación-producción--multiplataforma-sin-editar-archivos).
 - 🔐 **Licenciamiento por token copiar/pegar** (v2.0+; release **3.0.0** con APK firmado) —
   prueba de 7 días automática con marca de
   agua, planes **Mensual 30 días / USD 10** y **Anual 365 días / USD 100**, activación sin Internet:
@@ -142,34 +155,42 @@ flowchart TB
 
 > 📘 Guía operativa completa (firewall, arranque, TVs, OBS): [README-LAN.md](README-LAN.md)
 >
-> 📚 **Documentación completa** en [`docs/`](docs/): [ARQUITECTURA](docs/ARCHITECTURE.md) · [INSTALACIÓN](docs/INSTALLATION.md) · [LINUX](docs/LINUX_PRODUCTION.md) · [WINDOWS](docs/WINDOWS_PRODUCTION.md) · [OBS](docs/OBS_SETUP.md) · [TVs](docs/TV_SETUP.md) · [EMPAREJAMIENTO](docs/SCREEN_PAIRING.md) · [BACKUP](docs/BACKUP_RESTORE.md) · [FIREWALL](docs/FIREWALL.md) · [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) · [ACTUALIZAR](docs/UPGRADING.md) · [SEGURIDAD](docs/SECURITY.md) · [OPERACIONES](docs/OPERATIONS.md)
+> 📚 **Documentación completa** en [`docs/`](docs/): [ARQUITECTURA](docs/ARCHITECTURE.md) · [INSTALACIÓN](docs/INSTALLATION.md) · [INSTALADORES](docs/INSTALLER.md) · [INSTALADOR LINUX](docs/INSTALLER-LINUX.md) · [INSTALADOR WINDOWS](docs/INSTALLER-WINDOWS.md) · [RELEASE](docs/RELEASE.md) · [LINUX](docs/LINUX_PRODUCTION.md) · [WINDOWS](docs/WINDOWS_PRODUCTION.md) · [OBS](docs/OBS_SETUP.md) · [TVs](docs/TV_SETUP.md) · [EMPAREJAMIENTO](docs/SCREEN_PAIRING.md) · [BACKUP](docs/BACKUP_RESTORE.md) · [FIREWALL](docs/FIREWALL.md) · [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) · [ACTUALIZAR](docs/UPGRADING.md) · [SEGURIDAD](docs/SECURITY.md) · [OPERACIONES](docs/OPERATIONS.md) · [LICENCIAS](docs/LICENSE-SYSTEM.md) · [EMISOR DE LICENCIAS](docs/LICENSE-GENERATOR.md) · [SEGURIDAD DE LICENCIAS](docs/LICENSE-SECURITY.md)
 
 ## 🚀 Puesta en marcha
 
 ### Requisitos
 
-- [Bun](https://bun.sh) 1.1+ (recomendado) o Node.js 20.9+ (LTS)
-- Un PC en la LAN del restaurante (el «servidor»)
-- OBS Studio en el PC que transmitirá
-- TVs con navegador moderno (PC/mini-PC conectado, o Smart TV con Chrome/Edge/Firefox)
+- Para instalar desde los **instaladores oficiales**: solo Windows 10/11 o Linux con systemd —
+  el runtime y TODAS las dependencias viajan dentro del paquete (ni Bun, ni Node, ni Internet).
+- Para montar desde el repositorio: [Bun](https://bun.sh) 1.1+ (recomendado) o Node.js 20.9+
+  (LTS), un PC en la LAN del restaurante (el «servidor») y OBS Studio en el PC que transmitirá.
+- TVs con navegador moderno (PC/mini-PC conectado, o Smart TV con Chrome/Edge/Firefox).
 
 ### Instalación (producción — multiplataforma, sin editar archivos)
 
 **Instaladores oficiales (recomendado — paquete offline completo, sin clonar
 GitHub ni instalar dependencias a mano):**
 
-- Windows: `ViewLBA-Server-Setup.exe` (doble clic → asistente GUI → listo).
-- Linux: `ViewLBA-Server.AppImage` (GUI; `--cli` en headless) o el paquete
-  `.deb`. Incluyen servidor + build + Bun + (Windows) NSSM.
+- Windows: `ViewLBA-Setup.exe` (doble clic → asistente GUI → listo). Instala el servidor, el
+  runtime Bun, NSSM y el servicio de Windows; al terminar el servicio está **Running** y la
+  bandeja del sistema queda activa.
+- Linux: `ViewLBA-Server.deb` (GUI con `sudo dpkg -i` o `apt install`, modo `--cli` en headless)
+  o el `ViewLBA-Server.AppImage`. Instalan servidor + build + runtime Bun + servicio systemd y
+  la bandeja `viewlba-tray`.
 
-Ver `docs/INSTALLER.md` (arquitectura y flujo), `docs/INSTALLER-LINUX.md`,
+Ambos empaquetan el **runtime Bun + `node_modules` + engines de Prisma + plantillas de
+servicio** dentro del instalador: funcionan en máquinas **completamente offline**, y la CI lo
+verifica en cada push instalando con la red bloqueada (Linux: `iptables` REJECT salvo loopback;
+Windows: reglas de firewall outbound BLOCK) y comprobando instalación + `/api/health` sin red
+externa. Ver `docs/INSTALLER.md` (arquitectura y flujo), `docs/INSTALLER-LINUX.md`,
 `docs/INSTALLER-WINDOWS.md` y `docs/RELEASE.md` (artefactos y checksums).
 
 **Desde el repositorio (desarrollo/avanzado):**
 
 ```bash
-git clone https://github.com/Lean031110/Pantalla_Restaurante.git
-cd Pantalla_Restaurante
+git clone https://github.com/Lean031110/View_LBA.git
+cd View_LBA
 
 bun scripts/install.ts          # delega en installer/cli (misma lógica oficial)
 # preflight → dependencias → .env con secretos aleatorios → migraciones
@@ -211,6 +232,27 @@ bash scripts/stream-supervisor.sh &
 bun run build && bun run start
 ```
 
+## 🖥️ Bandeja del sistema
+
+Los instaladores dejan un **indicador permanente en la barra de tareas** que muestra el estado
+real del servidor y permite controlarlo sin abrir el panel:
+
+| | Windows | Linux |
+|---|---|---|
+| **Icono** | VERDE activo · ROJO detenido · AMARILLO en transición | Igual (tema hicolor 22/32/48 px) |
+| **Menú** | Iniciar · Detener · Reiniciar · Configurar… · Abrir Panel · Salir | Igual (DBusMenu) |
+| **Configurar** | Ventana con estado en vivo, credenciales, carpetas y control del servicio | Estado, credenciales y logs por CLI (`viewlba-server configure`) |
+| **Notificaciones** | Globos al cambiar de estado | Notificaciones freedesktop |
+| **Autostart** | Clave `Run` de HKCU con la sesión | XDG autostart + `.desktop` |
+| **Instancia única** | pid-file (segunda copia sale sola) | pid-file (segunda copia sale sola) |
+
+**Cero dependencias del sistema.** La bandeja de Windows es PowerShell (integrado en el
+sistema). La de Linux está escrita en TypeScript puro que habla D-Bus directamente
+(StatusNotifierItem + DBusMenu + notificaciones) y se ejecuta con el **mismo runtime Bun que ya
+viaja dentro del .deb** — no requiere Python, GTK ni AppIndicator, y funciona igual en KDE,
+XFCE, MATE, Cinnamon y GNOME (Ubuntu). En modo headless se degrada con un mensaje claro y
+`exit 0`. El comando `viewlba-tray --check` permite a la CI validarla sin escritorio.
+
 ## 🎥 Transmitir con OBS (5 pasos)
 
 1. Entra en la **administración → Transmisión**.
@@ -238,50 +280,64 @@ reconectar — sin tocar nada.
 │   │   └── api/                #   auth · content · stream (status/FLV) · upload · admin CRUD
 │   ├── components/
 │   │   ├── display/            # TV: StreamPlayer, Clock, Ticker, Promos…
-│   │   └── admin/              # Panel: Login + 13 secciones
-│   └── lib/                    # auth · crud · fields · net · brand · realtime
+│   │   └── admin/              # Panel: Login + 15 secciones
+│   └── lib/                    # auth · crud · fields · net · brand · realtime · themes
 ├── mini-services/
 │   ├── stream-service/         # Servidor RTMP integrado (node-media-server)
 │   └── realtime-service/       # Hub Socket.io (estado, heartbeats, comandos)
+├── installer/                  # CLI de instalación + empaquetado nativo (.deb / NSIS)
+│   ├── core/                   #   preflight · fases · rollback · health
+│   ├── linux/                  #   build-deb + bandeja TypeScript/D-Bus (tray/)
+│   ├── windows/                #   NSIS + bandeja PowerShell
+│   └── package/                #   payload: runtime Bun + node_modules + engines
+├── android-license-generator/  # App privada del admin (emisión de licencias, APK firmado)
 ├── prisma/                     # schema.prisma + seed
-├── tests/                      # Unit + realtime + stream-pipeline + recovery (bun test)
-├── e2e/                        # E2E Playwright (37 specs)
-├── scripts/                    # install · init-production · backup/restore · build/start · supervisores · capturas
+├── tests/                      # 47 suites: unit + installer + themes + licencias
+├── e2e/                        # E2E Playwright (9 specs · 52 tests)
+├── scripts/                    # install · init-production · backup/restore · build/start ·
+│                               # supervisores · capturas · gates (check-version, check-docs)
 ├── deploy/                     # linux (systemd) · windows (NSSM)
-└── docs/                       # Guías de producción + screenshots
+├── themes/                     # Temas oficiales .vtheme (Default · Classic · Neon)
+└── docs/                       # Guías de producción + screenshots + wiki
 ```
 
 ## 🧪 Calidad
 
 ```bash
 bun run lint        # ESLint — 0 errores · 0 warnings
-bun run typecheck   # TypeScript estricto
-bun test            # 725 tests: unit + realtime + pairing + recovery + installer +
-                    # pipeline + temas (parser ZIP/validator/importer 21 pasos/
-                    # store/backup con DB real) + gating HTTP de trial
+bun run typecheck   # TypeScript estricto (src/)
+bun run typecheck:installer  # TypeScript estricto del instalador y la bandeja (installer/ + scripts/)
+bun test            # 776 tests: unit + realtime + pairing + recovery + installer (CLI,
+                    # adaptadores, bandeja D-Bus con dbus-daemon real) + pipeline de
+                    # streaming con ffmpeg publicando por RTMP + temas (parser ZIP/
+                    # validator/importer 21 pasos/store/backup con DB real) + gating HTTP
+                    # de trial + licencias
+bun run docs:check  # Coherencia de documentación: enlaces del README, badges del repo,
+                    # screenshots, índice de docs y conteos E2E
 bun run build       # Build de producción (standalone)
-bun run test:e2e    # E2E Playwright (52 tests: auth, contenido, pantallas,
-                    # pairing, streaming con ffmpeg real, offline, seguridad,
-                    # temas §22: importar/aplicar/persistir/eliminar/realtime)
+bun run test:e2e    # E2E Playwright (52 tests / 22 escenarios: auth, contenido,
+                    # pantallas, pairing, streaming con ffmpeg real, offline,
+                    # seguridad, temas §22: importar/aplicar/persistir/eliminar/realtime)
 ```
 
-CI en GitHub Actions: 6 workflows requeridos (quality · integration · e2e ·
-security con gitleaks y audit crítico bloqueantes · android-license-generator
-con lint, tests JVM, fuzz, escaneo anti-claves y **APK firmado y verificado**
-(apksigner v1+v2+v3, zipalign, badging, análisis del binario) ·
-customer-manual con el PDF del manual validado) — el job quality ejecuta lint,
-tipos, tests (incluido el pipeline de streaming con ffmpeg publicando por RTMP
-real y las suites de temas), el gate de coherencia de versión (`/VERSION`) y el
-build standalone en cada push/PR. La versión vive en `/VERSION` (única fuente
-de verdad: package.json, CHANGELOG y Gradle derivan de ella).
+CI en GitHub Actions — **todo lo anterior en cada push/PR a `main`**:
+
+| Workflow | Qué verifica |
+|---|---|
+| **CI** (`ci.yml`) | **quality**: lint, tipos (`src/` + instalador), gate de versión (`/VERSION` única fuente de verdad), gate de documentación (`check-docs.ts`), 776 tests y build standalone · **integration**: API contra servidor real + licencias (VLREQ2, activación, trial, gating) · **e2e**: Playwright · **security**: `gitleaks` en toda la historia + `bun audit` crítico bloqueante |
+| **Installer Flow CI** (`installer-flow.yml`) | Flujo completo por SO en runners reales: instalar → bandeja (viva, icono, menú) → iniciar/detener → configurar → **instalación 100 % offline con la red BLOQUEADA** (iptables/firewall) → desinstalar |
+| **Android License Generator** | Lint, tests JVM, fuzz, escaneo anti-claves y **APK firmado y verificado** (apksigner v1+v2+v3, zipalign, badging, análisis del binario) |
+| **Customer Manual** | PDF del manual del cliente regenerado y validado (textos y branding obligatorios) |
+| **Android Emulator Smoke** | Instalación real del APK en emulador: primera pantalla con PIN, HOME, persistencia del vault, desbloqueo y flujo completo de emisión de licencia |
+| **Release Installers** (tags `v*`) | Empaqueta y publica los instaladores oficiales + checksums, instalando el `.deb` y el `Setup.exe` en runners reales antes de publicar |
 
 ## 🔒 Seguridad
 
 - Clave RTMP enmascarada; revelable/regenerable solo por ADMIN; validada server-side (hook
   `prePublish`); **nunca llega al navegador de la TV**.
 - **Sistema de licencias v2 con criptografía asimétrica** — las claves PRIVADAS de firma/apertura
-  viven SOLO en la app Android del administrador (DB cifrada SQLCipher + Keystore + PIN/biometría);
-  el servidor solo contiene las claves PÚBLICAS. Historial escaneado con gitleaks en cada push
+  viven SOLO en la app Android del administrador (DB cifrada SQLCipher + PIN/biometría); el
+  servidor solo contiene las claves PÚBLICAS. Historial escaneado con gitleaks en cada push
   y análisis anti-claves del artifact APK.
 - Sesiones httpOnly firmadas (HMAC) · contraseñas scrypt · 3 roles con matriz de permisos.
 - Subida de archivos validada por *magic bytes* (no por MIME), nombres generados por el servidor

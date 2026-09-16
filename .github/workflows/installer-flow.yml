@@ -14,7 +14,7 @@ name: Installer Flow CI
 #   3. BANDEJA (indicador permanente): icono de estado + menú
 #      Iniciar · Detener · Reiniciar · Configurar · Panel:
 #        · Linux:   viewlba-tray instalado + íconos de estado + autostart
-#                   XDG + .desktop válidos (desktop-file-validate) + py_compile
+#                   XDG + .desktop válidos (desktop-file-validate) + bandeja TS
 #        · Windows: ViewLBA-Tray.ps1 parsea, ARRANCA, vive (bucle de mensajes),
 #                   y la instancia única funciona (segunda copia sale sola)
 #   4. INICIAR / DETENER (los botones del usuario):
@@ -124,15 +124,27 @@ jobs:
 
       # ------------------------------------------------------------------
       # 2) BANDEJA: indicador permanente (Iniciar · Detener · Configurar)
+      #    v3.2.2: bandeja en TypeScript sobre el bun EMPAQUETADO — sin
+      #    python3-gi, sin GTK, sin gir (offline real). La bandeja se valida
+      #    EJECUTÁNDOLA contra un dbus-daemon real (tests/installer/tray-dbus).
       # ------------------------------------------------------------------
-      - name: "FLUJO 2 — bandeja: script + iconos de estado + autostart + .desktop válidos"
+      - name: "FLUJO 2 — bandeja: código TS + runtime bun del paquete + iconos + autostart + .desktop válidos"
         run: |
           set -euo pipefail
           sudo apt-get install -y -qq desktop-file-utils >/dev/null
-          # script de la bandeja instalado y compila
+          # bandeja instalada: wrapper + código TS + runtime bun del PAQUETE
           test -x /usr/bin/viewlba-tray
-          python3 -m py_compile /usr/bin/viewlba-tray && echo "✓ py_compile viewlba-tray"
-          # autocomprobación de la bandeja (crítico: unidad + wrapper)
+          test -s /opt/viewlba-server/tray/tray.ts
+          test -s /opt/viewlba-server/tray/dbus.ts
+          test -x /opt/viewlba-server/runtime/bun
+          # la bandeja PARSEA y CORRE con el bun empaquetado (bun ejecuta tray.ts)
+          sudo /opt/viewlba-server/runtime/bun -e 'console.log("runtime OK")' | grep -q '^runtime OK$'
+          # REGRESIÓN v3.2.2: cero dependencias del sistema (ni python ni gir)
+          if dpkg-query -W -f='${Depends}\n' viewlba-server 2>/dev/null | grep -qiE 'python|gir1|appindicator'; then
+            echo "✗ el .deb depende de python/gir (regresión offline)"; exit 1
+          fi
+          echo "✓ bandeja sin dependencias del sistema (control: Depends: systemd únicamente)"
+          # autocomprobación de la bandeja (crítico: unidad + wrapper + runtime)
           sudo /usr/bin/viewlba-tray --check
           # iconos de estado (verde=activo rojo=detenido amarillo=transición)
           for s in running stopped waiting; do
@@ -142,18 +154,36 @@ jobs:
             done
           done
           echo "✓ iconos de estado hicolor (22/32/48 × running/stopped/waiting)"
+          # diagnóstico: qué registró dpkg bajo /etc (evidencia si algo falta)
+          sudo dpkg -L viewlba-server | grep -E '^/etc/' || echo "⚠ dpkg NO registró archivos bajo /etc/ (¿path-exclude?)"
+          ls -la /etc/xdg/autostart/ 2>&1 || true
           # .desktop: menú + autostart de sesión
           for f in viewlba-panel.desktop viewlba-start.desktop viewlba-stop.desktop viewlba-tray.desktop; do
             test -s "/usr/share/applications/$f" || { echo "✗ falta $f"; exit 1; }
             desktop-file-validate "/usr/share/applications/$f" && echo "✓ desktop-file-validate $f"
           done
-          test -s /etc/xdg/autostart/viewlba-tray.desktop
+          test -s /etc/xdg/autostart/viewlba-tray.desktop \
+            || { echo "✗ falta /etc/xdg/autostart/viewlba-tray.desktop"; exit 1; }
           desktop-file-validate /etc/xdg/autostart/viewlba-tray.desktop
-          # el menú de la bandeja y de iniciar/detener existen en el binario
-          grep -q "Iniciar servidor" /usr/bin/viewlba-tray
-          grep -q "Detener servidor" /usr/bin/viewlba-tray
-          grep -q "Configurar" /usr/bin/viewlba-tray
-          echo "✓ BANDEJA: script + iconos + autostart + menú Iniciar/Detener/Configurar"
+          # el menú de la bandeja vive en el CÓDIGO instalado (tray.ts — el
+          # /usr/bin/viewlba-tray es solo el wrapper del bun empaquetado).
+          # Cada check reporta su fallo con mensaje: un grep -q desnudo muere en
+          # SILENCIO absoluto y cuesta horas de diagnóstico (lección v3.2.2).
+          grep -q "Iniciar servidor" /opt/viewlba-server/tray/tray.ts \
+            || { echo "✗ tray.ts no define el menú «Iniciar servidor»"; exit 1; }
+          grep -q "Detener servidor" /opt/viewlba-server/tray/tray.ts \
+            || { echo "✗ tray.ts no define el menú «Detener servidor»"; exit 1; }
+          grep -q "Configurar" /opt/viewlba-server/tray/tray.ts \
+            || { echo "✗ tray.ts no define el menú «Configurar»"; exit 1; }
+          grep -q "org.kde.StatusNotifierItem" /opt/viewlba-server/tray/tray.ts \
+            || { echo "✗ tray.ts no implementa StatusNotifierItem"; exit 1; }
+          grep -q "com.canonical.dbusmenu" /opt/viewlba-server/tray/tray.ts \
+            || { echo "✗ tray.ts no implementa DBusMenu"; exit 1; }
+          # dbus.ts es la implementación del PROTOCOLO D-Bus: SASL EXTERNAL
+          # sobre el socket de sesión (la constante dbusmenu vive en tray.ts)
+          grep -q "AUTH EXTERNAL" /opt/viewlba-server/tray/dbus.ts \
+            || { echo "✗ dbus.ts no implementa SASL EXTERNAL (protocolo D-Bus)"; exit 1; }
+          echo "✓ BANDEJA: código TS + runtime bun + iconos + autostart + menú Iniciar/Detener/Configurar"
 
       # ------------------------------------------------------------------
       # 3) INICIAR / DETENER (los botones del usuario)

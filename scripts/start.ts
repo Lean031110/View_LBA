@@ -31,8 +31,9 @@ const child = spawn(process.execPath, [SERVER], { env, stdio: "inherit", cwd: RO
 const forward = (sig: NodeJS.Signals) => {
   child.kill(sig)
 }
-process.on("SIGTERM", () => forward("SIGTERM"))
-process.on("SIGINT", () => forward("SIGINT"))
+// bun-types no declara las señales de node:process en on(); el runtime las acepta.
+process.on("SIGTERM" as never, () => forward("SIGTERM"))
+process.on("SIGINT" as never, () => forward("SIGINT"))
 
 child.on("exit", (code, signal) => {
   // mismo código de salida del hijo (systemd/NSSM leen el estado)

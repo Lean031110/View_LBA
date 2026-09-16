@@ -7,8 +7,8 @@
 
 ```bash
 # 1) Clonar (o copiar) el repositorio en la máquina servidor
-git clone https://github.com/Lean031110/Pantalla_Restaurante
-cd Pantalla_Restaurante
+git clone https://github.com/Lean031110/View_LBA
+cd View_LBA
 
 # 2) Instalar Bun 1.1+ si no está: https://bun.sh  (Windows: irm bun.sh/install.ps1 | iex)
 

@@ -58,6 +58,7 @@ export {
   resolveThemeDir,
   countImportedThemes,
   listImportedDirs,
+  purgeInvalidThemes,
   type ThemeListItem,
   type InstallResult,
   type ActivateResult,

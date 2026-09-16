@@ -31,8 +31,8 @@ de contribución del proyecto.
 | Node.js (alternativo) | 18+ |
 
 ```bash
-git clone https://github.com/Lean031110/Pantalla_Restaurante.git
-cd Pantalla_Restaurante
+git clone https://github.com/Lean031110/View_LBA.git
+cd View_LBA
 bun install
 cp .env.example .env        # edita los secretos
 bun run setup               # prisma generate + db push + seed

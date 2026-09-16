@@ -29,7 +29,8 @@ const REPO = (() => {
 
 const TRAY_PS1 = join(REPO, "installer", "windows", "tray", "ViewLBA-Tray.ps1")
 const NSI = join(REPO, "installer", "windows", "viewlba-setup.nsi")
-const TRAY_PY = join(REPO, "installer", "linux", "tray", "viewlba-tray.py")
+const TRAY_TS = join(REPO, "installer", "linux", "tray", "tray.ts")
+const DBUS_TS = join(REPO, "installer", "linux", "tray", "dbus.ts")
 const TRAY_ICONS = join(REPO, "installer", "linux", "tray", "icons")
 const BUILD_DEB = join(REPO, "installer", "linux", "build-deb.ts")
 
@@ -166,50 +167,76 @@ describe("REGRESIÓN: lanzamiento de la bandeja en el NSI (21.er build)", () => 
 })
 
 // ---------------------------------------------------------------------------
-// Linux — bandeja (Python3 + GTK/AppIndicator, degradación elegante)
+// Linux — bandeja (TypeScript puro sobre el runtime bun EMPAQUETADO — v3.2.2:
+// cero dependencias del sistema: sin python3-gi, sin GTK, sin gir — 100 % offline)
 // ---------------------------------------------------------------------------
-describe("Bandeja Linux (viewlba-tray.py)", () => {
-  const py = readFileSync(TRAY_PY, "utf8")
+describe("Bandeja Linux (tray.ts — TypeScript sobre bun empaquetado)", () => {
+  const ts = readFileSync(TRAY_TS, "utf8")
 
-  test("existe", () => {
-    expect(existsSync(TRAY_PY)).toBe(true)
+  test("existe (tray.ts + dbus.ts — la librería D-Bus propia)", () => {
+    expect(existsSync(TRAY_TS)).toBe(true)
+    expect(existsSync(DBUS_TS)).toBe(true)
   })
 
   test("menú con las opciones pedidas: Iniciar · Detener · Configurar", () => {
-    for (const item of ["Iniciar servidor", "Detener servidor", "Reiniciar servidor", "Configurar…", "Abrir Panel", "Salir"]) {
-      expect(py).toContain(item)
+    for (const item of ["Iniciar servidor", "Detener servidor", "Reiniciar servidor", "Configurar…", "Abrir Panel", "Ver credenciales", "Salir"]) {
+      expect(ts).toContain(item)
     }
   })
 
   test("indicador de estado por color de icono (running/stopped/waiting)", () => {
-    expect(py).toContain("ICON_BY_STATE")
-    expect(py).toContain("viewlba-running")
-    expect(py).toContain("viewlba-stopped")
-    expect(py).toContain("viewlba-waiting")
+    expect(ts).toContain("ICON_BY_STATE")
+    expect(ts).toContain("viewlba-running")
+    expect(ts).toContain("viewlba-stopped")
+    expect(ts).toContain("viewlba-waiting")
   })
 
   test("control del servicio con pkexec + systemctl (polkit estándar)", () => {
-    expect(py).toContain("pkexec")
-    expect(py).toContain("systemctl")
-    expect(py).toContain("pantalla-restaurante.target")
+    expect(ts).toContain("pkexec")
+    expect(ts).toContain("systemctl")
+    expect(ts).toContain("pantalla-restaurante.target")
   })
 
-  test("degradación elegante: sin DISPLAY, sin python3-gi → sale 0 (no rompe)", () => {
-    expect(py).toContain("WAYLAND_DISPLAY")
-    expect(py).toMatch(/return 0/)
-    expect(py).toContain("python3-gi")
+  test("protocolos de escritorio: SNI + DBusMenu + Notifications (firmas exactas)", () => {
+    expect(ts).toContain("org.kde.StatusNotifierItem")
+    expect(ts).toContain("com.canonical.dbusmenu")
+    expect(ts).toContain("org.freedesktop.Notifications")
+    expect(ts).toContain("u(ia{sv}av)") // firma del layout DBusMenu (ksni + GNOME ext)
+  })
+
+  test("degradación elegante: sin DISPLAY → sale 0 (no rompe; el servidor sigue)", () => {
+    expect(ts).toContain("WAYLAND_DISPLAY")
+    expect(ts).toContain("sin sesión gráfica")
+    expect(ts).toContain("el servidor sigue corriendo")
   })
 
   test("modo --check (verificación sin GUI para CI y diagnóstico)", () => {
-    expect(py).toContain("--check")
-    expect(py).toContain("self_check")
+    expect(ts).toContain("--check")
+    expect(ts).toContain("selfCheck")
   })
 
-  test("ventana «Configurar…» con estado + credenciales + carpetas", () => {
-    expect(py).toContain("open_config_window")
-    for (const btn of ["Ver credenciales", "Carpeta de datos", "Carpeta del programa", "Ver registros (logs)"]) {
-      expect(py).toContain(`"${btn}"`)
-    }
+  test("instancia única por pid-file (autostart + lanzamiento manual no duplican)", () => {
+    expect(ts).toContain("acquireSingleInstance")
+    expect(ts).toContain("viewlba-tray-")
+    expect(ts).toContain("tray.ts") // verificación anti-pid-reutilizado
+  })
+
+  test("re-registro cuando el watcher SNI (re)aparece (match rule + tick)", () => {
+    expect(ts).toContain("NameOwnerChanged")
+    expect(ts).toContain("addMatch")
+    expect(ts).toContain("registerWithWatcher")
+  })
+
+  test("sin dependencias del sistema: NADA de python/gi/gtk en el CÓDIGO de la bandeja", () => {
+    // REGRESIÓN v3.2.2: la bandeja era Python3+PyGObject+GTK y fallaba en
+    // máquinas sin python3-gi (offline, sin forma de instalarlo). Se comprueban
+    // los PATRONES DE CÓDIGO reales (los comentarios pueden citar la historia).
+    expect(ts).toContain("#!/usr/bin/env bun")
+    expect(ts).not.toContain("gi.require_version")
+    expect(ts).not.toContain("from gi.repository")
+    expect(ts).not.toContain("import gi")
+    expect(ts).not.toContain("Gtk.")
+    expect(ts).not.toMatch(/spawn.*python/)
   })
 
   test("iconos de estado presentes (22/32/48 px × 3 estados)", () => {
@@ -229,8 +256,16 @@ describe("Bandeja Linux (viewlba-tray.py)", () => {
 describe("Bandeja Linux — wiring del .deb (build-deb.ts)", () => {
   const deb = readFileSync(BUILD_DEB, "utf8")
 
-  test("instala /usr/bin/viewlba-tray (ejecutable)", () => {
+  test("instala el CÓDIGO de la bandeja en /opt/viewlba-server/tray (sobrevive a la poda del postinst)", () => {
+    expect(deb).toContain('join(ROOT, "opt", "viewlba-server", "tray")')
+    expect(deb).toContain("tray.ts")
+    expect(deb).toContain("dbus.ts")
+  })
+
+  test("/usr/bin/viewlba-tray es un WRAPPER que ejecuta la bandeja con el bun EMPAQUETADO", () => {
     expect(deb).toContain('join(ROOT, "usr", "bin", "viewlba-tray")')
+    expect(deb).toContain("runtime/bun")
+    expect(deb).toContain("tray/tray.ts")
     expect(deb).toContain("0o755")
   })
 
@@ -250,6 +285,15 @@ describe("Bandeja Linux — wiring del .deb (build-deb.ts)", () => {
     expect(deb).toContain("AUTOSTART_DIR")
   })
 
+  test("postinst restaura el autostart XDG si el unpack no lo dejó (red defensiva)", () => {
+    // REGRESIÓN: en los runners de GitHub Actions el archivo unpacked de
+    // /etc/xdg/autostart NO aparecía (test -s fallaba en FLUJO 2). El
+    // postinst debe auto-repararlo desde el lanzador del menú para que la
+    // bandeja permanente autoarrance con la sesión SIEMPRE.
+    expect(deb).toContain("if [ ! -s /etc/xdg/autostart/viewlba-tray.desktop ]; then")
+    expect(deb).toContain("cp /usr/share/applications/viewlba-tray.desktop /etc/xdg/autostart/viewlba-tray.desktop")
+  })
+
   test("el wrapper viewlba-server expone tray/configurar", () => {
     expect(deb).toContain("tray)")
     expect(deb).toContain("configure|configurar)")
@@ -260,11 +304,22 @@ describe("Bandeja Linux — wiring del .deb (build-deb.ts)", () => {
     expect(deb).toContain("viewlba-tray.desktop")
   })
 
-  test("control: Recommends de las dependencias de la bandeja (no Depends — el servidor funciona headless)", () => {
-    expect(deb).toContain("Recommends:")
-    expect(deb).toContain("python3-gi")
-    expect(deb).toContain("appindicator")
-    // Depends SOLO systemd: la bandeja es opcional por diseño
-    expect(deb).toMatch(/Depends: systemd\n/)
+  test("control: Depends SOLO systemd — la bandeja NO exige nada del sistema (offline real)", () => {
+    // REGRESIÓN v3.2.2: antes «Recommends: python3, python3-gi, gir…» que
+    // `dpkg -i` NO instala → máquina offline sin bandeja. Ahora la bandeja
+    // corre con el bun empaquetado: cero paquetes del sistema. La única línea
+    // de dependencias del control debe ser «Depends: systemd» (la Description
+    // puede mencionar la decisión — es documentación).
+    const controlTemplate = "Package: viewlba-server" + deb.split("`Package: viewlba-server")[1].split("`")[0]
+    const depLines = controlTemplate
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => /^(Depends|Recommends|Suggests|Pre-Depends|Enhances):/.test(l))
+    expect(depLines).toEqual(["Depends: systemd"])
   })
 })
+
+// ---------------------------------------------------------------------------
+// Linux — bandeja E2E REAL (dbus-daemon + watcher SNI simulado): ver
+// tests/installer/tray-dbus.test.ts (marshalling golden + integración + e2e)
+// ---------------------------------------------------------------------------
