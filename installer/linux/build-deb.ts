@@ -273,7 +273,7 @@ Installed-Size: ${installedSizeKB}
 Depends: systemd
 Section: net
 Priority: optional
-Homepage: https://github.com/Lean031110/Pantalla_Restaurante
+Homepage: https://github.com/Lean031110/View_LBA
 Description: ViewLBA Server — pantallas de menú para restaurantes
  Servidor Next.js + servicios realtime/stream para pantallas de restaurantes.
  .

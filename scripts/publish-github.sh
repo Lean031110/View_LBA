@@ -16,7 +16,7 @@
 set -euo pipefail
 
 OWNER="Lean031110"
-REPO="Pantalla_Restaurante"
+REPO="View_LBA"
 DESCRIPTION="ViewLBA — Plataforma profesional de señalización digital para restaurantes: pantalla TV, panel de administración y servidor de streaming RTMP 100% LAN."
 TOPICS='["digital-signage","restaurant","rtmp","obs","streaming","lan","nextjs","tailwindcss","prisma","socket-io","typescript","bun"]'
 
