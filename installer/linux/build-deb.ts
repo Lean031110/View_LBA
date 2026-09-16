@@ -156,12 +156,32 @@ for (const f of readdirSync(join(TRAY_SRC, "icons"))) {
 }
 console.log("✓ iconos hicolor (producto + estado bandeja)")
 
-// 3b) bandeja del sistema: viewlba-tray (Python3+GTK, sin dependencias del
-//     servidor) + lanzador de menú + autostart de sesión. El icono es el
-//     INDICADOR PERMANENTE (verde=activo/rojo=detenido) con menú
-//     Iniciar · Detener · Reiniciar · Configurar · Panel · Salir.
+// 3b) bandeja del sistema: viewlba-tray (TypeScript sobre el runtime bun
+//     EMPAQUETADO — v3.2.2: CERO dependencias del sistema: sin python3-gi,
+//     sin GTK, sin gir. Habla StatusNotifierItem/DBusMenu/Notifications
+//     directamente por D-Bus. El icono es el INDICADOR PERMANENTE
+//     (verde=activo/rojo=detenido) con menú Iniciar · Detener · Configurar.
+//     El código vive en /opt/viewlba-server/tray (FUERA de resources/server
+//     → sobrevive a la poda del postinst) y /usr/bin/viewlba-tray es un
+//     wrapper que lo ejecuta con el bun del paquete.
+const TRAY_DIR = join(ROOT, "opt", "viewlba-server", "tray")
+mkdirSync(TRAY_DIR, { recursive: true })
+cpSync(join(TRAY_SRC, "tray.ts"), join(TRAY_DIR, "tray.ts"))
+cpSync(join(TRAY_SRC, "dbus.ts"), join(TRAY_DIR, "dbus.ts"))
 const TRAY_BIN = join(ROOT, "usr", "bin", "viewlba-tray")
-cpSync(join(TRAY_SRC, "viewlba-tray.py"), TRAY_BIN)
+writeFileSync(
+  TRAY_BIN,
+  `#!/bin/sh
+# viewlba-tray — bandeja del sistema (icono de estado + Iniciar/Detener/Configurar).
+# Corre con el runtime bun EMPAQUETADO (cero dependencias del sistema).
+PKG=${PKG_DIR}
+if [ ! -x "$PKG/runtime/bun" ] || [ ! -f "$PKG/tray/tray.ts" ]; then
+  echo "viewlba-tray: falta el runtime o el codigo de la bandeja en $PKG" >&2
+  exit 1
+fi
+exec "$PKG/runtime/bun" "$PKG/tray/tray.ts" "$@"
+`,
+)
 chmodSync(TRAY_BIN, 0o755)
 
 // 4) .desktop (menú de aplicaciones + copia al escritorio en el postinst)
@@ -251,7 +271,6 @@ Architecture: amd64
 Maintainer: ViewLBA <soporte@viewlba.local>
 Installed-Size: ${installedSizeKB}
 Depends: systemd
-Recommends: python3, python3-gi, gir1.2-ayatanaappindicator3-0.1 | gir1.2-appindicator3-0.1
 Section: net
 Priority: optional
 Homepage: https://github.com/Lean031110/Pantalla_Restaurante
@@ -259,6 +278,8 @@ Description: ViewLBA Server — pantallas de menú para restaurantes
  Servidor Next.js + servicios realtime/stream para pantallas de restaurantes.
  .
  Incluye SU PROPIO runtime (bun): NO requiere Node.js, npm ni Bun instalados.
+ La bandeja del sistema (viewlba-tray) corre sobre ese MISMO runtime: cero
+ dependencias del sistema (sin python3-gi, sin GTK) — funciona offline.
  Al instalar: crea el usuario de sistema, registra y ARRANCA el servicio
  systemd (se reinicia con el equipo) y genera las credenciales del admin
  (/opt/viewlba-server/CREDENCIALES.txt). Panel: http://localhost:3000.

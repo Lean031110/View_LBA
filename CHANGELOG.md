@@ -5,6 +5,78 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato está basado en [Keep a Changelog](https://keepachangelog.com/es/1.1.0/),
 y este proyecto adhiere a [SemVer](https://semver.org/lang/es/).
 
+## [3.2.2] — 2026-09-16 — Bandeja Linux 100 % offline (cero dependencias del sistema)
+
+### Auditoría offline de los instaladores (lo pedido: «verifica si los
+instaladores funcionan completamente offline y traen todas las dependencias»)
+
+- **Windows (Setup.exe): VERIFICADO 100 % offline** — bun.exe + nssm.exe +
+  node_modules (vendored) + engines de Prisma viajan DENTRO del paquete; la
+  bandeja es PowerShell (integrado en Windows) y la generación de
+  credenciales usa PowerShell del propio SO. La CI ya lo prueba con reglas
+  de firewall outbound BLOCK (loopback exento) — instalación + health sin red.
+- **Linux (.deb, servidor): VERIFICADO 100 % offline** — runtime bun +
+  node_modules podado + engines empaquetados; `Depends: systemd` (presente
+  en cualquier Linux moderno). La CI ya lo prueba con iptables REJECT (solo
+  loopback) — instalación + health + iniciar/detener sin red.
+- **Linux (.deb, bandeja): HABÍA UN GAP REAL** — la bandeja era
+  Python3 + PyGObject (python3-gi) + GTK + gir1.2-ayatanaappindicator,
+  paquetes del SISTEMA declarados solo como `Recommends` → `dpkg -i` NO los
+  instala y una máquina offline NO puede conseguirlos → **la bandeja no
+  arrancaba** (degradación silenciosa: icono ausente, servidor intacto).
+
+### Arreglado
+
+- **La bandeja de Linux ya NO depende de NADA del sistema**: reescrita en
+  TypeScript PURO que corre con el MISMO runtime bun que el .deb ya trae
+  (`/opt/viewlba-server/runtime/bun`) hablando los protocolos de escritorio
+  directamente por el socket de sesión D-Bus:
+  - **StatusNotifierItem** (org.kde.StatusNotifierItem) — el icono de la
+    bandeja en KDE/XFCE/MATE/Cinnamon (nativo) y Ubuntu GNOME (vía
+    gnome-shell-extension-appindicator, preinstalado).
+  - **DBusMenu** (com.canonical.dbusmenu) — el menú
+    Iniciar servidor · Detener servidor · Reiniciar · Configurar… ·
+    Abrir Panel · Ver credenciales · Salir, con ítems que se
+    habilitan/deshabilitan según el estado real del servicio.
+  - **Notificaciones** (org.freedesktop.Notifications) — globos al cambiar
+    de estado.
+  - Implementación D-Bus propia (`installer/linux/tray/dbus.ts`): wire
+    format completo con las alineaciones del spec oficial (STRUCT a 8,
+    padding de array incluso vacío, VARIANT a 1), SASL EXTERNAL, llamadas
+    con correlación serial↔respuesta, lado servidor (métodos + propiedades
+    + introspección XML autogenerada). Firmas verificadas contra DOS
+    fuentes independientes (ksni —lado servidor— y
+    gnome-shell-extension-appindicator —lado consumidor—) y contra
+    **busctl** (referencia de systemd) como consumidor real.
+  - Clic izquierdo en el icono → abre el Panel (toda la configuración del
+    restaurante vive en el panel web; la ventana GTK anterior duplicaba
+    eso y exigía GTK para existir).
+  - Se conserva TODO el comportamiento clave: icono VERDE/ROJO/AMARILLO
+    por estado, refresco 5 s (1 s tras una acción), instancia única por
+    pid-file, re-registro si el watcher SNI (re)aparece, degradación
+    elegante headless (mensaje claro + exit 0), modo `--check` para CI.
+- **control del .deb**: `Depends: systemd` — ÚNICAMENTE. Eliminado el
+  `Recommends: python3, python3-gi, gir1.2-…` (que además `dpkg -i` no
+  instalaba): la bandeja ahora no exige ningún paquete del sistema.
+- `/usr/bin/viewlba-tray` es ahora un wrapper que ejecuta
+  `/opt/viewlba-server/tray/tray.ts` con el bun del paquete (el código
+  vive FUERA de `resources/server` → sobrevive a la poda del postinst).
+
+### Añadido
+
+- **`tests/installer/tray-dbus.test.ts`** (29 tests): golden vectors de
+  marshalling (bytes exactos de cada tipo D-Bus), round-trips de mensajes,
+  integración REAL con un dbus-daemon privado (SASL + Hello + RequestName +
+  errores + exportación), y **E2E completo**: watcher SNI simulado +
+  demonio de notificaciones simulado + systemctl/pkexec/xdg-open falsos →
+  la bandeja REAL (proceso aparte) se registra, muestra el menú completo,
+  cambia el icono al estado del servicio, ejecuta las acciones privilegiadas
+  y envía notificaciones.
+- CI: `installer-flow.yml` (FLUJO 2) y `release-installer.yml` validan la
+  bandeja nueva — código TS instalado + runtime bun del paquete + `--check`
+  + **regresión offline**: el build ROMPE si el control vuelve a depender
+  de python/gir/appindicator.
+
 ## [3.2.1] — 2026-09-16 — Bandeja permanente + fix del Setup.exe colgado + CI de flujo completo por SO
 
 ### Arreglado
