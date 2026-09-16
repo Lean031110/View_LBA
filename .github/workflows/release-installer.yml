@@ -13,9 +13,11 @@ name: Release Installers
 #     de estado (verde=activo/rojo=detenido) y menú Iniciar · Detener ·
 #     Reiniciar · Configurar · Panel. Windows: ViewLBA-Tray.ps1 (con
 #     ventana de configuración + instancia única + globos). Linux:
-#     viewlba-tray (Python3+GTK/AppIndicator) + iconos de estado hicolor
-#     + autostart XDG. El flujo COMPLETO por SO (incluida la prueba
-#     100 % OFFLINE con iptables/firewall) está en installer-flow.yml.
+#     viewlba-tray (TypeScript puro hablando D-Bus: StatusNotifierItem +
+#     DBusMenu + notificaciones, CERO dependencias del sistema) + iconos
+#     de estado hicolor + autostart XDG. El flujo COMPLETO por SO
+#     (incluida la prueba 100 % OFFLINE con iptables/firewall) está en
+#     installer-flow.yml.
 #
 # v3.2 — INSTALADORES NATIVOS Y SIMPLES (feedback real del usuario):
 #   · Windows: Setup.exe con NSIS puro (sin Tauri, sin Rust). Instala TODO

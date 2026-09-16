@@ -114,6 +114,22 @@ instaladores funcionan completamente offline y traen todas las dependencias»)
 - CI: nombre del job E2E actualizado (52 tests / 22 escenarios) y
   comentario del paso de tests con las cifras reales.
 
+
+### Arreglado (mismo día — bugs cazados por la CI de este PR)
+
+- **`installer-flow.yml` (FLUJO 2, Linux): el chequeo del runtime bun
+  empaquetado pasaba una EXPRESIÓN INVÁLIDA** — `bun --print '1
+  >/dev/null && console.log("runtime OK")'` mezclaba shell con JS: bun
+  parsea `>/dev/null` como literal de REGEX (`/dev/null` + flags
+  «null») y muere con «Invalid flag n/l in regular expression» → FLUJO 2
+  rojo en el primer run real del runner (el commit 326669a añadía la
+  línea pero nunca había corrido en CI). Corregido a `bun -e
+  'console.log("runtime OK")' | grep -q '^runtime OK$'` (verificado con
+  el bun 1.3.14 EXACTO que empaqueta el .deb).
+- **`release-installer.yml`**: comentario de cabecera aún describía la
+  bandeja de Linux como «Python3+GTK/AppIndicator» (era hasta v3.2.1) —
+  actualizado a la bandeja TypeScript/D-Bus de v3.2.2.
+
 ## [3.2.1] — 2026-09-16 — Bandeja permanente + fix del Setup.exe colgado + CI de flujo completo por SO
 
 ### Arreglado

@@ -138,7 +138,7 @@ jobs:
           test -s /opt/viewlba-server/tray/dbus.ts
           test -x /opt/viewlba-server/runtime/bun
           # la bandeja PARSEA y CORRE con el bun empaquetado (bun ejecuta tray.ts)
-          sudo /opt/viewlba-server/runtime/bun --print '1 >/dev/null && console.log("runtime OK")' >/dev/null
+          sudo /opt/viewlba-server/runtime/bun -e 'console.log("runtime OK")' | grep -q '^runtime OK$'
           # REGRESIÓN v3.2.2: cero dependencias del sistema (ni python ni gir)
           if dpkg-query -W -f='${Depends}\n' viewlba-server 2>/dev/null | grep -qiE 'python|gir1|appindicator'; then
             echo "✗ el .deb depende de python/gir (regresión offline)"; exit 1
