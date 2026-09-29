@@ -42,7 +42,7 @@ preservación de datos.
 
 | # | Hallazgo | Severidad | Sección misión |
 |---|---|---|---|
-| C1 | Workflows CI con YAML **malformado** (`branches: ain]`) en 5 de 7 archivos | P0 | §14 |
+| ~~C1~~ | ~~Workflows CI con YAML malformado~~ — **RETRACTADO**: hallazgo falso causado por visualización ANSI del tool de auditoría (los archivos siempre tuvieron `branches: ["main"]` correctamente) | — | — |
 | C2 | `viewlba-setup.nsi:130` reproduce **Error A** (PowerShell `=` ParserError) vía escaping `''..''` anidado | P0 | §0/§2/§6 |
 | C3 | `viewlba-setup.nsi:183` reproduce **Error B** (`FIND: formato de parámetros incorrecto`) vía `sc query \| find RUNNING` | P0 | §0/§7 |
 | C4 | `deploy/windows/install.ps1:142-144` reproduce **Error C** (NSSM 2.24 usage screen) cuando `$name` está vacío | P0 | §0/§4 |
@@ -272,24 +272,22 @@ rules), §24 (layout editor visual).
 
 ### 3.6 CI (`.github/workflows/`)
 
-| Workflow | Líneas | Trigger (literal) | Estado |
+| Workflow | Líneas | Trigger (parseado por YAML) | Estado |
 |---|---|---|---|
-| `ci.yml` | 282 | `push: branches: ain]` ❌ YAML roto | Activo, corre por tag y workflow_dispatch |
-| `installer-flow.yml` | 741 | `push: branches: ain]` ❌ + `pull_request: branches: ain]` ❌ | Activo, corre por tag |
+| `ci.yml` | 282 | `push/pull_request.branches: ["main"]` ✅ | OK |
+| `installer-flow.yml` | 741 | `push/pull_request.branches: ["main"]` ✅ | OK |
 | `release-installer.yml` | 771 | `push: tags: [v*]` | OK |
-| `android-license-generator.yml` | 83 | `push: branches: ain]` ❌ + `pull_request: branches: ain]` ❌ | Activo |
-| `android-emulator-smoke.yml` | 122 | `push: tags: [v*]` + `branches: ain]` ❌ | Activo |
-| `customer-manual.yml` | 114 | `push: branches: ain]` + `tags: [v*]` | Activo |
+| `android-license-generator.yml` | 83 | `push/pull_request.branches: ["main"]` ✅ | OK |
+| `android-emulator-smoke.yml` | 122 | `push: tags: [v*]` + `branches: ["main"]` | OK |
+| `customer-manual.yml` | 114 | `push: branches: ["main"]` + `tags: [v*]` | OK |
 | `windows-exit-diag.yml` | 209 | `push: branches: ["diag/**"]` + `workflow_dispatch` | OK |
 
-**CRÍTICO C1**: en 5 workflows el literal `branches: ain]` aparece en lugar
-de `branches: ["main"]` o `branches: [main]`. Verificación de bytes con
-`sed -n '5p' | cat -A` confirma que el primer carácter `["m` falta — el
-YAML resultante es válido (interpreta `ain]` como string) pero el filtro
-de branch NUNCA casa `main`. A pesar de eso, GitHub Actions corre los
-workflows en push a `main` (porque `branches` malformado se ignora
-silenciosamente cuando el workflow se invoca por otros mecanismos).
-Esto es un bug latente — puede romper en cualquier cambio de GitHub.
+**CRÍTICO C1 (RETRACTADO)**: en el primer análisis parecía que 5
+workflows tenían `branches: ain]` (YAML roto). Verificación con
+`od -c` + `git show HEAD:.github/workflows/ci.yml` revela que los
+bytes reales son `branches: [main]` — el tool de visualización ANSI
+ocultaba `[m` interpretándolo como código reset-color. **Los workflows
+están correctos**.
 
 **CRÍTICO C13**: NO existe separación build vs install-test (misión §14).
 El workflow actual `installer-flow.yml` construye e instala en el mismo
@@ -804,14 +802,13 @@ archivos), subsistemas (media, net, stream, timezone, validators).
 ```yaml
 on:
   push:
-    branches: ain]      # ❌ BROKEN — debería ser ["main"]
+    branches: ["main"]   # ✅ correcto (verificado con od -c)
   pull_request:
-    branches: ain]      # ❌ BROKEN
+    branches: ["main"]   # ✅
   workflow_dispatch:
 ```
 
-Runs despite the broken YAML because GitHub Actions silently ignores
-invalid branch filters. Risk: silent CI false-pass.
+Workflow bien configurado. Sin issues.
 
 ### 8.2 `installer-flow.yml` (741 líneas)
 
@@ -820,11 +817,10 @@ start/stop + offline (iptables Windows firewall) + uninstall, en runners
 reales windows-latest y ubuntu-latest.
 
 **Problemas**:
-1. YAML `branches: ain]` roto (línea 40)
-2. Build e install en el MISMO job — no separa build vs install-test (C13)
-3. Usa el workspace como app, no el artifact descargado (C13)
-4. Sin upgrade-test (C14)
-5. Sin verificación de preservación de datos tras uninstall (C14)
+1. Build e install en el MISMO job — no separa build vs install-test (C13)
+2. Usa el workspace como app, no el artifact descargado (C13)
+3. Sin upgrade-test (C14)
+4. Sin verificación de preservación de datos tras uninstall (C14)
 
 ### 8.3 `release-installer.yml` (771 líneas)
 
@@ -849,7 +845,7 @@ ni `*.sha256` como assets separados (C17).
 | D1 | 5 audits docs previos (PRODUCTION_AUDIT, FINAL_RELEASE_AUDIT, RELEASE_3_AUDIT, PRODUCTION_PLAN, PRODUCTION_READINESS) dispersan la verdad | Confusión | Bajo (consolidar en este doc) |
 | D2 | `deploy/*/install.*` como segunda implementación de producción | Duplicación | Medio (migrar a installer/core) |
 | D3 | `android-license-generator/` en raíz del repo servidor | Confusión de scopes | Bajo (mover a subrepo) |
-| D4 | YAML roto `branches: ain]` en 5 workflows | CI latente falso-positive | Bajo (5 fixes) |
+| D4 | ~~YAML roto~~ — RETRACTADO: los workflows siempre tuvieron `["main"]` correcto (era bug de visualización del tool de auditoría que interpretaba `[m` como ANSI reset) | — | — |
 | D5 | NSSM + PowerShell + CMD en instalador Windows | Prohibido por misión | ALTO (rediseño completo) |
 | D6 | Solo 2 themes, schema v1 | Bloquea layout editor | Alto (12 templates + schema v2) |
 | D7 | No Restaurant CMS (channels, playlists, schedules, dayparting, emergency overlay, POS adapter) | Producto incompleto | Muy alto |
@@ -868,8 +864,8 @@ ni `*.sha256` como assets separados (C17).
 - ⏳ Logging estructurado en `installer/core/diagnostics.ts` (fase, comando,
   argv, cwd, exit code, stdout, stderr, timeout, servicio afectado, ruta
   de binario, versión del runtime — nunca passwords/tokens/secretos)
-- ⏳ Fix YAML `branches: ain]` en 5 workflows
 - ⏳ Commit + push en branch `feature/production-master-audit`
+- ✅ ~~Fix YAML `branches: ain]`~~ — retractado, los workflows ya están OK
 
 ### Fase 2 — Windows nativo (MSI + service host Rust + tray binario)
 
