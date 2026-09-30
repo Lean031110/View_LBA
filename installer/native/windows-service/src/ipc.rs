@@ -3,37 +3,10 @@
 // Pipe name: \\.\pipe\viewlba-service
 // Protocol: JSON line-delimited (one request per line, one response per line)
 //
-// Formal protocol (misión §6):
-//   REQUESTS (tray → host):
-//     {"cmd":"status"}                          → status snapshot
-//     {"cmd":"start","svc":"all|app|rt|stream"}
-//     {"cmd":"stop","svc":"..."}
-//     {"cmd":"restart","svc":"..."}
-//     {"cmd":"health"}                          → force health check
-//     {"cmd":"diagnostics"}                      → last error + log path
-//
-//   RESPONSES (host → tray):
-//     {"type":"ok","msg":"..."}
-//     {"type":"error","msg":"..."}
-//     {"type":"status","status":{...}}
-//     {"type":"health","health":{...}}
-//     {"type":"timestamp","ts":"..."}            → ack for non-request cmds
-//     {"type":"diagnostics","last_error":...,"log_path":...}
-//
 // Security: restrictive DACL via SDDL string (misión §7).
+//   SDDL: "D:P(A;;GA;;;SY)(A;;GA;;;LS)(A;;GA;;;BA)(A;;GA;;;IU)"
 //   Only LocalSystem + LocalService + Administrators + Interactive logon SIDs
 //   can connect. NO NULL DACL. NO Everyone.
-//
-// SDDL: "D:(A;;GA;;;SY)(A;;GA;;;LS)(A;;GA;;;BA)(A;;GA;;;IU)"
-//   D: = DACL
-//   A: = Allow ACE
-//   GA: = Generic All
-//   ;;;SY = LocalSystem
-//   ;;;LS = LocalService
-//   ;;;BA = Built-in Administrators
-//   ;;;IU = Interactive User
-//
-// Multi-client: each connection handled in its own thread (max 4).
 
 #![cfg(target_os = "windows")]
 
@@ -47,14 +20,15 @@ use serde::{Deserialize, Serialize};
 use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::Security::*;
+use windows::Win32::Security::Authorization::*;
 use windows::Win32::Storage::FileSystem::*;
 use windows::Win32::System::Pipes::*;
+use windows::Win32::System::Memory::*;
 
 use crate::config::Config;
 use crate::supervisor::{Supervisor, SupervisorStatus};
 use crate::logging;
 
-const PIPE_NAME: PCWSTR = w!("\\\\.\\pipe\\viewlba-service");
 const PIPE_BUFFER_SIZE: u32 = 8 * 1024;
 const PIPE_MAX_INSTANCES: u32 = 4;
 const PIPE_CONNECT_TIMEOUT_MS: u32 = 5_000;
@@ -62,7 +36,7 @@ const PIPE_REQUEST_TIMEOUT_MS: u64 = 10_000;
 
 // SDDL string granting Generic All to:
 //   SY (LocalSystem), LS (LocalService), BA (Administrators), IU (Interactive)
-// D:P = DACL protected (prevents inheriting from parent)
+// D:P = DACL protected (no inheritance from parent)
 const SDDL_RESTRICTIVE: PCWSTR = w!("D:P(A;;GA;;;SY)(A;;GA;;;LS)(A;;GA;;;BA)(A;;GA;;;IU)");
 
 // -----------------------------------------------------------------------
@@ -127,11 +101,6 @@ impl Protocol {
         let r = Response::Error { msg: msg.into() };
         Self::build_response(&r)
     }
-
-    pub fn ok_response(msg: impl Into<String>) -> String {
-        let r = Response::Ok { msg: msg.into() };
-        Self::build_response(&r)
-    }
 }
 
 // -----------------------------------------------------------------------
@@ -156,24 +125,30 @@ impl IpcServer {
 }
 
 unsafe fn server_loop(cfg: &Config, sup: &Arc<Supervisor>) {
-    // Build the security descriptor with the restrictive DACL (SDDL).
+    // Build the security descriptor with restrictive DACL (SDDL).
+    // Build it ONCE per server_loop lifetime; the SD is owned locally
+    // (no cross-thread raw pointer issues).
     let sd_bytes = match build_restrictive_security_descriptor() {
         Ok(s) => s,
         Err(e) => {
             logging::write_event(logging::event("error", "services", format!("IPC SD build failed: {}", e)));
-            // Sleep and retry — never give up (host must serve IPC)
             thread::sleep(Duration::from_secs(5));
             return;
         }
     };
 
-    // Wrap the SD in an Arc for thread-safe sharing (raw pointer issue workaround)
-    let sd_arc = Arc::new(sd_bytes);
-    let sa = build_security_attributes(&sd_arc);
+    let pipe_name: PCWSTR = w!("\\\\.\\pipe\\viewlba-service");
 
     loop {
+        // Construct SA locally per iteration (raw pointer doesn't escape this scope)
+        let sa = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: sd_bytes.as_ptr() as *mut c_void,
+            bInheritHandle: false.into(),
+        };
+
         let handle = CreateNamedPipeW(
-            PIPE_NAME,
+            pipe_name,
             PIPE_ACCESS_DUPLEX,
             PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
             PIPE_MAX_INSTANCES,
@@ -183,29 +158,34 @@ unsafe fn server_loop(cfg: &Config, sup: &Arc<Supervisor>) {
             Some(&sa),
         );
 
-        if handle.is_invalid() {
-            let e = Error::from_win32();
-            logging::write_event(logging::event("error", "services", format!("CreateNamedPipeW failed: {}", e)));
-            thread::sleep(Duration::from_secs(2));
-            continue;
-        }
-
-        // Wait for a client to connect (blocking)
-        let connect_result = ConnectNamedPipe(handle, None);
-        if let Err(e) = connect_result {
-            let hr = e.code();
-            // ERROR_PIPE_CONNECTED = 0x80000005? actually it's 535 (0x217)
-            // Check if the error is "pipe already connected"
-            let last_err = unsafe { GetLastError() };
-            if last_err != ERROR_PIPE_CONNECTED {
-                logging::write_event(logging::event("warn", "services", format!("ConnectNamedPipe err: {:?} hr: {:?}", last_err, hr)));
-                let _ = CloseHandle(handle);
+        // CreateNamedPipeW returns Result<HANDLE> in windows 0.61
+        let handle = match handle {
+            Ok(h) if !h.is_invalid() => h,
+            _ => {
+                let e = Error::from_win32();
+                logging::write_event(logging::event("error", "services", format!("CreateNamedPipeW failed: {}", e)));
+                thread::sleep(Duration::from_secs(2));
                 continue;
             }
-            // else: pipe already connected — proceed
+        };
+
+        // Wait for a client to connect (blocking)
+        match ConnectNamedPipe(handle, None) {
+            Ok(()) => {
+                // Client connected — spawn worker thread
+            }
+            Err(e) => {
+                let last_err = unsafe { GetLastError() };
+                if last_err != ERROR_PIPE_CONNECTED {
+                    logging::write_event(logging::event("warn", "services", format!("ConnectNamedPipe err: {:?} {}", last_err, e)));
+                    let _ = CloseHandle(handle);
+                    continue;
+                }
+                // else: pipe already connected — proceed
+            }
         }
 
-        // Spawn a worker thread to handle this client (multi-client)
+        // Spawn worker thread — only HANDLE is captured (it's Send, just an opaque isize)
         let cfg_clone = cfg.clone();
         let sup_clone = sup.clone();
         thread::spawn(move || {
@@ -215,7 +195,6 @@ unsafe fn server_loop(cfg: &Config, sup: &Arc<Supervisor>) {
 }
 
 unsafe fn handle_client(handle: HANDLE, cfg: &Config, sup: &Arc<Supervisor>) {
-    // Read one line (request) — byte by byte until newline (max 8KB)
     let mut line_buf = Vec::with_capacity(1024);
     let mut byte = [0u8; 1];
     let deadline = Instant::now() + Duration::from_millis(PIPE_REQUEST_TIMEOUT_MS);
@@ -227,9 +206,8 @@ unsafe fn handle_client(handle: HANDLE, cfg: &Config, sup: &Arc<Supervisor>) {
             return;
         }
         let mut bytes_read: u32 = 0;
-        let ok = ReadFile(handle, Some(&mut byte), Some(&mut bytes_read), None);
-        if ok.is_err() || bytes_read == 0 {
-            // Client disconnected without sending — silently close
+        let result = ReadFile(handle, Some(&mut byte), Some(&mut bytes_read), None);
+        if result.is_err() || bytes_read == 0 {
             let _ = CloseHandle(handle);
             return;
         }
@@ -337,7 +315,6 @@ fn process_request(req: &Request, sup: &Arc<Supervisor>, cfg: &Config) -> Respon
                     slot.next_attempt_at = None;
                 }
             }
-            // Drop state lock before re-acquiring in spawn_child
             drop(sup.state.lock().unwrap());
             for k in keys {
                 let _ = sup.spawn_child(&k);
@@ -365,11 +342,10 @@ fn keys_for(svc: ServiceSelector) -> Vec<String> {
 unsafe fn write_response(handle: HANDLE, resp: &str) -> std::io::Result<()> {
     let bytes = resp.as_bytes();
     let mut written: u32 = 0;
-    let ok = WriteFile(handle, Some(bytes), Some(&mut written), None);
-    if ok.is_err() {
+    let result = WriteFile(handle, Some(bytes), Some(&mut written), None);
+    if result.is_err() {
         return Err(std::io::Error::last_os_error());
     }
-    // Append newline
     let _ = WriteFile(handle, Some(b"\n"), Some(&mut written), None);
     Ok(())
 }
@@ -378,28 +354,20 @@ unsafe fn write_response(handle: HANDLE, resp: &str) -> std::io::Result<()> {
 // Security descriptor via SDDL — restrictive DACL
 // -----------------------------------------------------------------------
 
-/// Builds a security descriptor with the following restrictive DACL:
-///   LocalSystem   — full access
-///   LocalService  — full access
-///   Administrators — full access
-///   Interactive logon SID — full access (tray running as user)
-///   NO Everyone, NO Anonymous, NO NULL DACL (misión §7)
 fn build_restrictive_security_descriptor() -> Result<Vec<u8>> {
     unsafe {
         let mut sd_ptr: *mut c_void = std::ptr::null_mut();
-        let ok = ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        let result = ConvertStringSecurityDescriptorToSecurityDescriptorW(
             SDDL_RESTRICTIVE,
-            SDDL_REVISION_1,
+            1, // SDDL_REVISION_1
             &mut sd_ptr,
             None,
         );
-        if ok.is_err() {
+
+        if result.is_err() {
             return Err(Error::from_win32());
         }
 
-        // Determine the size of the SD to copy it into a Vec<u8>
-        // SECURITY_DESCRIPTOR_RELATIVE has a length field, but for simplicity
-        // we copy a fixed size (typical SDs are <1KB)
         let sd_size = GetSecurityDescriptorLength(sd_ptr);
         let mut sd_bytes = vec![0u8; sd_size as usize];
         std::ptr::copy_nonoverlapping(
@@ -408,19 +376,10 @@ fn build_restrictive_security_descriptor() -> Result<Vec<u8>> {
             sd_size as usize,
         );
 
-        // Free the original SD allocation (Windows allocated it)
-        LocalFree(Some(sd_ptr as *const _));
+        // Free Windows-allocated SD memory
+        let _ = LocalFree(Some(sd_ptr as *const _));
 
         Ok(sd_bytes)
-    }
-}
-
-/// Wraps the SD bytes in a SECURITY_ATTRIBUTES for CreateNamedPipeW.
-fn build_security_attributes(sd_bytes: &Arc<Vec<u8>>) -> SECURITY_ATTRIBUTES {
-    SECURITY_ATTRIBUTES {
-        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-        lpSecurityDescriptor: sd_bytes.as_ptr() as *mut c_void,
-        bInheritHandle: false.into(),
     }
 }
 
