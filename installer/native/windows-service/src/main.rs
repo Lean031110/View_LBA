@@ -65,7 +65,7 @@ fn main() -> ExitCode {
     let cfg = config::load_config();
     logging::init(&cfg);
 
-    log::info!(action = ?action, version = VERSION, "viewlba-service starting");
+    log::info!("viewlba-service {} starting", VERSION);
 
     match action {
         Action::Install => service::install(&cfg),
