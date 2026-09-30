@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::Storage::FileSystem::*;
+use windows::Win32::System::Pipes::*;
 
 use crate::config::TrayConfig;
 
@@ -145,7 +146,7 @@ impl IpcClient {
     }
 
     /// Convenience: get_status sends {"cmd":"status"} and parses the response.
-    pub fn get_status(&self) -> Result<ServiceStatus, String> {
+    pub fn get_status(&self) -> std::result::Result<ServiceStatus, String> {
         let req = serde_json::json!({"cmd":"status"});
         let resp: ServiceStatusResponse = self.request(&req)?;
         match resp {
@@ -156,7 +157,7 @@ impl IpcClient {
     }
 
     /// Convenience: send a start request to the service host.
-    pub fn start(&self, svc: &str) -> Result<String, String> {
+    pub fn start(&self, svc: &str) -> std::result::Result<String, String> {
         let req = serde_json::json!({"cmd":"start","svc":svc});
         let resp: ServiceStatusResponse = self.request(&req)?;
         match resp {
@@ -167,7 +168,7 @@ impl IpcClient {
     }
 
     /// Convenience: send a stop request.
-    pub fn stop(&self, svc: &str) -> Result<String, String> {
+    pub fn stop(&self, svc: &str) -> std::result::Result<String, String> {
         let req = serde_json::json!({"cmd":"stop","svc":svc});
         let resp: ServiceStatusResponse = self.request(&req)?;
         match resp {
@@ -178,7 +179,7 @@ impl IpcClient {
     }
 
     /// Convenience: send a restart request.
-    pub fn restart(&self, svc: &str) -> Result<String, String> {
+    pub fn restart(&self, svc: &str) -> std::result::Result<String, String> {
         let req = serde_json::json!({"cmd":"restart","svc":svc});
         let resp: ServiceStatusResponse = self.request(&req)?;
         match resp {
@@ -189,7 +190,7 @@ impl IpcClient {
     }
 
     /// Convenience: get a health report.
-    pub fn get_health(&self) -> Result<HealthReport, String> {
+    pub fn get_health(&self) -> std::result::Result<HealthReport, String> {
         let req = serde_json::json!({"cmd":"health"});
         let resp: ServiceStatusResponse = self.request(&req)?;
         match resp {
@@ -200,7 +201,7 @@ impl IpcClient {
     }
 
     /// Convenience: get diagnostics (last error + log path).
-    pub fn diagnostics(&self) -> Result<String, String> {
+    pub fn diagnostics(&self) -> std::result::Result<String, String> {
         let req = serde_json::json!({"cmd":"diagnostics"});
         let resp: ServiceStatusResponse = self.request(&req)?;
         match resp {
