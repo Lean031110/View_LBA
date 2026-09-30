@@ -279,8 +279,8 @@ fn process_request(req: &Request, sup: &Arc<Supervisor>, cfg: &Config) -> Respon
         Request::Start { svc } => {
             let keys = keys_for(*svc);
             let mut errors = Vec::new();
-            for k in keys {
-                if let Err(e) = sup.spawn_child(&k) {
+            for k in &keys {
+                if let Err(e) = sup.spawn_child(k) {
                     errors.push(format!("{}: {}", k, e));
                 }
             }
@@ -292,7 +292,7 @@ fn process_request(req: &Request, sup: &Arc<Supervisor>, cfg: &Config) -> Respon
         }
         Request::Stop { svc } => {
             let keys = keys_for(*svc);
-            for k in keys {
+            for k in &keys {
                 let mut state = sup.state.lock().unwrap();
                 let slot = match k.as_str() {
                     "app" => &mut state.app,
@@ -300,7 +300,7 @@ fn process_request(req: &Request, sup: &Arc<Supervisor>, cfg: &Config) -> Respon
                     "stream" => &mut state.stream,
                     _ => continue,
                 };
-                if let Some(child) = slot.child.take() {
+                if let Some(mut child) = slot.child.take() {
                     let _ = child.kill();
                     slot.state = crate::supervisor::ChildState::Stopped;
                     slot.next_attempt_at = None;
@@ -310,7 +310,7 @@ fn process_request(req: &Request, sup: &Arc<Supervisor>, cfg: &Config) -> Respon
         }
         Request::Restart { svc } => {
             let keys = keys_for(*svc);
-            for k in keys {
+            for k in &keys {
                 let mut state = sup.state.lock().unwrap();
                 let slot = match k.as_str() {
                     "app" => &mut state.app,
@@ -318,15 +318,15 @@ fn process_request(req: &Request, sup: &Arc<Supervisor>, cfg: &Config) -> Respon
                     "stream" => &mut state.stream,
                     _ => continue,
                 };
-                if let Some(child) = slot.child.take() {
+                if let Some(mut child) = slot.child.take() {
                     let _ = child.kill();
                     slot.state = crate::supervisor::ChildState::Stopped;
                     slot.next_attempt_at = None;
                 }
             }
             drop(sup.state.lock().unwrap());
-            for k in keys {
-                let _ = sup.spawn_child(&k);
+            for k in &keys {
+                let _ = sup.spawn_child(k);
             }
             Response::Ok { msg: format!("restarted {:?}", svc) }
         }

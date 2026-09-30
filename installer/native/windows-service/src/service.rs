@@ -269,6 +269,8 @@ unsafe fn report_status(
     status.dwServiceType = ENUM_SERVICE_TYPE(SERVICE_WIN32_OWN_PROCESS);
     status.dwCurrentState = SERVICE_STATUS_CURRENT_STATE(state);
     status.dwControlsAccepted = windows::Win32::System::Services::SERVICE_STATUS_ACCEPT(controls_accepted);
+    // If SERVICE_STATUS_ACCEPT doesn't exist as a tuple struct (compiler error),
+    // try: SERVICE_ACCEPT or just u32 directly
     status.dwWin32ExitCode = 0;
     status.dwServiceSpecificExitCode = 0;
     status.dwCheckPoint = checkpoint;

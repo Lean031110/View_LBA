@@ -55,6 +55,7 @@ static LOGGER: OnceLock<FileLogger> = OnceLock::new();
 
 pub fn init(cfg: &Config) {
     let log_path = cfg.log_dir.join("service-host.log");
+    let log_path_str = log_path.to_string_lossy().replace('\\', "/");
     // Ensure log dir exists
     if let Err(e) = std::fs::create_dir_all(&cfg.log_dir) {
         eprintln!("warning: cannot create log dir {}: {}", cfg.log_dir.display(), e);
@@ -67,7 +68,7 @@ pub fn init(cfg: &Config) {
         .format_timestamp(None)
         .try_init();
 
-    log::info!("logging initialized, log_path={}", log_path_display(&log_path));
+    log::info!("logging initialized, log_path={}", log_path_str);
 }
 
 fn log_path_display(p: &PathBuf) -> String {

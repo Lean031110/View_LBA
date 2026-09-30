@@ -33,30 +33,34 @@ impl Default for Config {
         let program_files = PathBuf::from(r"C:\Program Files\ViewLBA Server");
         let program_data = PathBuf::from(r"C:\ProgramData\ViewLBA");
 
-        let bin_dir = program_files.join("bin");
         let runtime_dir = program_files.join("runtime");
         let app_dir = program_files.join("app");
         let mini_services = program_files.join("mini-services");
+
+        // Clone before moving into Self to use in derived paths
+        let program_data_for_self = program_data.clone();
+        let app_dir_for_self = app_dir.clone();
+        let mini_services_for_self = mini_services.clone();
 
         Self {
             service_name: "ViewLBA".to_string(),
             service_display: "ViewLBA Server".to_string(),
             service_description: "ViewLBA Server — native host for App + Realtime + Stream".to_string(),
             program_files,
-            program_data,
+            program_data: program_data_for_self,
             bun_path: runtime_dir.join("bun.exe"),
-            app_dir: app_dir.clone(),
-            app_entry: app_dir.join("scripts").join("start.ts"),
-            realtime_dir: mini_services.join("realtime-service"),
-            realtime_entry: mini_services.join("realtime-service").join("index.ts"),
-            stream_dir: program_data.join("data"), // stream cwd is ProgramData
+            app_dir: app_dir_for_self.clone(),
+            app_entry: app_dir_for_self.join("scripts").join("start.ts"),
+            realtime_dir: mini_services_for_self.clone().join("realtime-service"),
+            realtime_entry: mini_services_for_self.join("realtime-service").join("index.ts"),
+            stream_dir: program_data.join("data"),
             stream_entry: app_dir.join("mini-services").join("stream-service").join("index.ts"),
             log_dir: program_data.join("logs"),
             pid_dir: program_data.join("run"),
             pipe_name: r"\\.\pipe\viewlba-service".to_string(),
             health_check_interval_secs: 5,
             backoff_initial_ms: 5_000,
-            backoff_max_ms: 5 * 60_000, // 5 minutes
+            backoff_max_ms: 5 * 60_000,
             backoff_max_attempts: 10,
             stop_timeout_ms: 30_000,
         }
