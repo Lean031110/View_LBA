@@ -98,11 +98,11 @@ jobs:
           Copy-Item installer\native\target\x86_64-pc-windows-msvc\release\viewlba-service.exe dist\windows-native\
           Copy-Item installer\native\target\x86_64-pc-windows-msvc\release\viewlba-tray.exe    dist\windows-native\
 
-          # SHA256
+          # SHA256 — standard sha256sum format: "<hash>  <filename>" (hash first)
           $svcHash = (Get-FileHash dist\windows-native\viewlba-service.exe -Algorithm SHA256).Hash.ToLower()
           $trayHash = (Get-FileHash dist\windows-native\viewlba-tray.exe -Algorithm SHA256).Hash.ToLower()
-          "viewlba-service.exe  $svcHash" | Out-File -Encoding ASCII dist\windows-native\SHA256SUMS
-          "viewlba-tray.exe     $trayHash" | Add-Content -Encoding ASCII dist\windows-native\SHA256SUMS
+          "$svcHash  viewlba-service.exe" | Out-File -Encoding ASCII dist\windows-native\SHA256SUMS
+          "$trayHash  viewlba-tray.exe" | Add-Content -Encoding ASCII dist\windows-native\SHA256SUMS
           Write-Host "Service SHA256: $svcHash"
           Write-Host "Tray SHA256:    $trayHash"
           "service_sha256=$svcHash" | Out-File -Encoding ASCII -FilePath $env:GITHUB_OUTPUT -Append
