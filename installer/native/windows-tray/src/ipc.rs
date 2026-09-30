@@ -72,10 +72,10 @@ impl IpcClient {
             let handle_result = CreateFileW(
                 PIPE_NAME,
                 FILE_GENERIC_READ.0 | FILE_GENERIC_WRITE.0,
-                0,
+                FILE_SHARE_MODE(0),  // newtype wrapper for share mode
                 None,
                 OPEN_EXISTING,
-                FILE_ATTRIBUTE_NORMAL,
+                FILE_FLAGS_AND_ATTRIBUTES(FILE_ATTRIBUTE_NORMAL.0),
                 None,
             );
 
@@ -86,7 +86,8 @@ impl IpcClient {
             };
 
             // Set read mode to byte + timeout
-            let mut mode: u32 = PIPE_READMODE_BYTE;
+            // PIPE_READMODE_BYTE is NAMED_PIPE_MODE newtype (windows 0.61.3)
+            let mode = PIPE_READMODE_BYTE;
             let _ = SetNamedPipeHandleState(handle, Some(&mode), None, None);
 
             // Serialize request + append newline

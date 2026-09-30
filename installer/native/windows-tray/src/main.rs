@@ -221,7 +221,7 @@ fn run_tray_loop(cfg: &config::TrayConfig, state: Arc<Mutex<TrayState>>) -> Resu
                     _ => (128, 128, 128),       // gray (unknown)
                 };
                 let _ = tray.set_icon(Some(create_dot_icon(r, g, b)));
-                let _ = tray.set_tooltip(format!("ViewLBA Server — {}", state_snapshot.overall));
+                let _ = tray.set_tooltip(Some(format!("ViewLBA Server — {}", state_snapshot.overall)));
             }
             _ => {}
         }

@@ -19,17 +19,17 @@ pub struct SingleInstanceGuard {
 pub fn acquire(mutex_name: &str) -> Option<SingleInstanceGuard> {
     unsafe {
         let sddl: PCWSTR = w!("D:P(A;;0x100000;;;AU)");
-        let mut sd_ptr: *mut c_void = std::ptr::null_mut();
+        let mut sd_ptr: PSECURITY_DESCRIPTOR = PSECURITY_DESCRIPTOR(std::ptr::null_mut());
         let ok = ConvertStringSecurityDescriptorToSecurityDescriptorW(
             sddl,
             1, // SDDL_REVISION_1
-            &mut sd_ptr,
+            core::ptr::addr_of_mut!(sd_ptr),
             None,
         );
         let sa = if ok.is_ok() {
             SECURITY_ATTRIBUTES {
                 nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-                lpSecurityDescriptor: sd_ptr,
+                lpSecurityDescriptor: sd_ptr.0,
                 bInheritHandle: false.into(),
             }
         } else {
