@@ -18,6 +18,7 @@ use std::ffi::OsString;
 use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -195,15 +196,16 @@ pub fn run_as_service(cfg: &Config) -> ExitCode {
 extern "system" fn service_main_proc(_argc: u32, _argv: *const *const u16) {
     unsafe {
         // Register the control handler
-        let status_handle = RegisterServiceCtrlHandlerExW(
+        let status_handle_result = RegisterServiceCtrlHandlerExW(
             SERVICE_NAME,
             Some(service_control_handler),
             None,
         );
 
-        if status_handle.is_invalid() {
-            return;
-        }
+        let status_handle = match status_handle_result {
+            Ok(h) if !h.is_invalid() => h,
+            _ => return,
+        };
 
         // Report StartPending
         let _ = report_status(status_handle, SERVICE_START_PENDING, 0x00000001, 1, SERVICE_START_TIMEOUT_MS);

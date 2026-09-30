@@ -65,7 +65,7 @@ impl IpcClient {
     pub fn request<Req: Serialize, Resp: for<'de> Deserialize<'de>>(
         &self,
         req: &Req,
-    ) -> Result<Resp, String> {
+    ) -> std::result::Result<Resp, String> {
         unsafe {
             // Open the named pipe (client side)
             let handle_result = CreateFileW(

@@ -21,7 +21,7 @@
 //   - waits up to 30s for each to exit cleanly
 //   - force-kills any stragglers
 
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio, ExitCode};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -407,7 +407,6 @@ impl Supervisor {
 
 /// Run as foreground process (for debugging — never used in production).
 pub fn run_foreground(cfg: &Config) -> ExitCode {
-    use std::process::ExitCode;
     let cfg = Arc::new(cfg.clone());
     let sup = Supervisor::new(cfg.clone());
     if let Err(e) = sup.start_all() {

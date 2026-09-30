@@ -86,7 +86,7 @@ pub struct HealthReport {
 pub struct Protocol;
 
 impl Protocol {
-    pub fn parse_request(line: &str) -> Result<Request, serde_json::Error> {
+    pub fn parse_request(line: &str) -> std::result::Result<Request, serde_json::Error> {
         serde_json::from_str(line.trim())
     }
 
