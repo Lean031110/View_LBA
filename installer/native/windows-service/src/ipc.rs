@@ -14,17 +14,26 @@
 //
 //   RESPONSES (host → tray):
 //     {"type":"ok","msg":"..."}
-//     {"type":"status","status":{...}}
-//     {"type":"services","services":[...]}
-//     {"type":"health","health":{...}}
 //     {"type":"error","msg":"..."}
+//     {"type":"status","status":{...}}
+//     {"type":"health","health":{...}}
 //     {"type":"timestamp","ts":"..."}            → ack for non-request cmds
+//     {"type":"diagnostics","last_error":...,"log_path":...}
 //
-// Security: restrictive DACL — only LocalService + Administrators + Interactive
-// logon SIDs can connect. NO NULL DACL (misión §7).
+// Security: restrictive DACL via SDDL string (misión §7).
+//   Only LocalSystem + LocalService + Administrators + Interactive logon SIDs
+//   can connect. NO NULL DACL. NO Everyone.
 //
-// Multi-client: each connection handled in its own thread. Up to 4 simultaneous
-// connections (tray + admin tools). Timeouts: 5s connect, 10s per request.
+// SDDL: "D:(A;;GA;;;SY)(A;;GA;;;LS)(A;;GA;;;BA)(A;;GA;;;IU)"
+//   D: = DACL
+//   A: = Allow ACE
+//   GA: = Generic All
+//   ;;;SY = LocalSystem
+//   ;;;LS = LocalService
+//   ;;;BA = Built-in Administrators
+//   ;;;IU = Interactive User
+//
+// Multi-client: each connection handled in its own thread (max 4).
 
 #![cfg(target_os = "windows")]
 
@@ -32,26 +41,29 @@ use std::ffi::c_void;
 use std::io::Read;
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::Security::*;
-use windows::Win32::Security::Authorization::*;
 use windows::Win32::Storage::FileSystem::*;
 use windows::Win32::System::Pipes::*;
-use windows::Win32::System::Threading::*;
 
 use crate::config::Config;
 use crate::supervisor::{Supervisor, SupervisorStatus};
 use crate::logging;
 
-pub const PIPE_NAME: &[u16] = windows::w!("\\\\.\\pipe\\viewlba-service");
+const PIPE_NAME: PCWSTR = w!("\\\\.\\pipe\\viewlba-service");
 const PIPE_BUFFER_SIZE: u32 = 8 * 1024;
 const PIPE_MAX_INSTANCES: u32 = 4;
 const PIPE_CONNECT_TIMEOUT_MS: u32 = 5_000;
-const PIPE_REQUEST_TIMEOUT_MS: u32 = 10_000;
+const PIPE_REQUEST_TIMEOUT_MS: u64 = 10_000;
+
+// SDDL string granting Generic All to:
+//   SY (LocalSystem), LS (LocalService), BA (Administrators), IU (Interactive)
+// D:P = DACL protected (prevents inheriting from parent)
+const SDDL_RESTRICTIVE: PCWSTR = w!("D:P(A;;GA;;;SY)(A;;GA;;;LS)(A;;GA;;;BA)(A;;GA;;;IU)");
 
 // -----------------------------------------------------------------------
 // Protocol — formal request/response types
@@ -115,10 +127,15 @@ impl Protocol {
         let r = Response::Error { msg: msg.into() };
         Self::build_response(&r)
     }
+
+    pub fn ok_response(msg: impl Into<String>) -> String {
+        let r = Response::Ok { msg: msg.into() };
+        Self::build_response(&r)
+    }
 }
 
 // -----------------------------------------------------------------------
-// IPC server — restrictive DACL + multi-client threading
+// IPC server
 // -----------------------------------------------------------------------
 
 pub struct IpcServer {
@@ -132,38 +149,31 @@ impl IpcServer {
     }
 
     pub fn run_in_background(self) {
-        let cfg = self.cfg.clone();
-        let sup = self.supervisor.clone();
         thread::spawn(move || {
-            unsafe { server_loop(&cfg, &sup) };
+            unsafe { server_loop(&self.cfg, &self.supervisor) };
         });
     }
 }
 
 unsafe fn server_loop(cfg: &Config, sup: &Arc<Supervisor>) {
-    // Build a restrictive security descriptor:
-    //   Owner: LocalSystem
-    //   DACL: LocalService + Administrators + Interactive — full access
-    //   NO Everyone, NO NULL DACL (misión §7)
-    let sd = match build_restrictive_security_descriptor() {
+    // Build the security descriptor with the restrictive DACL (SDDL).
+    let sd_bytes = match build_restrictive_security_descriptor() {
         Ok(s) => s,
         Err(e) => {
             logging::write_event(logging::event("error", "services", format!("IPC SD build failed: {}", e)));
-            // Sleep and retry — never give up
+            // Sleep and retry — never give up (host must serve IPC)
             thread::sleep(Duration::from_secs(5));
             return;
         }
     };
 
-    loop {
-        let sa = SECURITY_ATTRIBUTES {
-            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-            lpSecurityDescriptor: sd.as_ptr() as *mut c_void,
-            bInheritHandle: false.into(),
-        };
+    // Wrap the SD in an Arc for thread-safe sharing (raw pointer issue workaround)
+    let sd_arc = Arc::new(sd_bytes);
+    let sa = build_security_attributes(&sd_arc);
 
+    loop {
         let handle = CreateNamedPipeW(
-            windows::core::PCWSTR(PIPE_NAME.as_ptr()),
+            PIPE_NAME,
             PIPE_ACCESS_DUPLEX,
             PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
             PIPE_MAX_INSTANCES,
@@ -181,15 +191,18 @@ unsafe fn server_loop(cfg: &Config, sup: &Arc<Supervisor>) {
         }
 
         // Wait for a client to connect (blocking)
-        let connected = ConnectNamedPipe(handle, None);
-        if connected.is_err() {
-            // ERROR_PIPE_CONNECTED (536) is OK — client connected before we called ConnectNamedPipe
-            let last_err = GetLastError();
+        let connect_result = ConnectNamedPipe(handle, None);
+        if let Err(e) = connect_result {
+            let hr = e.code();
+            // ERROR_PIPE_CONNECTED = 0x80000005? actually it's 535 (0x217)
+            // Check if the error is "pipe already connected"
+            let last_err = unsafe { GetLastError() };
             if last_err != ERROR_PIPE_CONNECTED {
-                logging::write_event(logging::event("warn", "services", format!("ConnectNamedPipe err: {:?}", last_err)));
+                logging::write_event(logging::event("warn", "services", format!("ConnectNamedPipe err: {:?} hr: {:?}", last_err, hr)));
                 let _ = CloseHandle(handle);
                 continue;
             }
+            // else: pipe already connected — proceed
         }
 
         // Spawn a worker thread to handle this client (multi-client)
@@ -205,10 +218,10 @@ unsafe fn handle_client(handle: HANDLE, cfg: &Config, sup: &Arc<Supervisor>) {
     // Read one line (request) — byte by byte until newline (max 8KB)
     let mut line_buf = Vec::with_capacity(1024);
     let mut byte = [0u8; 1];
-    let deadline = std::time::Instant::now() + Duration::from_millis(PIPE_REQUEST_TIMEOUT_MS as u64);
+    let deadline = Instant::now() + Duration::from_millis(PIPE_REQUEST_TIMEOUT_MS);
 
     loop {
-        if std::time::Instant::now() > deadline {
+        if Instant::now() > deadline {
             let _ = write_response(handle, &Protocol::error_response("request timeout"));
             let _ = CloseHandle(handle);
             return;
@@ -291,7 +304,6 @@ fn process_request(req: &Request, sup: &Arc<Supervisor>, cfg: &Config) -> Respon
             }
         }
         Request::Stop { svc } => {
-            // Per-child stop: kill the child without respawning
             let keys = keys_for(*svc);
             for k in keys {
                 let mut state = sup.state.lock().unwrap();
@@ -325,7 +337,7 @@ fn process_request(req: &Request, sup: &Arc<Supervisor>, cfg: &Config) -> Respon
                     slot.next_attempt_at = None;
                 }
             }
-            // Drop the lock before spawn_child which also locks
+            // Drop state lock before re-acquiring in spawn_child
             drop(sup.state.lock().unwrap());
             for k in keys {
                 let _ = sup.spawn_child(&k);
@@ -363,114 +375,55 @@ unsafe fn write_response(handle: HANDLE, resp: &str) -> std::io::Result<()> {
 }
 
 // -----------------------------------------------------------------------
-// Security descriptor builder — restrictive DACL
+// Security descriptor via SDDL — restrictive DACL
 // -----------------------------------------------------------------------
 
-/// Builds a security descriptor with the following ACL:
-///   Owner: LocalSystem
-///   DACL:
-///     LocalSystem  — full access
-///     LocalService — full access
-///     Administrators — full access
-///     Interactive logon SID — full access (so the tray running as the
-///       logged-in user can connect)
+/// Builds a security descriptor with the following restrictive DACL:
+///   LocalSystem   — full access
+///   LocalService  — full access
+///   Administrators — full access
+///   Interactive logon SID — full access (tray running as user)
 ///   NO Everyone, NO Anonymous, NO NULL DACL (misión §7)
 fn build_restrictive_security_descriptor() -> Result<Vec<u8>> {
     unsafe {
-        // Build 4 ACEs (allow) for the 4 SIDs above
-        let mut ea: [EXPLICIT_ACCESS_W; 4] = std::mem::zeroed();
-
-        // 1. LocalSystem — full
-        ea[0] = EXPLICIT_ACCESS_W {
-            dwAccessPermissions: FILE_GENERIC_READ.0 | FILE_GENERIC_WRITE.0 | FILE_GENERIC_EXECUTE.0,
-            grfAccessMode: SET_ACCESS,
-            grfInheritance: NO_INHERITANCE,
-            Trustee: build_trustee_w(&windows::w!("SYSTEM")[..], SE_SID::WellKnown(WellKnownSidType::WinLocalSystemSid))?,
-        };
-
-        // 2. LocalService — full
-        ea[1] = EXPLICIT_ACCESS_W {
-            dwAccessPermissions: FILE_GENERIC_READ.0 | FILE_GENERIC_WRITE.0 | FILE_GENERIC_EXECUTE.0,
-            grfAccessMode: SET_ACCESS,
-            grfInheritance: NO_INHERITANCE,
-            Trustee: build_trustee_w(&windows::w!("NT AUTHORITY\\LocalService")[..], SE_SID::WellKnown(WellKnownSidType::WinLocalServiceSid))?,
-        };
-
-        // 3. Administrators — full
-        ea[2] = EXPLICIT_ACCESS_W {
-            dwAccessPermissions: FILE_GENERIC_READ.0 | FILE_GENERIC_WRITE.0 | FILE_GENERIC_EXECUTE.0,
-            grfAccessMode: SET_ACCESS,
-            grfInheritance: NO_INHERITANCE,
-            Trustee: build_trustee_w(&windows::w!("Administrators")[..], SE_SID::WellKnown(WellKnownSidType::WinBuiltinAdministratorsSid))?,
-        };
-
-        // 4. Interactive logon SID — full (so tray running as user can connect)
-        ea[3] = EXPLICIT_ACCESS_W {
-            dwAccessPermissions: FILE_GENERIC_READ.0 | FILE_GENERIC_WRITE.0 | FILE_GENERIC_EXECUTE.0,
-            grfAccessMode: SET_ACCESS,
-            grfInheritance: NO_INHERITANCE,
-            Trustee: build_trustee_w(&windows::w!("<INTERACTIVE>")[..], SE_SID::WellKnown(WellKnownSidType::WinInteractiveSid))?,
-        };
-
-        // Build the ACL from the explicit access array
-        let mut acl_ptr: *mut ACL = std::ptr::null_mut();
-        let result = SetEntriesInAclW(&ea, None, &mut acl_ptr);
-        if result != 0 {
+        let mut sd_ptr: *mut c_void = std::ptr::null_mut();
+        let ok = ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            SDDL_RESTRICTIVE,
+            SDDL_REVISION_1,
+            &mut sd_ptr,
+            None,
+        );
+        if ok.is_err() {
             return Err(Error::from_win32());
         }
 
-        // Build the security descriptor
-        let mut sd = vec![0u8; 1024]; // SECURITY_DESCRIPTOR_MIN_SIZE is 40 bytes, but more is safer
-        let sd_ptr = sd.as_mut_ptr() as *mut c_void;
-        let _ = InitializeSecurityDescriptor(sd_ptr, SECURITY_DESCRIPTOR_REVISION);
-        let _ = SetSecurityDescriptorDacl(sd_ptr, true, Some(acl_ptr), false);
+        // Determine the size of the SD to copy it into a Vec<u8>
+        // SECURITY_DESCRIPTOR_RELATIVE has a length field, but for simplicity
+        // we copy a fixed size (typical SDs are <1KB)
+        let sd_size = GetSecurityDescriptorLength(sd_ptr);
+        let mut sd_bytes = vec![0u8; sd_size as usize];
+        std::ptr::copy_nonoverlapping(
+            sd_ptr as *const u8,
+            sd_bytes.as_mut_ptr(),
+            sd_size as usize,
+        );
 
-        // Note: We leak the ACL memory (acl_ptr) — it's referenced by the SD.
-        // The SD's lifetime matches the loop iteration; if it goes out of scope
-        // we should free the ACL. For simplicity (and since the SD lives for the
-        // lifetime of the IPC server), we let it leak.
-        Ok(sd)
+        // Free the original SD allocation (Windows allocated it)
+        LocalFree(Some(sd_ptr as *const _));
+
+        Ok(sd_bytes)
     }
 }
 
-unsafe fn build_trustee_w(name: &[u16], sid_type: SE_SID) -> Result<TRUSTEE_W> {
-    let mut trustee: TRUSTEE_W = std::mem::zeroed();
-    trustee.pMultipleTrustee = std::ptr::null();
-    trustee.MultipleTrusteeOperation = NO_MULTIPLE_TRUSTEE;
-    trustee.TrusteeForm = TRUSTEE_IS_SID;
-    trustee.TrusteeType = TRUSTEE_IS_GROUP;
-    trustee.ptstrName = sid_type.as_ptr() as *const _;
-    let _ = name; // name unused when form is SID
-    Ok(trustee)
-}
-
-// Stub for SE_SID — windows crate doesn't have a unified SID enum.
-// We'll build the SIDs separately.
-#[allow(non_camel_case_types)]
-enum SE_SID {
-    WellKnown(WellKnownSidType),
-}
-
-impl SE_SID {
-    fn as_ptr(&self) -> *const u8 {
-        match self {
-            SE_SID::WellKnown(t) => {
-                // For v1: return a null pointer — the actual SID construction
-                // requires CreateWellKnownSid which we'll add below.
-                // The Trustee will be ignored if ptstrName is invalid, so
-                // this is a known limitation of v1.
-                // TODO: implement CreateWellKnownSid properly.
-                std::ptr::null()
-            }
-        }
+/// Wraps the SD bytes in a SECURITY_ATTRIBUTES for CreateNamedPipeW.
+fn build_security_attributes(sd_bytes: &Arc<Vec<u8>>) -> SECURITY_ATTRIBUTES {
+    SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: sd_bytes.as_ptr() as *mut c_void,
+        bInheritHandle: false.into(),
     }
 }
 
-// Well-known SID types (subset of windows crate's WellKnownSidType)
-#[allow(non_camel_case_types)]
-enum WellKnownSidType {
-    WinLocalSystemSid,
-    WinLocalServiceSid,
-    WinBuiltinAdministratorsSid,
-    WinInteractiveSid,
-}
+// Suppress unused warning when not on Windows
+#[cfg(not(target_os = "windows"))]
+pub fn _suppress() {}

@@ -10,13 +10,6 @@
 //   - Can write to ProgramData/ViewLBA when ACL grants LocalService write
 //   - Can bind to non-privileged ports (3000, 3003, 1935, 8000)
 //   - CANNOT authenticate as the machine on the network (we don't need this)
-//
-// Service lifecycle:
-//   Start: StartPending → Running (within 30s) — host spawns 3 children
-//   Stop: StopPending → Stopped (within 30s) — host graceful shutdowns children
-//   Shutdown: like Stop but no time pressure (system is shutting down)
-//   Recovery: restart 5s/10s/60s (backoff via ChangeServiceConfig2W)
-//   Pre-shutdown: NOT enabled — adds no value (we don't hold kernel objects)
 
 #![cfg(target_os = "windows")]
 
@@ -26,36 +19,26 @@ use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use windows::core::*;
 use windows::Win32::Foundation::*;
-use windows::Win32::System::Services::*;
 use windows::Win32::Security::*;
+use windows::Win32::System::Services::*;
 
 use crate::config::Config;
 use crate::ipc::{IpcServer, Protocol};
 use crate::logging;
 use crate::supervisor::Supervisor;
 
-const SERVICE_NAME_W: &[u16] = windows::w!("ViewLBA");
-const SERVICE_DISPLAY_W: &[u16] = windows::w!("ViewLBA Server");
-const SERVICE_DESC_W: &[u16] = windows::w!("ViewLBA Server - native host for App + Realtime + Stream children (no NSSM)");
+const SERVICE_NAME: PCWSTR = w!("ViewLBA");
+const SERVICE_DISPLAY: PCWSTR = w!("ViewLBA Server");
+const SERVICE_DESC: PCWSTR = w!("ViewLBA Server - native host for App + Realtime + Stream children");
+const LOCALSERVICE_ACCOUNT: PCWSTR = w!("NT AUTHORITY\\LocalService");
 
-// Service start timeout (SCM kills the service if it doesn't reach Running
-// within this time). 30s is the default and matches `windows-service` crate.
-const SERVICE_START_TIMEOUT: Duration = Duration::from_secs(30);
-// Service stop timeout (host has this long to graceful-shutdown children
-// before SCM kills it).
-const SERVICE_STOP_TIMEOUT: Duration = Duration::from_secs(30);
-
-// Shared state between the SCM dispatcher thread and the worker thread.
-struct ServiceContext {
-    stop_flag: Arc<AtomicBool>,
-    supervisor: Arc<Supervisor>,
-}
+const SERVICE_START_TIMEOUT_MS: u32 = 30_000;
+const SERVICE_STOP_TIMEOUT_MS: u32 = 30_000;
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
@@ -72,7 +55,6 @@ pub fn install(cfg: &Config) -> ExitCode {
                 ExitCode::SUCCESS
             }
             Err(e) if is_error(&e, 1073) => {
-                // ERROR_SERVICE_EXISTS
                 println!("Service 'ViewLBA' already exists — nothing to do.");
                 ExitCode::SUCCESS
             }
@@ -94,7 +76,6 @@ pub fn uninstall(cfg: &Config) -> ExitCode {
                 ExitCode::SUCCESS
             }
             Err(e) if is_error(&e, 1060) => {
-                // ERROR_SERVICE_DOES_NOT_EXIST
                 println!("Service 'ViewLBA' does not exist — nothing to do.");
                 ExitCode::SUCCESS
             }
@@ -116,7 +97,6 @@ pub fn start(cfg: &Config) -> ExitCode {
                 ExitCode::SUCCESS
             }
             Err(e) if is_error(&e, 1056) => {
-                // ERROR_SERVICE_ALREADY_RUNNING
                 println!("Service 'ViewLBA' is already running.");
                 ExitCode::SUCCESS
             }
@@ -129,8 +109,7 @@ pub fn start(cfg: &Config) -> ExitCode {
     }
 }
 
-/// --stop: stop the registered service via SCM (sends SERVICE_CONTROL_STOP,
-/// host receives it and graceful-shutdowns children within 30s).
+/// --stop: stop the registered service via SCM.
 pub fn stop(cfg: &Config) -> ExitCode {
     unsafe {
         match stop_service(cfg) {
@@ -139,7 +118,6 @@ pub fn stop(cfg: &Config) -> ExitCode {
                 ExitCode::SUCCESS
             }
             Err(e) if is_error(&e, 1062) => {
-                // ERROR_SERVICE_NOT_ACTIVE
                 println!("Service 'ViewLBA' is not running.");
                 ExitCode::SUCCESS
             }
@@ -158,62 +136,67 @@ pub fn stop(cfg: &Config) -> ExitCode {
 pub fn run_as_service(cfg: &Config) -> ExitCode {
     let cfg = Arc::new(cfg.clone());
 
-    // ServiceMain entry — called by SCM dispatcher.
-    // We use the windows crate's StartServiceCtrlDispatcher + ServiceMain pattern.
-    let service_main_thread = thread::spawn(move || -> ExitCode {
-        let supervisor = Arc::new(Supervisor::new(cfg.clone()));
-
+    // Spawn the worker thread that will do the actual work
+    let supervisor = Arc::new(Supervisor::new(cfg.clone()));
+    let sup_clone_for_thread = supervisor.clone();
+    let worker_handle = thread::spawn(move || -> ExitCode {
         // Initialize IPC server
-        let ipc = IpcServer::new(cfg.clone(), supervisor.clone());
+        let ipc = IpcServer::new(cfg.clone(), sup_clone_for_thread.clone());
         ipc.run_in_background();
 
         // Spawn children (stream → realtime → app)
-        if let Err(e) = supervisor.start_all() {
+        if let Err(e) = sup_clone_for_thread.start_all() {
             eprintln!("start_all failed: {}", e);
             logging::write_event(logging::event("error", "services", format!("start_all failed: {}", e)));
             return ExitCode::from(1);
         }
 
         // Run watch loop until shutdown requested
-        supervisor.run_watch_loop();
+        sup_clone_for_thread.run_watch_loop();
 
         // Graceful shutdown of children
-        supervisor.stop_all();
+        sup_clone_for_thread.stop_all();
 
         ExitCode::SUCCESS
     });
 
-    // Register the service control dispatcher — this blocks the main thread
-    // until the service is stopped.
+    // Register the service control dispatcher on the main thread
+    // (this blocks until the service is stopped)
     unsafe {
-        let mut service_table: [SERVICE_TABLE_ENTRYW; 2] = [
+        let service_main: [SERVICE_TABLE_ENTRYW; 2] = [
             SERVICE_TABLE_ENTRYW {
-                lpServiceName: windows::core::PCWSTR(SERVICE_NAME_W.as_ptr()),
+                lpServiceName: SERVICE_NAME,
                 lpServiceProc: Some(service_main_proc),
             },
             SERVICE_TABLE_ENTRYW {
-                lpServiceName: windows::core::PCWSTR::null(),
+                lpServiceName: PCWSTR::null(),
                 lpServiceProc: None,
             },
         ];
 
-        let result = StartServiceCtrlDispatcherW(&service_table);
+        let result = StartServiceCtrlDispatcherW(&service_main);
         if result.is_err() {
-            // Failed to start dispatcher — likely running in foreground mode
-            eprintln!("StartServiceCtrlDispatcherW failed — running in foreground");
+            eprintln!("StartServiceCtrlDispatcherW failed — not running as a service?");
+            // Signal worker to stop
+            SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
+            supervisor.stop_flag.store(true, Ordering::SeqCst);
+            let _ = worker_handle.join();
             return ExitCode::from(1);
         }
     }
 
-    service_main_thread.join().unwrap_or(ExitCode::from(1))
+    // After dispatcher returns (SCM stopped us), signal worker and join
+    SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
+    supervisor.stop_flag.store(true, Ordering::SeqCst);
+    worker_handle.join().unwrap_or(ExitCode::from(1))
 }
 
-// SCM dispatcher ServiceMain callback (extern "C" FFI).
+// SCM dispatcher ServiceMain callback (extern "system" FFI).
 extern "system" fn service_main_proc(_argc: u32, _argv: *const *const u16) {
     unsafe {
         // Register the control handler
         let status_handle = RegisterServiceCtrlHandlerExW(
-            windows::core::PCWSTR(SERVICE_NAME_W.as_ptr()),
+            SERVICE_NAME,
             Some(service_control_handler),
             None,
         );
@@ -223,13 +206,10 @@ extern "system" fn service_main_proc(_argc: u32, _argv: *const *const u16) {
         }
 
         // Report StartPending
-        let _ = report_status(status_handle, ServiceState::StartPending, ServiceAccept::STOP, 1, SERVICE_START_TIMEOUT);
+        let _ = report_status(status_handle, SERVICE_START_PENDING, 0x00000001, 1, SERVICE_START_TIMEOUT_MS);
 
-        // Spawn the worker thread (which has already been spawned in run_as_service).
-        // The main thread here just needs to wait for shutdown.
-
-        // Report Running
-        let _ = report_status(status_handle, ServiceState::Running, ServiceAccept::STOP, 0, Duration::ZERO);
+        // Report Running (the worker thread is already doing its thing)
+        let _ = report_status(status_handle, SERVICE_RUNNING, 0x00000001, 0, 0);
 
         // Wait for shutdown signal
         while !SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
@@ -237,13 +217,12 @@ extern "system" fn service_main_proc(_argc: u32, _argv: *const *const u16) {
         }
 
         // Report StopPending
-        let _ = report_status(status_handle, ServiceState::StopPending, ServiceAccept::empty(), 0, SERVICE_STOP_TIMEOUT);
+        let _ = report_status(status_handle, SERVICE_STOP_PENDING, 0, 0, SERVICE_STOP_TIMEOUT_MS);
 
-        // Supervisor stop_all already called by the main thread before exiting.
-        // Wait for it to finish (best-effort).
+        // Worker thread will have already called stop_all() before exiting.
 
         // Report Stopped
-        let _ = report_status(status_handle, ServiceState::Stopped, ServiceAccept::empty(), 0, Duration::ZERO);
+        let _ = report_status(status_handle, SERVICE_STOPPED, 0, 0, 0);
     }
 }
 
@@ -254,13 +233,12 @@ extern "system" fn service_control_handler(
     _event_data: *const c_void,
     _context: *const c_void,
 ) -> u32 {
-    let control = SERVICE_CONTROL(control);
-    match control.0 {
+    match control {
         // SERVICE_CONTROL_STOP = 1
         1 => {
             logging::write_event(logging::event("info", "services", "received SERVICE_CONTROL_STOP"));
             SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
-            0 // NO_ERROR
+            0
         }
         // SERVICE_CONTROL_SHUTDOWN = 5
         5 => {
@@ -276,19 +254,19 @@ extern "system" fn service_control_handler(
 
 unsafe fn report_status(
     handle: SERVICE_STATUS_HANDLE,
-    state: ServiceState,
-    accept: ServiceAccept,
+    state: u32, // SERVICE_START_PENDING=2, SERVICE_RUNNING=4, SERVICE_STOPPED=1, SERVICE_STOP_PENDING=3
+    controls_accepted: u32,
     checkpoint: u32,
-    wait_hint: Duration,
+    wait_hint_ms: u32,
 ) -> Result<()> {
     let mut status: SERVICE_STATUS = std::mem::zeroed();
-    status.dwServiceType = ServiceType::SERVICE_WIN32_OWN_PROCESS.0;
-    status.dwCurrentState = state.0;
-    status.dwControlsAccepted = accept.bits();
-    status.dwWin32ExitCode = 0; // NO_ERROR
+    status.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
+    status.dwCurrentState = state;
+    status.dwControlsAccepted = controls_accepted;
+    status.dwWin32ExitCode = 0;
     status.dwServiceSpecificExitCode = 0;
     status.dwCheckPoint = checkpoint;
-    status.dwWaitHint = wait_hint.as_millis() as u32;
+    status.dwWaitHint = wait_hint_ms;
 
     if SetServiceStatus(handle, &status).is_err() {
         return Err(Error::from_win32());
@@ -296,37 +274,16 @@ unsafe fn report_status(
     Ok(())
 }
 
-// Bitfield enums for SERVICE_STATUS
-#[derive(Copy, Clone)]
-struct ServiceType(pub u32);
-impl ServiceType {
-    const SERVICE_WIN32_OWN_PROCESS: Self = Self(0x00000010);
-}
-
-#[derive(Copy, Clone)]
-struct ServiceState(pub u32);
-impl ServiceState {
-    const STOPPED: Self = Self(0x00000001);
-    const START_PENDING: Self = Self(0x00000002);
-    const STOP_PENDING: Self = Self(0x00000003);
-    const RUNNING: Self = Self(0x00000004);
-}
-
-#[derive(Copy, Clone)]
-struct ServiceAccept;
-impl ServiceAccept {
-    const fn empty() -> Self { Self {} }
-    const fn bits(self) -> u32 { 0 }
-    const STOP: u32 = 0x00000001;
-    // We need a different approach
-}
-
-// Actually, let me use the windows crate's built-in SERVICE_STATUS_HANDLE type.
-// The above ServiceType/ServiceState/ServiceAccept are simplified local types
-// to avoid having to deal with windows crate bitfield constants.
+// SCM status constants
+const SERVICE_START_PENDING: u32 = 0x00000002;
+const SERVICE_RUNNING: u32 = 0x00000004;
+const SERVICE_STOP_PENDING: u32 = 0x00000003;
+const SERVICE_STOPPED: u32 = 0x00000001;
+const SERVICE_WIN32_OWN_PROCESS: u32 = 0x00000010;
+const SERVICE_ACCEPT_STOP: u32 = 0x00000001;
 
 // -----------------------------------------------------------------------
-// SCM API helpers (use windows crate directly)
+// SCM API helpers
 // -----------------------------------------------------------------------
 
 fn current_exe_path() -> PathBuf {
@@ -334,11 +291,7 @@ fn current_exe_path() -> PathBuf {
 }
 
 unsafe fn create_service(cfg: &Config, command_line: &str) -> Result<()> {
-    let scm = OpenSCManagerW(
-        None, // local machine
-        None, // SERVICES_ACTIVE_DATABASEW
-        SC_MANAGER_CONNECT | SC_MANAGER_CREATE_SERVICE,
-    )?;
+    let scm = OpenSCManagerW(None, None, SC_MANAGER_CONNECT | SC_MANAGER_CREATE_SERVICE)?;
 
     let exe_wide: Vec<u16> = OsString::from(command_line)
         .encode_wide()
@@ -347,31 +300,31 @@ unsafe fn create_service(cfg: &Config, command_line: &str) -> Result<()> {
 
     let service = CreateServiceW(
         &scm,
-        windows::core::PCWSTR(SERVICE_NAME_W.as_ptr()),
-        windows::core::PCWSTR(SERVICE_DISPLAY_W.as_ptr()),
+        SERVICE_NAME,
+        SERVICE_DISPLAY,
         SERVICE_ALL_ACCESS,
-        ServiceType::SERVICE_WIN32_OWN_PROCESS.0,
-        SERVICE_AUTO_START, // StartType
-        SERVICE_ERROR_NORMAL, // ErrorControl
+        SERVICE_WIN32_OWN_PROCESS,
+        SERVICE_AUTO_START,
+        SERVICE_ERROR_NORMAL,
         windows::core::PCWSTR(exe_wide.as_ptr()),
-        None, // no load ordering group
-        None, // no tag id
-        None, // no dependencies
-        None, // LocalService — null means default (LocalSystem)
-        None, // no password
+        None,
+        None,
+        None,
+        None,
+        None,
     )?;
 
     // Set description
+    let desc_text: PCWSTR = SERVICE_DESC;
     let mut desc: SERVICE_DESCRIPTIONW = std::mem::zeroed();
-    desc.lpDescription = windows::core::PCWSTR(SERVICE_DESC_W.as_ptr());
+    desc.lpDescription = desc_text;
     let _ = ChangeServiceConfig2W(
         &service,
         SERVICE_CONFIG_DESCRIPTION,
         Some(&desc as *const _ as *const c_void),
     );
 
-    // Set LocalService account
-    let account_name = windows::core::PCWSTR(windows::w!("NT AUTHORITY\\LocalService").as_ptr());
+    // Set LocalService account (minimum privilege, NOT LocalSystem)
     let _ = ChangeServiceConfigW(
         &service,
         SERVICE_NO_CHANGE,
@@ -381,8 +334,8 @@ unsafe fn create_service(cfg: &Config, command_line: &str) -> Result<()> {
         None,
         None,
         None,
-        Some(account_name),
-        Some(windows::core::PCWSTR::null()),
+        Some(LOCALSERVICE_ACCOUNT),
+        Some(PCWSTR::null()),
         None,
     );
 
@@ -393,11 +346,7 @@ unsafe fn create_service(cfg: &Config, command_line: &str) -> Result<()> {
 
 unsafe fn delete_service(cfg: &Config) -> Result<()> {
     let scm = OpenSCManagerW(None, None, SC_MANAGER_CONNECT)?;
-    let service = OpenServiceW(
-        &scm,
-        windows::core::PCWSTR(SERVICE_NAME_W.as_ptr()),
-        SERVICE_ALL_ACCESS,
-    )?;
+    let service = OpenServiceW(&scm, SERVICE_NAME, SERVICE_ALL_ACCESS)?;
     DeleteService(&service)?;
     CloseServiceHandle(scm)?;
     CloseServiceHandle(service)?;
@@ -406,11 +355,7 @@ unsafe fn delete_service(cfg: &Config) -> Result<()> {
 
 unsafe fn start_service(cfg: &Config) -> Result<()> {
     let scm = OpenSCManagerW(None, None, SC_MANAGER_CONNECT)?;
-    let service = OpenServiceW(
-        &scm,
-        windows::core::PCWSTR(SERVICE_NAME_W.as_ptr()),
-        SERVICE_ALL_ACCESS,
-    )?;
+    let service = OpenServiceW(&scm, SERVICE_NAME, SERVICE_ALL_ACCESS)?;
     StartServiceW(&service, &[])?;
     CloseServiceHandle(scm)?;
     CloseServiceHandle(service)?;
@@ -419,22 +364,17 @@ unsafe fn start_service(cfg: &Config) -> Result<()> {
 
 unsafe fn stop_service(cfg: &Config) -> Result<()> {
     let scm = OpenSCManagerW(None, None, SC_MANAGER_CONNECT)?;
-    let service = OpenServiceW(
-        &scm,
-        windows::core::PCWSTR(SERVICE_NAME_W.as_ptr()),
-        SERVICE_ALL_ACCESS,
-    )?;
+    let service = OpenServiceW(&scm, SERVICE_NAME, SERVICE_ALL_ACCESS)?;
 
-    // Send STOP
     let mut status: SERVICE_STATUS = std::mem::zeroed();
     ControlService(&service, SERVICE_CONTROL_STOP, &mut status)?;
 
     // Wait up to 30s for Stopped
-    let deadline = Instant::now() + SERVICE_STOP_TIMEOUT;
+    let deadline = Instant::now() + Duration::from_millis(SERVICE_STOP_TIMEOUT_MS as u64);
     while Instant::now() < deadline {
         let mut cur: SERVICE_STATUS = std::mem::zeroed();
         let _ = QueryServiceStatus(&service, &mut cur);
-        if cur.dwCurrentState == ServiceState::STOPPED.0 {
+        if cur.dwCurrentState == SERVICE_STOPPED {
             CloseServiceHandle(scm)?;
             CloseServiceHandle(service)?;
             return Ok(());
@@ -448,14 +388,17 @@ unsafe fn stop_service(cfg: &Config) -> Result<()> {
 }
 
 unsafe fn set_recovery_actions() {
-    // TODO: implement via ChangeServiceConfig2W with SERVICE_FAILURE_ACTIONS
+    // TODO: implement via ChangeServiceConfig2W with SERVICE_CONFIG_FAILURE_ACTIONS
     // For v1, default SCM recovery (no restart) is acceptable. v2 will add
     // restart-on-failure with 5s/10s/60s backoff.
-    logging::write_event(logging::event("info", "services", "recovery actions (default SCM)"));
+    logging::write_event(logging::event("info", "services", "recovery actions (default SCM, v1)"));
 }
 
 fn is_error(e: &Error, code: i32) -> bool {
-    // The windows crate's Error::from_win32 wraps HRESULT; check the raw code
     let msg = format!("{}", e);
-    msg.contains(&format!("0x{:08X}", code as u32))
+    // windows crate's Error formats include the HRESULT or win32 error code.
+    // Check both decimal and hex.
+    msg.contains(&code.to_string())
+        || msg.contains(&format!("0x{:08X}", code as u32))
+        || msg.contains(&format!("0x{:08x}", code as u32))
 }
