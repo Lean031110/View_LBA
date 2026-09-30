@@ -260,15 +260,15 @@ extern "system" fn service_control_handler(
 
 unsafe fn report_status(
     handle: SERVICE_STATUS_HANDLE,
-    state: u32, // SERVICE_START_PENDING=2, SERVICE_RUNNING=4, SERVICE_STOPPED=1, SERVICE_STOP_PENDING=3
+    state: u32,
     controls_accepted: u32,
     checkpoint: u32,
     wait_hint_ms: u32,
 ) -> Result<()> {
     let mut status: SERVICE_STATUS = std::mem::zeroed();
-    status.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
-    status.dwCurrentState = state;
-    status.dwControlsAccepted = controls_accepted;
+    status.dwServiceType = ENUM_SERVICE_TYPE(SERVICE_WIN32_OWN_PROCESS);
+    status.dwCurrentState = SERVICE_STATUS_CURRENT_STATE(state);
+    status.dwControlsAccepted = SERVICE_STATUS_ACCEPT(controls_accepted);
     status.dwWin32ExitCode = 0;
     status.dwServiceSpecificExitCode = 0;
     status.dwCheckPoint = checkpoint;
@@ -280,7 +280,7 @@ unsafe fn report_status(
     Ok(())
 }
 
-// SCM status constants
+// SCM status constants (u32 values to wrap in newtype structs)
 const SERVICE_START_PENDING: u32 = 0x00000002;
 const SERVICE_RUNNING: u32 = 0x00000004;
 const SERVICE_STOP_PENDING: u32 = 0x00000003;
@@ -304,11 +304,11 @@ unsafe fn create_service(cfg: &Config, command_line: &str) -> Result<()> {
         .collect();
 
     let service = CreateServiceW(
-        &scm,
+        scm,
         SERVICE_NAME,
         SERVICE_DISPLAY,
         SERVICE_ALL_ACCESS,
-        SERVICE_WIN32_OWN_PROCESS,
+        ENUM_SERVICE_TYPE(SERVICE_WIN32_OWN_PROCESS),
         SERVICE_AUTO_START,
         SERVICE_ERROR_NORMAL,
         windows::core::PCWSTR(exe_wide.as_ptr()),
@@ -319,20 +319,21 @@ unsafe fn create_service(cfg: &Config, command_line: &str) -> Result<()> {
         None,
     )?;
 
-    // Set description
+    // Set description — SERVICE_DESCRIPTIONW.lpDescription expects PWSTR (mutable)
+    // but our SERVICE_DESC is PCWSTR (immutable). Cast to PWSTR — the SCM doesn't
+    // modify the string, just reads it once and stores a copy.
     let mut desc: SERVICE_DESCRIPTIONW = std::mem::zeroed();
-    desc.lpDescription = SERVICE_DESC;
+    desc.lpDescription = PWSTR(SERVICE_DESC.as_ptr() as *mut u16);
     let _ = ChangeServiceConfig2W(
-        &service,
+        service,
         SERVICE_CONFIG_DESCRIPTION,
         Some(&desc as *const _ as *const c_void),
     );
 
     // Set LocalService account (minimum privilege, NOT LocalSystem)
-    // ChangeServiceConfigW signature: account_name and password are PCWSTR (Option not supported).
-    // Use raw PCWSTR pointer; null means default account.
+    // ChangeServiceConfigW signature: SC_HANDLE (not &SC_HANDLE) for hService.
     let _ = ChangeServiceConfigW(
-        &service,
+        service,
         SERVICE_NO_CHANGE,
         SERVICE_NO_CHANGE,
         SERVICE_NO_CHANGE,
@@ -352,8 +353,8 @@ unsafe fn create_service(cfg: &Config, command_line: &str) -> Result<()> {
 
 unsafe fn delete_service(cfg: &Config) -> Result<()> {
     let scm = OpenSCManagerW(None, None, SC_MANAGER_CONNECT)?;
-    let service = OpenServiceW(&scm, SERVICE_NAME, SERVICE_ALL_ACCESS)?;
-    DeleteService(&service)?;
+    let service = OpenServiceW(scm, SERVICE_NAME, SERVICE_ALL_ACCESS)?;
+    DeleteService(service)?;
     CloseServiceHandle(scm)?;
     CloseServiceHandle(service)?;
     Ok(())
@@ -361,8 +362,8 @@ unsafe fn delete_service(cfg: &Config) -> Result<()> {
 
 unsafe fn start_service(cfg: &Config) -> Result<()> {
     let scm = OpenSCManagerW(None, None, SC_MANAGER_CONNECT)?;
-    let service = OpenServiceW(&scm, SERVICE_NAME, SERVICE_ALL_ACCESS)?;
-    StartServiceW(&service, &[])?;
+    let service = OpenServiceW(scm, SERVICE_NAME, SERVICE_ALL_ACCESS)?;
+    StartServiceW(service, &[])?;
     CloseServiceHandle(scm)?;
     CloseServiceHandle(service)?;
     Ok(())
@@ -370,17 +371,17 @@ unsafe fn start_service(cfg: &Config) -> Result<()> {
 
 unsafe fn stop_service(cfg: &Config) -> Result<()> {
     let scm = OpenSCManagerW(None, None, SC_MANAGER_CONNECT)?;
-    let service = OpenServiceW(&scm, SERVICE_NAME, SERVICE_ALL_ACCESS)?;
+    let service = OpenServiceW(scm, SERVICE_NAME, SERVICE_ALL_ACCESS)?;
 
     let mut status: SERVICE_STATUS = std::mem::zeroed();
-    ControlService(&service, SERVICE_CONTROL_STOP, &mut status)?;
+    ControlService(service, SERVICE_CONTROL_STOP, &mut status)?;
 
     // Wait up to 30s for Stopped
     let deadline = Instant::now() + Duration::from_millis(SERVICE_STOP_TIMEOUT_MS as u64);
     while Instant::now() < deadline {
         let mut cur: SERVICE_STATUS = std::mem::zeroed();
-        let _ = QueryServiceStatus(&service, &mut cur);
-        if cur.dwCurrentState == SERVICE_STOPPED {
+        let _ = QueryServiceStatus(service, &mut cur);
+        if cur.dwCurrentState.0 == SERVICE_STOPPED {
             CloseServiceHandle(scm)?;
             CloseServiceHandle(service)?;
             return Ok(());

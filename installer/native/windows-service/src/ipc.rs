@@ -190,14 +190,14 @@ unsafe fn server_loop(cfg: &Config, sup: &Arc<Supervisor>) {
             }
         }
 
-        // Spawn worker thread — wrap HANDLE in SendHandle (windows 0.61 HANDLE
-        // is *mut c_void which is !Send by default)
+        // Spawn worker thread — convert HANDLE to usize (Send primitive)
+        // because windows 0.61 HANDLE (*mut c_void) is !Send by default.
+        // We reconstruct HANDLE inside the thread for Win32 API calls.
         let cfg_clone = cfg.clone();
         let sup_clone = sup.clone();
-        let send_handle = SendHandle(handle);
+        let raw_handle = handle.0 as usize;  // usize is Send
         thread::spawn(move || {
-            // Deref SendHandle back to HANDLE for use in Win32 API calls
-            let h = send_handle.0;
+            let h = HANDLE(raw_handle as *mut c_void);
             handle_client(h, &cfg_clone, &sup_clone);
         });
     }

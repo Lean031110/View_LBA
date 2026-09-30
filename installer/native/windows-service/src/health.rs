@@ -128,25 +128,9 @@ fn check_dir_writable(dir: &std::path::Path) -> HealthStatus {
 }
 
 pub fn log_report(report: &HealthReport) {
-    let event = logging::event("info", "health", "health check result")
-        .with_service("app,realtime,stream,database,storage")
-        .with_stdout(format!("{:?}", report));
-    logging::write_event(event);
+    // Simple logging — don't use the with_service trait (would require importing it).
+    logging::write_event(logging::event("info", "health", format!("health check result: {:?}", report)));
 }
 
-// Helper trait to chain LogEvent builders
-pub trait LogEventExt {
-    fn with_service(self, s: &str) -> Self;
-    fn with_stdout(self, s: String) -> Self;
-}
-
-impl LogEventExt for logging::LogEvent {
-    fn with_service(mut self, s: &str) -> Self {
-        self.service = Some(s.to_string());
-        self
-    }
-    fn with_stdout(mut self, s: String) -> Self {
-        self.stdout = Some(s);
-        self
-    }
-}
+// Trait removed — methods directly on LogEvent in logging.rs would be cleaner
+// but for v1 we just inline the values.
