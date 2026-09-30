@@ -106,6 +106,15 @@ impl Protocol {
 // IPC server
 // -----------------------------------------------------------------------
 
+/// Wrapper around HANDLE that implements Send+Sync.
+/// In windows 0.61, HANDLE contains *mut c_void which is !Send by default.
+/// For our use case (passing pipe handles to worker threads), this is safe
+/// because each HANDLE is owned by exactly one thread after the spawn.
+#[derive(Clone, Copy)]
+struct SendHandle(HANDLE);
+unsafe impl Send for SendHandle {}
+unsafe impl Sync for SendHandle {}
+
 pub struct IpcServer {
     pub cfg: Arc<Config>,
     pub supervisor: Arc<Supervisor>,
@@ -181,11 +190,15 @@ unsafe fn server_loop(cfg: &Config, sup: &Arc<Supervisor>) {
             }
         }
 
-        // Spawn worker thread — only HANDLE is captured (it's Send, just an opaque isize)
+        // Spawn worker thread — wrap HANDLE in SendHandle (windows 0.61 HANDLE
+        // is *mut c_void which is !Send by default)
         let cfg_clone = cfg.clone();
         let sup_clone = sup.clone();
+        let send_handle = SendHandle(handle);
         thread::spawn(move || {
-            handle_client(handle, &cfg_clone, &sup_clone);
+            // Deref SendHandle back to HANDLE for use in Win32 API calls
+            let h = send_handle.0;
+            handle_client(h, &cfg_clone, &sup_clone);
         });
     }
 }
@@ -364,7 +377,7 @@ fn build_restrictive_security_descriptor() -> Result<Vec<u8>> {
             return Err(Error::from_win32());
         }
 
-        let sd_size = GetSecurityDescriptorLength(sd_ptr as PSECURITY_DESCRIPTOR);
+        let sd_size = GetSecurityDescriptorLength(PSECURITY_DESCRIPTOR(sd_ptr));
         let mut sd_bytes = vec![0u8; sd_size as usize];
         std::ptr::copy_nonoverlapping(
             sd_ptr as *const u8,
