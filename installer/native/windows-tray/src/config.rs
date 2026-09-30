@@ -17,9 +17,11 @@ impl Default for TrayConfig {
     fn default() -> Self {
         let program_files = PathBuf::from(r"C:\Program Files\ViewLBA Server");
         let program_data = PathBuf::from(r"C:\ProgramData\ViewLBA");
+        // Clone program_data before moving into Self so we can use it for derived paths
+        let program_data_for_self = program_data.clone();
         Self {
             program_files,
-            program_data,
+            program_data: program_data_for_self,
             log_dir: program_data.join("logs"),
             pipe_name: r"\\.\pipe\viewlba-service".to_string(),
             panel_url: "http://localhost:3000".to_string(),

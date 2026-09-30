@@ -9,12 +9,11 @@
 //   - icono real en system tray ✓
 //   - menú real ✓
 //   - single instance ✓
-//   - estado del servicio ✓
-//   - iniciar / detener / reiniciar ✓
+//   - estado del servicio ✓ (via IPC polling)
+//   - iniciar / detener / reiniciar ✓ (via IPC)
 //   - abrir panel ✓
-//   - diagnóstico ✓
-//   - notificación de cambio de estado ✓
-//   - autostart ✓
+//   - diagnóstico ✓ (via IPC)
+//   - autostart ✓ (HKCU Run via MSI/NSI)
 //   - comunicación por IPC ✓
 //
 // NO PowerShell. NO net.exe. NO sc.exe. NO cmd.exe. NO find.exe.
@@ -27,8 +26,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::thread;
 
-use serde::{Deserialize, Serialize};
-
 mod config;
 mod ipc;
 mod single_instance;
@@ -37,7 +34,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const MUTEX_NAME: &str = "Global\\viewlba-tray-single-instance";
 
 fn main() -> ExitCode {
-    let args: Vec<String> = env::args().collect();
+    let args: Vec<std::ffi::OsString> = env::args_os().collect();
 
     if args.iter().any(|a| a == "--version") {
         println!("viewlba-tray {}", VERSION);
@@ -64,8 +61,7 @@ fn main() -> ExitCode {
 
     log::info!("viewlba-tray {} starting", VERSION);
 
-    // Spawn a background thread that polls the service host via IPC
-    // and updates the tray icon based on service state.
+    // Shared state for the polling thread + tray icon
     let shared_state = Arc::new(Mutex::new(TrayState::default()));
     let state_clone = shared_state.clone();
     let cfg_clone = cfg.clone();
@@ -84,9 +80,9 @@ fn main() -> ExitCode {
 }
 
 #[derive(Debug, Default, Clone)]
-struct TrayState {
-    overall: String,
-    last_change: String,
+pub struct TrayState {
+    pub overall: String,
+    pub last_change: String,
 }
 
 fn print_help() {
@@ -121,8 +117,8 @@ fn poll_service_state_loop(state: Arc<Mutex<TrayState>>, cfg: config::TrayConfig
                 s.last_change = chrono::Utc::now().to_rfc3339();
 
                 if changed && !last_overall.is_empty() {
-                    log::info!("state changed: {} → {}", last_overall, status.overall);
-                    // TODO: show notification (tray-icon crate has show_notification)
+                    log::info!("state changed: {} -> {}", last_overall, status.overall);
+                    // v2: show_notification(state.overall.as_str())
                 }
             }
             Err(e) => {
@@ -136,92 +132,96 @@ fn poll_service_state_loop(state: Arc<Mutex<TrayState>>, cfg: config::TrayConfig
 }
 
 // -----------------------------------------------------------------------
-// Tray event loop — tray-icon crate
+// Tray icon + polling — uses tray-icon + tao event loop
+// v1: simple icon + tooltip, no menu (menu deferred to v2 because the
+// tray-icon 0.19 API for menu events is channel-based, not in tao event loop)
 // -----------------------------------------------------------------------
 
 fn run_tray_loop(cfg: &config::TrayConfig, state: Arc<Mutex<TrayState>>) -> Result<(), String> {
     use tray_icon::TrayIconBuilder;
-    use tray_icon::menu::{Menu, MenuItem, PredefinedMenuItem, MenuEvent};
     use tray_icon::Icon;
 
-    // Create a default event loop
+    // Create the tao event loop (required by tray-icon)
     let event_loop = tao::event_loop::EventLoop::new();
 
-    // Build the tray menu
-    let menu = Menu::new();
-
-    let mi_start = MenuItem::new("Iniciar servidor", true, None);
-    let mi_stop = MenuItem::new("Detener servidor", true, None);
-    let mi_restart = MenuItem::new("Reiniciar servidor", true, None);
-    let mi_panel = MenuItem::new("Abrir Panel (localhost:3000)", true, None);
-    let mi_diag = MenuItem::new("Diagnóstico...", true, None);
-    let mi_state = MenuItem::new("Estado: ?", false, None);
-    let mi_quit = MenuItem::new("Salir (cierra solo la bandeja; el servidor sigue)", true, None);
+    // Build the tray menu (simple for v1 — Iniciar, Detener, Reiniciar, Panel, Salir)
+    let menu = tray_icon::menu::Menu::new();
+    let mi_start = tray_icon::menu::MenuItem::new("Iniciar servidor", true, None);
+    let mi_stop = tray_icon::menu::MenuItem::new("Detener servidor", true, None);
+    let mi_restart = tray_icon::menu::MenuItem::new("Reiniciar servidor", true, None);
+    let mi_panel = tray_icon::menu::MenuItem::new("Abrir Panel (localhost:3000)", true, None);
+    let mi_diag = tray_icon::menu::MenuItem::new("Diagnóstico...", true, None);
+    let mi_quit = tray_icon::menu::MenuItem::new("Salir (cierra solo la bandeja; el servidor sigue)", true, None);
 
     let _ = menu.append_items(&[
-        &mi_state,
-        &PredefinedMenuItem::separator(),
         &mi_start,
         &mi_stop,
         &mi_restart,
-        &PredefinedMenuItem::separator(),
+        &tray_icon::menu::PredefinedMenuItem::separator(),
         &mi_panel,
         &mi_diag,
-        &PredefinedMenuItem::separator(),
+        &tray_icon::menu::PredefinedMenuItem::separator(),
         &mi_quit,
     ]);
 
-    // Create a simple colored icon (16x16 green dot, by default)
-    let icon = create_dot_icon(46, 204, 113); // green
+    // Create a green icon (active state)
+    let icon = create_dot_icon(46, 204, 113);
 
-    let mut tray = match TrayIconBuilder::new()
+    let mut tray = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
         .with_tooltip("ViewLBA Server")
         .with_icon(icon)
         .build()
-    {
-        Ok(t) => t,
-        Err(e) => return Err(format!("tray icon build failed: {}", e)),
-    };
+        .map_err(|e| format!("tray icon build failed: {}", e))?;
 
-    // Initial icon state
+    // Get the menu event receiver channel (tray-icon 0.19 API)
+    let menu_receiver = tray_icon::menu::MenuEvent::receiver();
+
     let ipc = ipc::IpcClient::new(cfg);
-
-    // Handle menu events
-    let menu_channel = TrayIconBuilder::menu_event_receiver();
-    let _ = menu_channel; // suppress unused warning
-
     let panel_url = cfg.panel_url.clone();
 
-    // Run event loop — this blocks
-    event_loop.run(move |event, _target, control_flow| {
-        use tao::event::{Event, WindowEvent};
-        use tao::event_loop::ControlFlow;
+    // Run event loop — tao event loop is just for window events now
+    use tao::event::{Event, WindowEvent};
+    use tao::event_loop::ControlFlow;
 
+    event_loop.run(move |event, _target, control_flow| {
         *control_flow = ControlFlow::Wait;
 
         match event {
-            Event::MenuEvent(event) => {
-                let item_id = event.id;
-                if item_id == mi_quit.id() {
-                    // Quit the tray (the service keeps running)
-                    tray.hide().ok();
-                    *control_flow = ControlFlow::Exit;
-                } else if item_id == mi_start.id() {
-                    let _ = ipc.start("all");
-                } else if item_id == mi_stop.id() {
-                    let _ = ipc.stop("all");
-                } else if item_id == mi_restart.id() {
-                    let _ = ipc.restart("all");
-                } else if item_id == mi_panel.id() {
-                    // Open the panel URL in the default browser
-                    open_url(&panel_url);
-                } else if item_id == mi_diag.id() {
-                    let _ = ipc.diagnostics();
-                }
-            }
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
                 *control_flow = ControlFlow::Exit;
+            }
+            Event::MainEventsCleared => {
+                // Check for menu events from the channel
+                if let Ok(menu_event) = menu_receiver.try_recv() {
+                    let item_id = menu_event.id;
+                    if item_id == mi_quit.id() {
+                        // Quit the tray (service keeps running)
+                        tray.set_visible(false).ok();
+                        *control_flow = ControlFlow::Exit;
+                    } else if item_id == mi_start.id() {
+                        let _ = ipc.start("all");
+                    } else if item_id == mi_stop.id() {
+                        let _ = ipc.stop("all");
+                    } else if item_id == mi_restart.id() {
+                        let _ = ipc.restart("all");
+                    } else if item_id == mi_panel.id() {
+                        open_url(&panel_url);
+                    } else if item_id == mi_diag.id() {
+                        let _ = ipc.diagnostics();
+                    }
+                }
+
+                // Update icon color based on state (every iteration — cheap)
+                let state_snapshot = state.lock().unwrap().clone();
+                let (r, g, b) = match state_snapshot.overall.as_str() {
+                    "ok" => (46, 204, 113),       // green
+                    "down" | "fail" => (231, 76, 60), // red
+                    "starting" | "stopping" | "degraded" => (241, 196, 15), // yellow
+                    _ => (128, 128, 128),       // gray (unknown)
+                };
+                let _ = tray.set_icon(Some(create_dot_icon(r, g, b)));
+                let _ = tray.set_tooltip(format!("ViewLBA Server — {}", state_snapshot.overall));
             }
             _ => {}
         }
@@ -243,12 +243,7 @@ fn open_url(url: &str) {
     }
 }
 
-// -----------------------------------------------------------------------
-// Icon generation — green/red/yellow dot based on state
-// -----------------------------------------------------------------------
-
 fn create_dot_icon(r: u8, g: u8, b: u8) -> tray_icon::Icon {
-    // 16x16 RGBA icon with a colored circle
     let size = 16;
     let mut rgba = Vec::with_capacity(size * size * 4);
     for y in 0..size {
@@ -257,13 +252,11 @@ fn create_dot_icon(r: u8, g: u8, b: u8) -> tray_icon::Icon {
             let dy = (y as f32) - (size as f32 / 2.0) + 0.5;
             let dist = (dx * dx + dy * dy).sqrt();
             if dist < 7.0 {
-                // Inside circle — fill with color
                 rgba.push(r);
                 rgba.push(g);
                 rgba.push(b);
                 rgba.push(255);
             } else {
-                // Transparent
                 rgba.push(0);
                 rgba.push(0);
                 rgba.push(0);
@@ -274,7 +267,6 @@ fn create_dot_icon(r: u8, g: u8, b: u8) -> tray_icon::Icon {
 
     tray_icon::Icon::from_rgba(rgba, size as u32, size as u32)
         .unwrap_or_else(|_| {
-            // Fallback: 1x1 transparent icon
             tray_icon::Icon::from_rgba(vec![0, 0, 0, 0], 1, 1).unwrap()
         })
 }

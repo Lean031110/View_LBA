@@ -9,6 +9,7 @@ use std::ffi::c_void;
 use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::Security::*;
+use windows::Win32::Security::Authorization::*;
 use windows::Win32::System::Threading::*;
 
 pub struct SingleInstanceGuard {
