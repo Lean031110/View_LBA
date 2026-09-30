@@ -17,17 +17,11 @@ pub struct SingleInstanceGuard {
 
 pub fn acquire(mutex_name: &str) -> Option<SingleInstanceGuard> {
     unsafe {
-        // Build a security descriptor that grants SYNCHRONIZE to Authenticated
-        // Users so the second instance (running as the user) can detect us.
-        // We use SDDL: D:P(A;;0x100000;;;AU) — protected DACL, Allow SYNCHRONIZE
-        // to Authenticated Users.
-        // This is read-only access (no GENERIC_ALL) — second instance can
-        // OpenMutex but cannot release our mutex.
         let sddl: PCWSTR = w!("D:P(A;;0x100000;;;AU)");
         let mut sd_ptr: *mut c_void = std::ptr::null_mut();
         let ok = ConvertStringSecurityDescriptorToSecurityDescriptorW(
             sddl,
-            SDDL_REVISION_1,
+            1, // SDDL_REVISION_1
             &mut sd_ptr,
             None,
         );
@@ -38,7 +32,6 @@ pub fn acquire(mutex_name: &str) -> Option<SingleInstanceGuard> {
                 bInheritHandle: false.into(),
             }
         } else {
-            // Fallback: NULL SD = default ACL (less restrictive)
             SECURITY_ATTRIBUTES {
                 nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
                 lpSecurityDescriptor: std::ptr::null_mut(),
@@ -46,31 +39,25 @@ pub fn acquire(mutex_name: &str) -> Option<SingleInstanceGuard> {
             }
         };
 
-        // Convert mutex name to wide string
         let name_wide: Vec<u16> = mutex_name
             .encode_utf16()
             .chain(std::iter::once(0))
             .collect();
 
-        let handle = CreateMutexW(
+        let handle_result = CreateMutexW(
             Some(&sa),
             false,
             PCWSTR(name_wide.as_ptr()),
         );
 
-        // Free the SD if we allocated it
-        if !sd_ptr.is_null() {
-            let _ = LocalFree(Some(sd_ptr as *const _));
-        }
-
-        if handle.is_invalid() {
-            // Failed to create mutex
-            return None;
-        }
+        // CreateMutexW returns Result<HANDLE>
+        let handle = match handle_result {
+            Ok(h) if !h.is_invalid() => h,
+            _ => return None,
+        };
 
         let err = GetLastError();
         if err == ERROR_ALREADY_EXISTS {
-            // Another instance already owns this mutex
             let _ = CloseHandle(handle);
             return None;
         }

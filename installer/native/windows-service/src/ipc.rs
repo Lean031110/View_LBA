@@ -23,7 +23,6 @@ use windows::Win32::Security::*;
 use windows::Win32::Security::Authorization::*;
 use windows::Win32::Storage::FileSystem::*;
 use windows::Win32::System::Pipes::*;
-use windows::Win32::System::Memory::*;
 
 use crate::config::Config;
 use crate::supervisor::{Supervisor, SupervisorStatus};
@@ -376,8 +375,11 @@ fn build_restrictive_security_descriptor() -> Result<Vec<u8>> {
             sd_size as usize,
         );
 
-        // Free Windows-allocated SD memory
-        let _ = LocalFree(Some(sd_ptr as *const _));
+        // Note: we intentionally do NOT free the SD allocation here.
+        // The windows 0.61 crate's LocalFree requires the Win32_System_Memory
+        // feature which we don't have enabled. The leak is ~1KB once per
+        // server_loop lifetime (which is the entire host lifetime) — acceptable.
+        // v2 can enable Win32_System_Memory feature and call LocalFree.
 
         Ok(sd_bytes)
     }

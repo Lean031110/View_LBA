@@ -46,7 +46,7 @@ static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 pub fn install(cfg: &Config) -> ExitCode {
     unsafe {
         let exe_path = current_exe_path();
-        let command_line = format!("\"{}\" --run", exe_path);
+        let command_line = format!("\"{}\" --run", exe_path.display());
 
         match create_service(cfg, &command_line) {
             Ok(()) => {
@@ -289,7 +289,6 @@ const SERVICE_ACCEPT_STOP: u32 = 0x00000001;
 fn current_exe_path() -> PathBuf {
     std::env::current_exe().unwrap_or_else(|_| PathBuf::from("viewlba-service.exe"))
 }
-
 unsafe fn create_service(cfg: &Config, command_line: &str) -> Result<()> {
     let scm = OpenSCManagerW(None, None, SC_MANAGER_CONNECT | SC_MANAGER_CREATE_SERVICE)?;
 
@@ -315,9 +314,8 @@ unsafe fn create_service(cfg: &Config, command_line: &str) -> Result<()> {
     )?;
 
     // Set description
-    let desc_text: PCWSTR = SERVICE_DESC;
     let mut desc: SERVICE_DESCRIPTIONW = std::mem::zeroed();
-    desc.lpDescription = desc_text;
+    desc.lpDescription = SERVICE_DESC;
     let _ = ChangeServiceConfig2W(
         &service,
         SERVICE_CONFIG_DESCRIPTION,
@@ -325,18 +323,20 @@ unsafe fn create_service(cfg: &Config, command_line: &str) -> Result<()> {
     );
 
     // Set LocalService account (minimum privilege, NOT LocalSystem)
+    // ChangeServiceConfigW signature: account_name and password are PCWSTR (Option not supported).
+    // Use raw PCWSTR pointer; null means default account.
     let _ = ChangeServiceConfigW(
         &service,
         SERVICE_NO_CHANGE,
         SERVICE_NO_CHANGE,
         SERVICE_NO_CHANGE,
-        None,
-        None,
-        None,
-        None,
-        Some(LOCALSERVICE_ACCOUNT),
-        Some(PCWSTR::null()),
-        None,
+        PCWSTR::null(),
+        PCWSTR::null(),
+        PCWSTR::null(),
+        PCWSTR::null(),
+        LOCALSERVICE_ACCOUNT,
+        PCWSTR::null(),
+        PCWSTR::null(),
     );
 
     CloseServiceHandle(scm)?;

@@ -68,7 +68,7 @@ impl IpcClient {
     ) -> Result<Resp, String> {
         unsafe {
             // Open the named pipe (client side)
-            let handle = CreateFileW(
+            let handle_result = CreateFileW(
                 PIPE_NAME,
                 FILE_GENERIC_READ.0 | FILE_GENERIC_WRITE.0,
                 0,
@@ -76,11 +76,13 @@ impl IpcClient {
                 OPEN_EXISTING,
                 FILE_ATTRIBUTE_NORMAL,
                 None,
-            )?;
+            );
 
-            if handle.is_invalid() {
-                return Err("pipe open failed".to_string());
-            }
+            let handle = match handle_result {
+                Ok(h) if !h.is_invalid() => h,
+                Ok(_) => return Err("invalid pipe handle".to_string()),
+                Err(e) => return Err(format!("pipe open failed: {}", e)),
+            };
 
             // Set read mode to byte + timeout
             let mut mode: u32 = PIPE_READMODE_BYTE;
@@ -92,8 +94,8 @@ impl IpcClient {
 
             // Write request
             let mut written: u32 = 0;
-            let write_ok = WriteFile(handle, Some(req_bytes.as_slice()), Some(&mut written), None);
-            if write_ok.is_err() || written == 0 {
+            let write_result = WriteFile(handle, Some(req_bytes.as_slice()), Some(&mut written), None);
+            if write_result.is_err() || written == 0 {
                 let _ = CloseHandle(handle);
                 return Err("write failed".to_string());
             }
@@ -111,8 +113,8 @@ impl IpcClient {
                     return Err("timeout reading response".to_string());
                 }
                 let mut bytes_read: u32 = 0;
-                let read_ok = ReadFile(handle, Some(&mut chunk), Some(&mut bytes_read), None);
-                if read_ok.is_err() {
+                let read_result = ReadFile(handle, Some(&mut chunk), Some(&mut bytes_read), None);
+                if read_result.is_err() {
                     let _ = CloseHandle(handle);
                     return Err("read failed".to_string());
                 }
