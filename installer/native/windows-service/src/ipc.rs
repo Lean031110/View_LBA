@@ -157,16 +157,13 @@ unsafe fn server_loop(cfg: &Config, sup: &Arc<Supervisor>) {
             Some(&sa),
         );
 
-        // CreateNamedPipeW returns Result<HANDLE> in windows 0.61
-        let handle = match handle {
-            Ok(h) if !h.is_invalid() => h,
-            _ => {
-                let e = Error::from_win32();
-                logging::write_event(logging::event("error", "services", format!("CreateNamedPipeW failed: {}", e)));
-                thread::sleep(Duration::from_secs(2));
-                continue;
-            }
-        };
+        // CreateNamedPipeW returns HANDLE directly in windows 0.61 (not Result)
+        if handle.is_invalid() {
+            let e = Error::from_win32();
+            logging::write_event(logging::event("error", "services", format!("CreateNamedPipeW failed: {}", e)));
+            thread::sleep(Duration::from_secs(2));
+            continue;
+        }
 
         // Wait for a client to connect (blocking)
         match ConnectNamedPipe(handle, None) {
@@ -359,7 +356,7 @@ fn build_restrictive_security_descriptor() -> Result<Vec<u8>> {
         let result = ConvertStringSecurityDescriptorToSecurityDescriptorW(
             SDDL_RESTRICTIVE,
             1, // SDDL_REVISION_1
-            &mut sd_ptr,
+            core::ptr::addr_of_mut!(sd_ptr) as *mut *mut c_void,
             None,
         );
 
@@ -367,7 +364,7 @@ fn build_restrictive_security_descriptor() -> Result<Vec<u8>> {
             return Err(Error::from_win32());
         }
 
-        let sd_size = GetSecurityDescriptorLength(sd_ptr);
+        let sd_size = GetSecurityDescriptorLength(sd_ptr as PSECURITY_DESCRIPTOR);
         let mut sd_bytes = vec![0u8; sd_size as usize];
         std::ptr::copy_nonoverlapping(
             sd_ptr as *const u8,

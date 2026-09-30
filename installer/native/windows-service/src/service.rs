@@ -164,21 +164,25 @@ pub fn run_as_service(cfg: &Config) -> ExitCode {
     // Register the service control dispatcher on the main thread
     // (this blocks until the service is stopped)
     unsafe {
+        // SERVICE_TABLE_ENTRYW expects PWSTR (mutable), but we have PCWSTR (immutable).
+        // Convert via const cast — the strings are constant in our binary, but the
+        // dispatcher just reads them once.
+        let service_name_mut: PWSTR = PWSTR(SERVICE_NAME.as_ptr() as *mut u16);
+        let null_name: PWSTR = PWSTR::null();
         let service_main: [SERVICE_TABLE_ENTRYW; 2] = [
             SERVICE_TABLE_ENTRYW {
-                lpServiceName: SERVICE_NAME,
+                lpServiceName: service_name_mut,
                 lpServiceProc: Some(service_main_proc),
             },
             SERVICE_TABLE_ENTRYW {
-                lpServiceName: PCWSTR::null(),
+                lpServiceName: null_name,
                 lpServiceProc: None,
             },
         ];
 
-        let result = StartServiceCtrlDispatcherW(&service_main);
+        let result = StartServiceCtrlDispatcherW(service_main.as_ptr());
         if result.is_err() {
             eprintln!("StartServiceCtrlDispatcherW failed — not running as a service?");
-            // Signal worker to stop
             SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
             supervisor.stop_flag.store(true, Ordering::SeqCst);
             let _ = worker_handle.join();
