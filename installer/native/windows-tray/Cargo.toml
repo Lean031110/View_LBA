@@ -20,14 +20,11 @@ tao = "0.30"
 # Image handling for icons
 image = { version = "0.25", default-features = false, features = ["png"] }
 
-# Named pipe client (windows-sys)
+# Named pipe client (windows-sys) + mutex (single instance)
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
-    "Win32_System_Pipes",
     "Win32_Storage_FileSystem",
-    "Win32_Security",
     "Win32_System_Threading",
-    "Win32_System_ProcessStatus",
 ] }
 
 # Logging

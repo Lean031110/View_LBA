@@ -13,24 +13,15 @@ name = "viewlba-service"
 path = "src/main.rs"
 
 [dependencies]
-# windows-rs: SCM dispatcher + Win32 APIs
+# windows-rs: low-level Win32 APIs (named pipe, handle, security attrs)
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
-    "Win32_System_Services",
-    "Win32_System_Threading",
-    "Win32_System_Diagnostics_ToolHelp",
-    "Win32_System_ProcessStatus",
     "Win32_System_Pipes",
-    "Win32_System_IO",
     "Win32_Security",
     "Win32_Storage_FileSystem",
-    "Win32_System_Console",
-    "Win32_Networking_WinSock",
-    "Win32_System_Registry",
-    "Win32_System_ServiceControlManagerTools",
 ] }
 
-# windows: higher-level bindings (ServiceControl, etc.)
+# windows-service: higher-level SCM dispatcher (StartServiceCtrlDispatcher, SetServiceStatus)
 windows-service = "0.7"
 
 # Logging
@@ -47,7 +38,3 @@ ureq = { version = "2.12", default-features = false, features = ["tls"] }
 
 # CLI parsing (minimal)
 pico-args = "0.5"
-
-[build-dependencies]
-# Embed manifest for UAC + DPI awareness + windows version requirements
-# (no extra deps needed; built-in)
