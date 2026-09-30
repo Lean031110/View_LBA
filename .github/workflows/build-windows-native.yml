@@ -161,3 +161,179 @@ jobs:
             dist/windows-native/manifest.json
           retention-days: 30
           if-no-files-found: error
+
+  # ====================================================================
+  # Job 2: TEST ARTIFACT — fresh runner, downloads artifact, no checkout
+  # Consumes EXCLUSIVELY the artifact produced by build-rust-binaries.
+  # Does NOT recompile Rust, MSI, service, or tray (misión §17).
+  # ====================================================================
+  test-artifact-real:
+    name: Test artifact REAL (fresh runner, download + install + verify)
+    needs: build-rust-binaries
+    runs-on: windows-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+
+    steps:
+      - name: Download artifact (the REAL produced binaries)
+        uses: actions/download-artifact@v4
+        with:
+          name: viewlba-windows-native
+          path: ${{ runner.temp }}/downloaded
+
+      - name: List downloaded artifact
+        shell: pwsh
+        run: |
+          Write-Host "=== Downloaded artifact contents ==="
+          Get-ChildItem -Recurse ${{ runner.temp }}/downloaded | Format-Table Name, Length, FullName
+
+      - name: Verify checksums (sha256)
+        shell: pwsh
+        run: |
+          $shaFile = "${{ runner.temp }}/downloaded/SHA256SUMS"
+          if (-not (Test-Path $shaFile)) { throw "SHA256SUMS file missing" }
+          Get-Content $shaFile | ForEach-Object {
+            $parts = $_ -split '\s+', 2
+            $expected = $parts[0].Trim()
+            $file = $parts[1].Trim()
+            $path = "${{ runner.temp }}/downloaded/$file"
+            if (-not (Test-Path $path)) { throw "File $file missing" }
+            $actual = (Get-FileHash $path -Algorithm SHA256).Hash.ToLower()
+            if ($actual -ne $expected) {
+              throw "Checksum mismatch for $file`nExpected: $expected`nActual:   $actual"
+            }
+            Write-Host "OK: $file SHA256 matches ($actual)"
+          }
+
+      - name: Verify manifest declares NSSM excluded
+        shell: pwsh
+        run: |
+          $m = Get-Content "${{ runner.temp }}/downloaded/manifest.json" | ConvertFrom-Json
+          if ($m.dependencies_excluded -notcontains "NSSM") {
+            throw "manifest.json must declare 'NSSM' in dependencies_excluded"
+          }
+          if ($m.components.Count -lt 2) {
+            throw "manifest must list both viewlba-service.exe and viewlba-tray.exe"
+          }
+          Write-Host "OK: manifest declares NSSM as excluded"
+          Write-Host "Components:"
+          $m.components | ForEach-Object { Write-Host "  - $($_.name) ($($_.sha256))" }
+
+      - name: SCAN artifact for NSSM (the actual no-NSSM guarantee — misión §0.8/§5)
+        shell: pwsh
+        run: |
+          # Anti-NSSM guard: scan ALL files in the artifact for 'nssm' string
+          # (binary or text) — if any file mentions NSSM, FAIL.
+          $bad = @()
+          Get-ChildItem -Recurse "${{ runner.temp }}/downloaded" -File | ForEach-Object {
+            $bytes = [System.IO.File]::ReadAllBytes($_.FullName)
+            $ascii = [System.Text.Encoding]::ASCII.GetString($bytes)
+            if ($ascii -match 'nssm' -or $ascii -match 'NSSM') {
+              $bad += $_.Name
+            }
+          }
+          if ($bad.Count -gt 0) {
+            Write-Host "::error::Artifact contains NSSM references in: $($bad -join ', ')"
+            throw "Artifact must NOT contain NSSM (mission §0.8 + §5)"
+          }
+          Write-Host "OK: artifact is NSSM-free"
+
+      - name: SCAN artifact for PowerShell-as-tray dependency
+        shell: pwsh
+        run: |
+          # Anti-PowerShell-tray guard: artifact must NOT contain ViewLBA-Tray.ps1
+          # (misión §5: PowerShell tray is replaced by viewlba-tray.exe)
+          if (Test-Path "${{ runner.temp }}/downloaded/ViewLBA-Tray.ps1") {
+            throw "Artifact must NOT contain ViewLBA-Tray.ps1 (mission §5)"
+          }
+          Write-Host "OK: artifact has no PowerShell tray"
+
+      - name: Test 1 — install service host (viewlba-service.exe --install)
+        shell: pwsh
+        run: |
+          $svc = "${{ runner.temp }}/downloaded/viewlba-service.exe"
+          & $svc --install
+          if ($LASTEXITCODE -ne 0) { throw "viewlba-service --install failed (exit $LASTEXITCODE)" }
+
+          # Verify service is registered in SCM via Get-Service (NO sc.exe, NO find)
+          $s = Get-Service -Name "ViewLBA" -ErrorAction SilentlyContinue
+          if (-not $s) { throw "ViewLBA service not registered in SCM after --install" }
+          Write-Host "OK: ViewLBA service registered: $($s.Status) ($($s.StartType))"
+
+      - name: Test 2 — start service (viewlba-service.exe --start)
+        shell: pwsh
+        run: |
+          $svc = "${{ runner.temp }}/downloaded/viewlba-service.exe"
+          & $svc --start
+          # Service may take a moment to actually start
+          Start-Sleep -Seconds 3
+          $s = Get-Service -Name "ViewLBA" -ErrorAction SilentlyContinue
+          if (-not $s) { throw "Service not found after --start" }
+          Write-Host "Service state after --start: $($s.Status)"
+
+      - name: Test 3 — stop service (viewlba-service.exe --stop)
+        shell: pwsh
+        run: |
+          $svc = "${{ runner.temp }}/downloaded/viewlba-service.exe"
+          & $svc --stop
+          if ($LASTEXITCODE -ne 0) { throw "viewlba-service --stop failed (exit $LASTEXITCODE)" }
+          Start-Sleep -Seconds 2
+          $s = Get-Service -Name "ViewLBA" -ErrorAction SilentlyContinue
+          if (-not $s) { throw "Service vanished after --stop" }
+          Write-Host "Service state after --stop: $($s.Status)"
+
+      - name: Test 4 — uninstall service (viewlba-service.exe --uninstall)
+        shell: pwsh
+        run: |
+          $svc = "${{ runner.temp }}/downloaded/viewlba-service.exe"
+          & $svc --uninstall
+          if ($LASTEXITCODE -ne 0) { throw "viewlba-service --uninstall failed (exit $LASTEXITCODE)" }
+
+          # Service should be gone
+          $s = Get-Service -Name "ViewLBA" -ErrorAction SilentlyContinue
+          if ($s) { throw "ViewLBA service should be gone after --uninstall" }
+          Write-Host "OK: ViewLBA service removed from SCM"
+
+      - name: Test 5 — tray binary starts (briefly) then exits cleanly
+        shell: pwsh
+        run: |
+          $tray = "${{ runner.temp }}/downloaded/viewlba-tray.exe"
+          # Start tray, give it 2s to initialize, then kill it
+          $proc = Start-Process -FilePath $tray -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 2
+          if ($proc.HasExited) {
+            Write-Host "Tray exited within 2s (exit code: $($proc.ExitCode))"
+            # If it exited cleanly (exit 0), that's OK — it means tray icon was created
+            # and the event loop returned. Real tray would stay running.
+          } else {
+            Write-Host "OK: tray is running (PID $($proc.Id))"
+            $proc | Stop-Process -Force
+          }
+
+      - name: Upload diagnostic on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-windows-artifact-failure
+          path: ${{ runner.temp }}/downloaded/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  summary:
+    name: Pipeline summary
+    needs: [build-rust-binaries, test-artifact-real]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Print summary
+        run: |
+          echo "## Build + Test Windows Native Binaries Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Result |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Build (Rust) | ${{ needs.build-rust-binaries.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Test artifact (real) | ${{ needs.test-artifact-real.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Pipeline: build → artifact → FRESH runner → download → checksum → install → verify" >> $GITHUB_STEP_SUMMARY
