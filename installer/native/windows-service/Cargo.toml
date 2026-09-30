@@ -13,17 +13,19 @@ name = "viewlba-service"
 path = "src/main.rs"
 
 [dependencies]
-# windows-rs: low-level Win32 APIs (named pipe, handle, security attrs)
-windows-sys = { version = "0.59", features = [
+# Microsoft official `windows` crate — higher-level, stable API surface.
+# Replaces windows-sys + windows-service crates (which had API mismatches in v0.7).
+windows = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_System_Services",
+    "Win32_System_Threading",
     "Win32_System_Pipes",
+    "Win32_Security_Authorization",
     "Win32_Security",
     "Win32_Storage_FileSystem",
-    "Win32_System_Threading",
+    "Win32_System_IO",
+    "Win32_System_Diagnostics_Debug",
 ] }
-
-# windows-service: higher-level SCM dispatcher (StartServiceCtrlDispatcher, SetServiceStatus)
-windows-service = "0.7"
 
 # Logging
 log = "0.4"
@@ -34,7 +36,7 @@ serde_json = "1.0"
 # Time
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 
-# HTTP client for health checks (sync, lightweight)
+# HTTP client for health checks (sync, lightweight, no TLS bloat for localhost)
 ureq = { version = "2.12", default-features = false, features = ["tls"] }
 
 # CLI parsing (minimal)

@@ -30,14 +30,9 @@ mod service;
 mod supervisor;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-const SERVICE_NAME: &str = "ViewLBA";
-const SERVICE_DISPLAY: &str = "ViewLBA Server";
-const SERVICE_DESCRIPTION: &str = "ViewLBA Server — native host for App + Realtime + Stream children (no NSSM)";
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
-
-    // pico-args parsing
     let mut pico = pico_args::Arguments::from_vec(args[1..].to_vec());
 
     if pico.contains("--version") {
@@ -70,12 +65,7 @@ fn main() -> ExitCode {
     let cfg = config::load_config();
     logging::init(&cfg);
 
-    log::info!(
-        action = ?action,
-        version = VERSION,
-        config = ?cfg,
-        "viewlba-service starting"
-    );
+    log::info!(action = ?action, version = VERSION, "viewlba-service starting");
 
     match action {
         Action::Install => service::install(&cfg),
@@ -83,7 +73,16 @@ fn main() -> ExitCode {
         Action::Start => service::start(&cfg),
         Action::Stop => service::stop(&cfg),
         Action::Foreground => supervisor::run_foreground(&cfg),
-        Action::RunAsService => service::run_as_service(&cfg),
+        Action::RunAsService => {
+            // On non-Windows, --run doesn't make sense. We still try.
+            #[cfg(target_os = "windows")]
+            return service::run_as_service(&cfg);
+            #[cfg(not(target_os = "windows"))]
+            {
+                eprintln!("--run requires Windows");
+                ExitCode::from(2)
+            }
+        }
     }
 }
 
@@ -98,7 +97,7 @@ enum Action {
 }
 
 fn print_help() {
-    println!("viewlba-service {} — ViewLBA native Windows service host", VERSION);
+    println!("viewlba-service {} - ViewLBA native Windows service host", VERSION);
     println!();
     println!("USAGE:");
     println!("  viewlba-service --install       Register the service with Windows SCM");
@@ -112,4 +111,5 @@ fn print_help() {
     println!();
     println!("The service host supervises 3 children: app, realtime, stream.");
     println!("NO NSSM. NO PowerShell. NO CMD. NO sc.exe. NO find.exe.");
+    println!("Service account: LocalService (NOT LocalSystem).");
 }

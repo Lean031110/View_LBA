@@ -13,19 +13,21 @@ name = "viewlba-tray"
 path = "src/main.rs"
 
 [dependencies]
-# Tray icon (cross-platform minimal API; we use it for Windows only)
-tray-icon = "0.19"
-# Window/event loop
-tao = "0.30"
-# Image handling for icons
-image = { version = "0.25", default-features = false, features = ["png"] }
-
-# Named pipe client (windows-sys) + mutex (single instance)
-windows-sys = { version = "0.59", features = [
+# Microsoft official `windows` crate
+windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
     "Win32_System_Threading",
+    "Win32_System_Pipes",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi",
 ] }
+
+# Tray icon + event loop (cross-platform minimal, used for Windows only)
+tray-icon = "0.19"
+tao = "0.30"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 # Logging
 log = "0.4"
