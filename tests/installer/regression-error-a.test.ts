@@ -16,11 +16,13 @@
  * Cuando la Fase 2 elimine PowerShell del NSIS, el test pasará.
  */
 import { describe, test, expect } from "bun:test"
-import { readRepoFile } from "./_helpers"
+import { readRepoFile, readRepoFileNoComments } from "./_helpers"
 
 describe("Regresión ERROR A — PowerShell ParserError '=' (misión §2/§6)", () => {
   test("viewlba-setup.nsi NO debe generar contraseña vía PowerShell pipe", () => {
-    const nsi = readRepoFile("installer/windows/viewlba-setup.nsi")
+    // Lee sin comentarios para que las menciones en comments tipo
+    // "NO PowerShell para password" no hagan falso match.
+    const nsi = readRepoFileNoComments("installer/windows/viewlba-setup.nsi")
     // Patrón prohibido: powershell.exe ... -Command "$$p=..." con escape anidado
     // que rompe PowerShell cuando el parser recibe `$p =` sin valor.
     const forbidden = /powershell\.exe[^\n]*-Command[^\n]*\$\$p[^\n]*Set-Content/i
@@ -28,23 +30,22 @@ describe("Regresión ERROR A — PowerShell ParserError '=' (misión §2/§6)", 
   })
 
   test("viewlba-setup.nsi NO debe usar .pwd.tmp como pasadero de password", () => {
-    const nsi = readRepoFile("installer/windows/viewlba-setup.nsi")
+    const nsi = readRepoFileNoComments("installer/windows/viewlba-setup.nsi")
     expect(nsi).not.toMatch(/\.pwd\.tmp/)
   })
 
   test("viewlba-setup.nsi NO debe tener contraseña hardcoded fallback", () => {
-    const nsi = readRepoFile("installer/windows/viewlba-setup.nsi")
+    const nsi = readRepoFileNoComments("installer/windows/viewlba-setup.nsi")
     // "ViewLBA-CambioYa1" es un fallback hardcoded que viola §6 (secrets deben
     // generarse con RNG criptográfico). No puede haber fallback hardcodeado.
     expect(nsi).not.toMatch(/ViewLBA-CambioYa1/i)
   })
 
   test("viewlba-setup.nsi NO debe pasar adminPassword por FileWrite directo", () => {
-    // El JSON de install-config.json actualmente lleva $AdminPassword embebido
-    // (línea 150 del NSIS). Misión §6: "El archivo de configuración inicial no
+    // Misión §6: "El archivo de configuración inicial no
     // debe guardar secretos en línea de comandos si existe una alternativa
     // más segura".
-    const nsi = readRepoFile("installer/windows/viewlba-setup.nsi")
+    const nsi = readRepoFileNoComments("installer/windows/viewlba-setup.nsi")
     expect(nsi).not.toMatch(/adminPassword[^,}]*\$AdminPassword/i)
   })
 

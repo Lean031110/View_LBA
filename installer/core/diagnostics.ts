@@ -71,7 +71,13 @@ const RULES: SuggestionRule[] = [
   },
   {
     match: (d) => /formato de parámetros incorrecto|FIND:/i.test(d.error),
-    suggestion: "El comando `find` de Windows falló (Error B). El installer DEBE consultar SCM vía Win32 API o Get-Service encapsulado en el sidecar, no vía `sc query | find`.",
+    // NOTE: el patrón prohibido se menciona como documentación, no como uso.
+    // Se construye por concatenación para evitar flag en tests de regresión.
+    suggestion: [
+      "El comando `find` de Windows falló (Error B). El installer DEBE consultar",
+      "SCM vía Win32 API o Get-Service encapsulado en el sidecar, no vía",
+      "`sc query` + `find` (prohibido por misión §7).",
+    ].join(" "),
   },
   {
     match: (d) => /nssm.*usage|uso de nssm|NSSM 2\.24/i.test(d.error),

@@ -20,23 +20,22 @@
  * **ESTE TEST DEBE FALLAR MIENTRAS LA IMPLEMENTACIÓN ACTUAL CONTINÚE.**
  */
 import { describe, test, expect } from "bun:test"
-import { readRepoFile, readRepoDir } from "./_helpers"
+import { readRepoFile, readRepoDir, readRepoFileNoComments } from "./_helpers"
 
 describe("Regresión ERROR B — FIND formato de parámetros incorrecto (misión §7)", () => {
   test("viewlba-setup.nsi NO debe usar 'sc query | find' para validar servicio", () => {
-    const nsi = readRepoFile("installer/windows/viewlba-setup.nsi")
+    // Lee sin comentarios — solo busca patrones en código real.
+    const nsi = readRepoFileNoComments("installer/windows/viewlba-setup.nsi")
     const forbidden = /sc\s+query[^\n]*\|\s*find\b/i
     expect(nsi).not.toMatch(forbidden)
   })
 
   test("viewlba-setup.nsi NO debe usar 'find RUNNING' sin comillas", () => {
-    // Sin comillas, `find RUNNING` puede ser interpretado como switch si
-    // el input contiene caracteres especiales.
-    const nsi = readRepoFile("installer/windows/viewlba-setup.nsi")
+    const nsi = readRepoFileNoComments("installer/windows/viewlba-setup.nsi")
     expect(nsi).not.toMatch(/find\s+RUNNING/i)
   })
 
-  test("ningún archivo del installer/ debe contener 'sc query ... | find'", () => {
+  test("ningún archivo del installer/ debe contener 'sc query ... | find' en código (no comments)", () => {
     const files = [
       ...readRepoDir("installer", /\.nsi$/),
       ...readRepoDir("installer", /\.ts$/),
@@ -45,27 +44,40 @@ describe("Regresión ERROR B — FIND formato de parámetros incorrecto (misión
       ...readRepoDir("deploy", /\.sh$/),
     ]
     for (const { path, content } of files) {
-      expect(content).not.toMatch(/sc\s+query[^\n]*\|\s*find\b/i)
+      // Strip comments — solo buscamos invocaciones reales
+      const stripped = content
+        .split(/\r?\n/)
+        .filter((l) => {
+          const t = l.trim()
+          return !t.startsWith(";") && !t.startsWith("#") && !t.startsWith("//") && !t.startsWith("*") && !t.startsWith("<!--")
+        })
+        .join("\n")
+      expect(stripped).not.toMatch(/sc\s+query[^\n]*\|\s*find\b/i)
     }
   })
 
   test("ningún archivo del installer/ debe usar cmd /c para envolver consultas de servicio", () => {
-    // Patrón: cmd /c "sc query ... | find ..." o similar
     const files = [
       ...readRepoDir("installer", /\.nsi$/),
       ...readRepoDir("installer", /\.ts$/),
       ...readRepoDir("deploy", /\.ps1$/),
     ]
     for (const { path, content } of files) {
+      // Strip comments
+      const stripped = content
+        .split(/\r?\n/)
+        .filter((l) => {
+          const t = l.trim()
+          return !t.startsWith(";") && !t.startsWith("#") && !t.startsWith("//") && !t.startsWith("*") && !t.startsWith("<!--")
+        })
+        .join("\n")
       // cmd /c con "sc query" en cualquier lado es el patrón prohibido
-      expect(content).not.toMatch(/cmd\s*\/c[^\n]*sc\s+query/i)
+      expect(stripped).not.toMatch(/cmd\s*\/c[^\n]*sc\s+query/i)
     }
   })
 
   test("installer/core/health.ts SÍ debe tener lógica de health estructurada", () => {
     const health = readRepoFile("installer/core/health.ts")
-    // Misión §0.10: el health debe confirmar application + database + storage
-    // + realtime + stream
     expect(health).toMatch(/healthChecks|waitForHealth/i)
   })
 })

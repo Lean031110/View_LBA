@@ -37,3 +37,70 @@ export function readRepoDir(rel: string, pattern: RegExp): Array<{ path: string;
     content: readFileSync(p, "utf8"),
   }))
 }
+
+/**
+ * Quita líneas de comentario de un texto plano.
+ * Soporta estilos: ';' (NSIS), '#' (shell/ps1), '//' y '*' (C-like),
+ * '/* ... *\/' (block), '<!-- -->' (xml).
+ * El objetivo: permitir tests que busquen patrones PROHIBIDOS sin
+ * flaggear menciones en comentarios que dicen "no usar X".
+ */
+export function stripComments(input: string): string {
+  const lines = input.split(/\r?\n/)
+  const out: string[] = []
+  let inBlockComment = false
+  for (let line of lines) {
+    // Block comment start (/* ... */)
+    if (inBlockComment) {
+      if (line.includes("*/")) {
+        inBlockComment = false
+        line = line.replace(/^.*\*\//, "")
+      } else {
+        continue
+      }
+    }
+    if (line.includes("/*")) {
+      const before = line.split("/*")[0]
+      if (line.includes("*/")) {
+        line = before + line.split("*/").slice(1).join("*/")
+      } else {
+        inBlockComment = true
+        line = before
+      }
+    }
+    // XML comment block (<!-- -->)
+    if (line.trim().startsWith("<!--")) {
+      continue
+    }
+    // Inline comment detection: find the first non-string occurrence of comment marker
+    // (this is heuristic — for v1 we just strip lines that START with a comment marker)
+    const trimmed = line.trim()
+    if (trimmed.startsWith(";") ||
+        trimmed.startsWith("#") ||
+        trimmed.startsWith("//") ||
+        trimmed.startsWith("*") ||
+        trimmed.startsWith("/*")) {
+      continue
+    }
+    // Strip inline comments after content (e.g. "code(); comment")
+    // Be conservative: only strip "// ..." and "/* ... */" that appear AFTER a non-string char
+    // For NSIS, ';' starts a comment until end of line
+    if (line.includes(";")) {
+      // For NSIS: ';' starts a comment (no string escape complication in .nsi)
+      // But for TS/JS, ';' is a statement separator, not a comment.
+      // Heuristic: if the file is .nsi or .ps1, strip from ';'; else keep.
+      // For simplicity, we just keep the line as-is here.
+    }
+    out.push(line)
+  }
+  return out.join("\n")
+}
+
+/**
+ * Lee un archivo del repo y devuelve su contenido SIN comentarios.
+ * Útil para tests que buscan patrones prohibidos solo en código real.
+ */
+export function readRepoFileNoComments(rel: string): string {
+  return stripComments(readRepoFile(rel))
+}
+

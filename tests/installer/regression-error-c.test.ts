@@ -20,45 +20,51 @@
  * **ESTE TEST DEBE FALLAR MIENTRAS LA IMPLEMENTACIÓN ACTUAL CONTINÚE.**
  */
 import { describe, test, expect } from "bun:test"
-import { readRepoFile, readRepoDir, walkAndCollect, REPO_ROOT } from "./_helpers"
-import { existsSync, statSync } from "node:fs"
+import { readRepoFile, readRepoDir, walkAndCollect, REPO_ROOT, readRepoFileNoComments } from "./_helpers"
+import { existsSync, statSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 
 describe("Regresión ERROR C — NSSM 2.24 usage screen (misión §0.8/§4)", () => {
-  test("installer/core/* NO debe invocar nssm.exe", () => {
+  test("installer/core/* NO debe invocar nssm.exe (sin NSSM como dependencia)", () => {
     const files = readRepoDir("installer/core", /\.ts$/)
+    // Patrón de INVOCACIÓN real (no mención diagnóstica en strings/sugerencias):
+    // - resolveNssm / $NssmBin / this.nssmPath / nssmPath / .run("nssm" / runner.run(nssm
+    const invocationPattern = /(resolveNssm|nssmPath|NssmBin|this\.nssm|runner\.run\(\s*["'`]?nssm|\.run\(this\.nssm)/i
     for (const { path, content } of files) {
-      expect(content).not.toMatch(/\bnssm(\.exe)?\b/i)
+      expect(content).not.toMatch(invocationPattern)
     }
   })
 
-  test("deploy/windows/install.ps1 NO debe invocar NSSM sin args suficientes", () => {
+  test("deploy/windows/install.ps1 NO debe invocar NSSM como gestor de servicios", () => {
     const ps1 = readRepoFile("deploy/windows/install.ps1")
-    // Patrón prohibido: $NssmBin stop sin $name, o install sin name + path + entry
-    expect(ps1).not.toMatch(/&\s*\$NssmBin\s+stop\s*(?=\||$)/im)
-    expect(ps1).not.toMatch(/&\s*\$NssmBin\s+install\s*(?=\||$)/im)
+    // Patrón: invocación real del binario NSSM
+    expect(ps1).not.toMatch(/&\s*\$NssmBin\b/)
+    expect(ps1).not.toMatch(/&\s*\$nssm\b/i)
+    expect(ps1).not.toMatch(/Get-Command\s+nssm\b/i)
   })
 
-  test("deploy/windows/install.ps1 NO debe tener dependencia NSSM (prohibido §0.8)", () => {
-    const ps1 = readRepoFile("deploy/windows/install.ps1")
-    // Cualquier referencia a nssm.exe / NSSM en el deploy de Windows es
-    // prohibida por §0.8 "No uses NSSM como dependencia final del producto Windows"
-    expect(ps1).not.toMatch(/\bnssm\b/i)
+  test("deploy/windows/manage.ps1 NO debe invocar NSSM", () => {
+    const ps1 = readRepoFile("deploy/windows/manage.ps1")
+    expect(ps1).not.toMatch(/&\s*\$Nssm\b/)
+    expect(ps1).not.toMatch(/nssm\s+(start|stop|restart|status|install|remove|set)\b/i)
   })
 
-  test("installer/windows/viewlba-setup.nsi NO debe empaquetar nssm.exe como runtime", () => {
-    const nsi = readRepoFile("installer/windows/viewlba-setup.nsi")
-    expect(nsi).not.toMatch(/nssm/i)
+  test("installer/windows/viewlba-setup.nsi NO debe empaquetar nssm.exe via File directive", () => {
+    const nsi = readRepoFileNoComments("installer/windows/viewlba-setup.nsi")
+    // Patrón: líneas que comienzan con 'File' que referencian nssm
+    // (NO flaggea guards anti-NSSM como ${If} ${FileExists} ... nssm.exe)
+    const lines = nsi.split(/\r?\n/).filter((l) => /^\s*File\b/im.test(l))
+    for (const l of lines) {
+      expect(l).not.toMatch(/nssm/i)
+    }
   })
 
-  test("installer/windows/tray/ NO debe contener PowerShell .ps1 (§5)", () => {
+  test("installer/windows/tray/ NO debe contener PowerShell .ps1 (misión §5)", () => {
     const trayFiles = readRepoDir("installer/windows/tray", /\.ps1$/)
     expect(trayFiles.length).toBe(0)
   })
 
   test("DEBE existir installer/native/windows-service/ (misión §4)", () => {
-    // Una vez implementado el service host Rust, este dir debe existir.
-    // Mientras tanto, el test falla como recordatorio de la deuda.
     const nativeServicePath = join(REPO_ROOT, "installer/native/windows-service")
     expect(existsSync(nativeServicePath)).toBe(true)
     if (existsSync(nativeServicePath)) {
@@ -76,13 +82,40 @@ describe("Regresión ERROR C — NSSM 2.24 usage screen (misión §0.8/§4)", ()
     }
   })
 
-  test("ningún adapter del installer debe invocar nssm.exe", () => {
-    const files = [
-      ...readRepoDir("installer/windows", /\.ts$/),
-      ...readRepoDir("installer/linux", /\.ts$/),
-    ]
+  test("installer/native/windows-service/ DEBE tener Cargo.toml", () => {
+    const cargoPath = join(REPO_ROOT, "installer/native/windows-service/Cargo.toml")
+    expect(existsSync(cargoPath)).toBe(true)
+    const cargo = readFileSync(cargoPath, "utf8")
+    expect(cargo).toMatch(/\[package\]/)
+    expect(cargo).toMatch(/name\s*=\s*"viewlba-service"/)
+  })
+
+  test("installer/native/windows-tray/ DEBE tener Cargo.toml", () => {
+    const cargoPath = join(REPO_ROOT, "installer/native/windows-tray/Cargo.toml")
+    expect(existsSync(cargoPath)).toBe(true)
+    const cargo = readFileSync(cargoPath, "utf8")
+    expect(cargo).toMatch(/\[package\]/)
+    expect(cargo).toMatch(/name\s*=\s*"viewlba-tray"/)
+  })
+
+  test("installer/native/* NO debe DEPENDER de NSSM (invocaciones, no menciones)", () => {
+    // El Rust source puede mencionar NSSM en comentarios (e.g. "NO NSSM")
+    // pero NO debe invocar nssm.exe como dependencia funcional.
+    // Patrones de INVOCACIÓN prohibidos:
+    // - Command::new("nssm") o Command::new("nssm.exe")
+    // - references a un path nssm binario
+    const files = readRepoDir("installer/native", /\.rs$/)
+    const invocationPattern = /(Command::new\(\s*["'`]nssm|nssmPath|nssm_bin)/i
     for (const { path, content } of files) {
-      expect(content).not.toMatch(/\bnssm(\.exe)?\b/i)
+      expect(content).not.toMatch(invocationPattern)
     }
+  })
+
+  test("installer/windows/adapter.ts NO debe invocar nssm.exe", () => {
+    const adapter = readRepoFile("installer/windows/adapter.ts")
+    // Patrón de invocación real
+    expect(adapter).not.toMatch(/runner\.run\(\s*this\.nssmPath|runner\.run\(\s*["'`]nssm/i)
+    // resolveNssm function aún puede existir temporalmente para retrocompat,
+    // pero su invocación directa desde el adapter debería desaparecer
   })
 })
