@@ -418,39 +418,3 @@ pub fn run_foreground(cfg: &Config) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-// Helper trait to chain LogEvent builders
-trait LogEventBuilder {
-    fn with_command(self, s: &str) -> Self;
-    fn with_argv(self, v: Vec<String>) -> Self;
-    fn with_cwd(self, s: String) -> Self;
-    fn with_exit_code(self, c: i32) -> Self;
-    fn with_attempt(self, n: u32) -> Self;
-    fn with_pid(self, p: u32) -> Self;
-}
-
-impl LogEventBuilder for logging::LogEvent {
-    fn with_command(mut self, s: &str) -> Self {
-        self.command = Some(s.to_string());
-        self
-    }
-    fn with_argv(mut self, v: Vec<String>) -> Self {
-        self.argv = Some(v);
-        self
-    }
-    fn with_cwd(mut self, s: String) -> Self {
-        self.cwd = Some(s);
-        self
-    }
-    fn with_exit_code(mut self, c: i32) -> Self {
-        self.exit_code = Some(c);
-        self
-    }
-    fn with_attempt(mut self, n: u32) -> Self {
-        self.attempt = Some(n);
-        self
-    }
-    fn with_pid(mut self, _p: u32) -> Self {
-        // pid isn't a misión §2 field, but useful for diagnosis
-        self
-    }
-}

@@ -110,3 +110,37 @@ pub fn event(level: &str, phase: &str, msg: impl Into<String>) -> LogEvent {
         attempt: None,
     }
 }
+
+// Builder methods on LogEvent (no trait needed — methods are in scope wherever
+// LogEvent is used, since impl blocks are part of the type).
+impl LogEvent {
+    pub fn with_command(mut self, s: &str) -> Self {
+        self.command = Some(s.to_string());
+        self
+    }
+    pub fn with_argv(mut self, v: Vec<String>) -> Self {
+        self.argv = Some(v);
+        self
+    }
+    pub fn with_cwd(mut self, s: String) -> Self {
+        self.cwd = Some(s);
+        self
+    }
+    pub fn with_exit_code(mut self, c: i32) -> Self {
+        self.exit_code = Some(c);
+        self
+    }
+    pub fn with_attempt(mut self, n: u32) -> Self {
+        self.attempt = Some(n);
+        self
+    }
+    pub fn with_service(mut self, s: impl Into<String>) -> Self {
+        self.service = Some(s.into());
+        self
+    }
+    pub fn with_pid(self, _p: u32) -> Self {
+        // pid isn't a misión §2 field, but useful for diagnosis
+        // (would need to add a field to LogEvent — skipped for v1)
+        self
+    }
+}

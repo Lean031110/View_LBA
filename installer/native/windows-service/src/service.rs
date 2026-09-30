@@ -268,7 +268,7 @@ unsafe fn report_status(
     let mut status: SERVICE_STATUS = std::mem::zeroed();
     status.dwServiceType = ENUM_SERVICE_TYPE(SERVICE_WIN32_OWN_PROCESS);
     status.dwCurrentState = SERVICE_STATUS_CURRENT_STATE(state);
-    status.dwControlsAccepted = SERVICE_STATUS_ACCEPT(controls_accepted);
+    status.dwControlsAccepted = windows::Win32::System::Services::SERVICE_STATUS_ACCEPT(controls_accepted);
     status.dwWin32ExitCode = 0;
     status.dwServiceSpecificExitCode = 0;
     status.dwCheckPoint = checkpoint;
