@@ -365,11 +365,13 @@ unsafe fn write_response(handle: HANDLE, resp: &str) -> std::io::Result<()> {
 
 fn build_restrictive_security_descriptor() -> Result<Vec<u8>> {
     unsafe {
-        let mut sd_ptr: *mut c_void = std::ptr::null_mut();
+        // windows 0.61.3: PSECURITY_DESCRIPTOR is a tuple struct wrapping *mut c_void.
+        // ConvertStringSecurityDescriptorToSecurityDescriptorW expects *mut PSECURITY_DESCRIPTOR.
+        let mut sd_ptr: PSECURITY_DESCRIPTOR = PSECURITY_DESCRIPTOR(std::ptr::null_mut());
         let result = ConvertStringSecurityDescriptorToSecurityDescriptorW(
             SDDL_RESTRICTIVE,
-            1, // SDDL_REVISION_1
-            core::ptr::addr_of_mut!(sd_ptr) as *mut *mut c_void,
+            1, // SDDL_REVISION_1 (u32 may need to be wrapped, but most versions accept raw)
+            core::ptr::addr_of_mut!(sd_ptr),
             None,
         );
 
@@ -377,10 +379,11 @@ fn build_restrictive_security_descriptor() -> Result<Vec<u8>> {
             return Err(Error::from_win32());
         }
 
-        let sd_size = GetSecurityDescriptorLength(PSECURITY_DESCRIPTOR(sd_ptr));
+        let sd_size = GetSecurityDescriptorLength(sd_ptr);
+        let raw_ptr = sd_ptr.0;  // extract the inner *mut c_void
         let mut sd_bytes = vec![0u8; sd_size as usize];
         std::ptr::copy_nonoverlapping(
-            sd_ptr as *const u8,
+            raw_ptr as *const u8,
             sd_bytes.as_mut_ptr(),
             sd_size as usize,
         );

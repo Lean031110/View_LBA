@@ -390,7 +390,14 @@ impl Supervisor {
         // process group. For v1 we use TerminateProcess directly (simpler).
         // TODO: send CTRL_BREAK_EVENT for graceful shutdown in v2.
         let mut state = self.state.lock().unwrap();
-        for slot in [&mut state.app, &mut state.realtime, &mut state.stream] {
+        // Iterate by key to avoid multiple mutable borrows of `state`
+        for key in ["app", "realtime", "stream"] {
+            let slot = match key {
+                "app" => &mut state.app,
+                "realtime" => &mut state.realtime,
+                "stream" => &mut state.stream,
+                _ => continue,
+            };
             if let Some(mut child) = slot.child.take() {
                 let pid = child.id();
                 let _ = child.kill();

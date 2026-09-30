@@ -197,7 +197,8 @@ pub fn run_as_service(cfg: &Config) -> ExitCode {
 }
 
 // SCM dispatcher ServiceMain callback (extern "system" FFI).
-extern "system" fn service_main_proc(_argc: u32, _argv: *const *const u16) {
+// Signature must match LPSERVICE_MAIN_FUNCTIONW: (u32, *mut *mut u16)
+extern "system" fn service_main_proc(_argc: u32, _argv: *mut *mut u16) {
     unsafe {
         // Register the control handler
         let status_handle_result = RegisterServiceCtrlHandlerExW(
@@ -233,11 +234,12 @@ extern "system" fn service_main_proc(_argc: u32, _argv: *const *const u16) {
 }
 
 // SCM control handler — receives Stop, Shutdown, Interrogate events.
+// Signature matches LPSERVICE_HANDLER_FUNCTION_EX: parameters use *mut (not *const)
 extern "system" fn service_control_handler(
     control: u32,
     _event_type: u32,
-    _event_data: *const c_void,
-    _context: *const c_void,
+    _event_data: *mut c_void,
+    _context: *mut c_void,
 ) -> u32 {
     match control {
         // SERVICE_CONTROL_STOP = 1
@@ -268,9 +270,7 @@ unsafe fn report_status(
     let mut status: SERVICE_STATUS = std::mem::zeroed();
     status.dwServiceType = ENUM_SERVICE_TYPE(SERVICE_WIN32_OWN_PROCESS);
     status.dwCurrentState = SERVICE_STATUS_CURRENT_STATE(state);
-    status.dwControlsAccepted = windows::Win32::System::Services::SERVICE_STATUS_ACCEPT(controls_accepted);
-    // If SERVICE_STATUS_ACCEPT doesn't exist as a tuple struct (compiler error),
-    // try: SERVICE_ACCEPT or just u32 directly
+    status.dwControlsAccepted = controls_accepted;  // try as raw u32 (field type may be u32 in this version)
     status.dwWin32ExitCode = 0;
     status.dwServiceSpecificExitCode = 0;
     status.dwCheckPoint = checkpoint;
@@ -365,7 +365,7 @@ unsafe fn delete_service(cfg: &Config) -> Result<()> {
 unsafe fn start_service(cfg: &Config) -> Result<()> {
     let scm = OpenSCManagerW(None, None, SC_MANAGER_CONNECT)?;
     let service = OpenServiceW(scm, SERVICE_NAME, SERVICE_ALL_ACCESS)?;
-    StartServiceW(service, &[])?;
+    StartServiceW(service, Some(&[]))?;
     CloseServiceHandle(scm)?;
     CloseServiceHandle(service)?;
     Ok(())

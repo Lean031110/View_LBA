@@ -32,7 +32,7 @@ mod supervisor;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn main() -> ExitCode {
-    let args: Vec<String> = env::args().collect();
+    let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
     let mut pico = pico_args::Arguments::from_vec(args[1..].to_vec());
 
     if pico.contains("--version") {
