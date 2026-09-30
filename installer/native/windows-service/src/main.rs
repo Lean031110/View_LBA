@@ -16,8 +16,11 @@
 //   viewlba-service --run         → run as service (called by SCM, not user)
 //   viewlba-service --foreground  → run as foreground process (for debug)
 //   viewlba-service --version     → print version
-
-#![windows_subsystem = "windows"]
+//
+// NOTE: NO `#![windows_subsystem = "windows"]` — this is a CLI app invoked
+// from installer/PowerShell. Console subsystem is needed for $LASTEXITCODE
+// to be captured correctly. (windows_subsystem = "windows" makes it a GUI
+// app, which doesn't propagate exit codes to PowerShell.)
 
 use std::env;
 use std::process::ExitCode;
