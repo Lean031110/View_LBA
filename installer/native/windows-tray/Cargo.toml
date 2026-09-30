@@ -1,0 +1,43 @@
+[package]
+name = "viewlba-tray"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "ViewLBA Server — native Windows tray binary (no PowerShell). IPC client to the service host."
+
+[[bin]]
+name = "viewlba-tray"
+path = "src/main.rs"
+
+[dependencies]
+# Tray icon (cross-platform minimal API; we use it for Windows only)
+tray-icon = "0.19"
+# Window/event loop
+tao = "0.30"
+# Image handling for icons
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+# Named pipe client (windows-sys)
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Pipes",
+    "Win32_Storage_FileSystem",
+    "Win32_Security",
+    "Win32_System_Threading",
+    "Win32_System_ProcessStatus",
+] }
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Time
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+# CLI
+pico-args = "0.5"

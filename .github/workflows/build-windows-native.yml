@@ -1,0 +1,163 @@
+# Build Rust crates for Windows installer (mission §4, §14)
+#
+# Compiles:
+#   - installer/native/windows-service (viewlba-service.exe)
+#   - installer/native/windows-tray    (viewlba-tray.exe)
+#
+# Both as x86_64-pc-windows-msvc release binaries.
+# Uploads:
+#   - viewlba-service.exe + sha256
+#   - viewlba-tray.exe    + sha256
+#   - manifest.json (commit, date, runtime version, components, checksums)
+#
+# This is the FIRST half of the canonical install pipeline:
+#   build → artifact → fresh runner → download → checksum → install → real tests
+
+name: Build Windows Native Binaries
+
+on:
+  push:
+    branches: ["main", "feature/**"]
+    paths:
+      - "installer/native/**"
+      - ".github/workflows/build-windows-native.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "installer/native/**"
+      - ".github/workflows/build-windows-native.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: build-windows-native-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-rust-binaries:
+    name: Build viewlba-service.exe + viewlba-tray.exe
+    runs-on: windows-latest
+    timeout-minutes: 25
+    outputs:
+      service_sha256: ${{ steps.sha.outputs.service_sha256 }}
+      tray_sha256: ${{ steps.sha.outputs.tray_sha256 }}
+      manifest_path: ${{ steps.manifest.outputs.manifest_path }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust toolchain (stable, MSVC)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "installer/native -> target"
+
+      - name: Print environment
+        run: |
+          cargo --version
+          rustc --version
+          where cl.exe 2>nul || echo "MSVC linker not in PATH (will use rust default)"
+
+      - name: Verify workspace structure
+        run: |
+          dir installer\native\
+          type installer\native\Cargo.toml
+          dir installer\native\windows-service\src
+          dir installer\native\windows-tray\src
+
+      - name: Cargo fmt check
+        working-directory: installer/native
+        run: cargo fmt --all -- --check
+        continue-on-error: true  # warn-only for v1
+
+      - name: Cargo clippy (warn-only)
+        working-directory: installer/native
+        run: cargo clippy --all-targets --release -- -D warnings
+        continue-on-error: true  # warn-only for v1
+
+      - name: Build viewlba-service (release, MSVC)
+        working-directory: installer/native
+        run: cargo build --release --bin viewlba-service --target x86_64-pc-windows-msvc
+
+      - name: Build viewlba-tray (release, MSVC)
+        working-directory: installer/native
+        run: cargo build --release --bin viewlba-tray --target x86_64-pc-windows-msvc
+
+      - name: Stage binaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path dist\windows-native | Out-Null
+          Copy-Item installer\native\target\x86_64-pc-windows-msvc\release\viewlba-service.exe dist\windows-native\
+          Copy-Item installer\native\target\x86_64-pc-windows-msvc\release\viewlba-tray.exe    dist\windows-native\
+
+          # SHA256
+          $svcHash = (Get-FileHash dist\windows-native\viewlba-service.exe -Algorithm SHA256).Hash.ToLower()
+          $trayHash = (Get-FileHash dist\windows-native\viewlba-tray.exe -Algorithm SHA256).Hash.ToLower()
+          "viewlba-service.exe  $svcHash" | Out-File -Encoding ASCII dist\windows-native\SHA256SUMS
+          "viewlba-tray.exe     $trayHash" | Add-Content -Encoding ASCII dist\windows-native\SHA256SUMS
+          Write-Host "Service SHA256: $svcHash"
+          Write-Host "Tray SHA256:    $trayHash"
+          "service_sha256=$svcHash" | Out-File -Encoding ASCII -FilePath $env:GITHUB_OUTPUT -Append
+          "tray_sha256=$trayHash"    | Out-File -Encoding ASCII -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Generate manifest.json
+        id: manifest
+        shell: pwsh
+        run: |
+          $commit = "${{ github.sha }}"
+          $date = (Get-Date).ToUniversalTime().ToString("o")
+          $svcHash = (Get-FileHash dist\windows-native\viewlba-service.exe -Algorithm SHA256).Hash.ToLower()
+          $trayHash = (Get-FileHash dist\windows-native\viewlba-tray.exe -Algorithm SHA256).Hash.ToLower()
+
+          $manifest = @{
+            version = "3.3.0-alpha.1"
+            commit_sha = $commit
+            build_date = $date
+            platform = "windows"
+            architecture = "x86_64"
+            rust_version = (rustc --version)
+            installer_version = "viewlba-service 0.1.0"
+            components = @(
+              @{ name = "viewlba-service.exe"; sha256 = $svcHash; role = "service host" }
+              @{ name = "viewlba-tray.exe";    sha256 = $trayHash; role = "tray binary" }
+            )
+            build_reproducibility = @{
+              rust_target = "x86_64-pc-windows-msvc"
+              profile = "release"
+              lto = $true
+              panic = "abort"
+            }
+            dependencies_excluded = @("NSSM", "PowerShell", "CMD")
+          }
+          $manifest | ConvertTo-Json -Depth 6 | Out-File -Encoding UTF8 dist\windows-native\manifest.json
+          Write-Host "Manifest written to dist\windows-native\manifest.json"
+          Get-Content dist\windows-native\manifest.json
+          "manifest_path=dist\windows-native\manifest.json" | Out-File -Encoding ASCII -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Verify manifest is valid JSON
+        shell: pwsh
+        run: |
+          $j = Get-Content dist\windows-native\manifest.json | ConvertFrom-Json
+          if ($j.components.Count -ne 2) { throw "manifest missing components" }
+          if ($j.dependencies_excluded -notcontains "NSSM") { throw "manifest must declare NSSM as excluded" }
+          Write-Host "Manifest validation PASS"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: viewlba-windows-native
+          path: |
+            dist/windows-native/viewlba-service.exe
+            dist/windows-native/viewlba-tray.exe
+            dist/windows-native/SHA256SUMS
+            dist/windows-native/manifest.json
+          retention-days: 30
+          if-no-files-found: error

@@ -1,0 +1,31 @@
+# ViewLBA Native Windows Crates — Workspace
+#
+# Members:
+#   - windows-service: service host (SCM-registered, manages 3 children)
+#   - windows-tray:    tray icon binary (named-pipe IPC client)
+#
+# Both crates compile to native Windows MSVC binaries. They do NOT cross-compile
+# from Linux because windows-rs requires MSVC linker for windows-targeted
+# service binaries. Build happens in CI on windows-latest.
+
+[workspace]
+resolver = "2"
+members = [
+    "windows-service",
+    "windows-tray",
+]
+
+[workspace.package]
+version = "3.3.0-alpha.1"
+edition = "2021"
+license = "MIT"
+authors = ["Lean031110"]
+repository = "https://github.com/Lean031110/View_LBA"
+homepage = "https://github.com/Lean031110/View_LBA"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
