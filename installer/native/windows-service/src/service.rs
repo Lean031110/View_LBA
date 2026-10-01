@@ -342,13 +342,14 @@ unsafe fn create_service(cfg: &Config, command_line: &str) -> Result<()> {
     // LocalService has SID S-1-5-19, password is empty (managed account).
     // ACLs on ProgramData/ViewLBA MUST grant LocalService write access —
     // the MSI's CreateFolder Permission elements include LocalService.
-    // In windows 0.61.3:
-    //   - ENUM_SERVICE_TYPE is a tuple struct (wraps u32) — need to wrap SERVICE_NO_CHANGE
-    //   - SERVICE_START_TYPE is a type alias to u32 — pass u32 directly
-    //   - SERVICE_ERROR_CONTROL is a type alias to u32 — pass u32 directly
+    // In windows 0.61.3 ChangeServiceConfigW:
+    //   - dwServiceType: ENUM_SERVICE_TYPE (tuple struct)
+    //   - dwStartType: SERVICE_START_TYPE (tuple struct)
+    //   - dwErrorControl: SERVICE_ERROR (tuple struct)
+    // All wrap u32 with SERVICE_NO_CHANGE = 0xFFFFFFFF meaning "no change".
     let no_change_service_type = ENUM_SERVICE_TYPE(SERVICE_NO_CHANGE);
-    let no_change_start_type = SERVICE_NO_CHANGE;  // SERVICE_START_TYPE is u32 alias
-    let no_change_error_control = SERVICE_NO_CHANGE;  // SERVICE_ERROR_CONTROL is u32 alias
+    let no_change_start_type = windows::Win32::System::Services::SERVICE_START_TYPE(SERVICE_NO_CHANGE);
+    let no_change_error_control = windows::Win32::System::Services::SERVICE_ERROR(SERVICE_NO_CHANGE);
     let null_password = windows::core::PCWSTR::null();  // LocalService has no password
 
     let config_result = ChangeServiceConfigW(
