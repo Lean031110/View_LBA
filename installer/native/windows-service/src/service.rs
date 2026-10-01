@@ -353,17 +353,17 @@ unsafe fn create_service(cfg: &Config, command_line: &str) -> Result<()> {
     let null_password = windows::core::PCWSTR::null();  // LocalService has no password
 
     let config_result = ChangeServiceConfigW(
-        service,
-        no_change_service_type,
-        no_change_start_type,
-        no_change_error_control,
-        windows::core::PCWSTR::null(),  // lpBinaryPathName — no change
-        windows::core::PCWSTR::null(),  // lpLoadOrderGroup — no change
-        windows::core::PCWSTR::null(),  // lpDependencies — no change
-        windows::core::PCWSTR::null(),  // lpServiceStartName — NULL means default
-        LOCALSERVICE_ACCOUNT,           // this is what sets the account!
-        null_password,                  // LocalService has no password
-        windows::core::PCWSTR::null(),  // lpDisplayName — no change
+        service,                            // 1. hservice: SC_HANDLE
+        no_change_service_type,             // 2. dwServiceType: ENUM_SERVICE_TYPE
+        no_change_start_type,                // 3. dwStartType: SERVICE_START_TYPE
+        no_change_error_control,             // 4. dwErrorControl: SERVICE_ERROR
+        windows::core::PCWSTR::null(),      // 5. lpBinaryPathName (no change)
+        windows::core::PCWSTR::null(),      // 6. lpLoadOrderGroup (no change)
+        None,                                // 7. lpTagId: Option<*mut u32> (no tag)
+        windows::core::PCWSTR::null(),      // 8. lpDependencies (no change)
+        LOCALSERVICE_ACCOUNT,               // 9. lpServiceStartName: LocalService
+        null_password,                       // 10. lpPassword: NULL (LocalService no pwd)
+        windows::core::PCWSTR::null(),      // 11. lpDisplayName (no change)
     );
 
     if let Err(e) = config_result {
