@@ -343,7 +343,7 @@ unsafe fn create_service(cfg: &Config, command_line: &str) -> Result<()> {
     // ACLs on ProgramData/ViewLBA MUST grant LocalService write access —
     // the MSI's CreateFolder Permission elements include LocalService.
     let no_change_service_type = ENUM_SERVICE_TYPE(SERVICE_NO_CHANGE);
-    let no_change_start_type = windows::Win32::System::Services::SERVICE_STATUS_CHANGE(SERVICE_NO_CHANGE);
+    let no_change_start_type = windows::Win32::System::Services::SERVICE_START_TYPE(SERVICE_NO_CHANGE);
     let no_change_error_control = windows::Win32::System::Services::SERVICE_ERROR_CONTROL(SERVICE_NO_CHANGE);
     let null_password = windows::core::PCWSTR::null();  // LocalService has no password
 
