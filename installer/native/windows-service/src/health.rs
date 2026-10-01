@@ -40,8 +40,17 @@ pub struct HealthReport {
 }
 
 pub fn check_all(cfg: &Config) -> HealthReport {
+    // ARCHITECTURE NOTE (mission §0.10):
+    //   - app:       HTTP API on :3000  → /api/health
+    //   - realtime:  socket.io on :3003 (PUBLIC), internal API on :3004 → /health
+    //     The internal API is what we probe for health. The socket.io port :3003
+    //     does NOT respond to HTTP GET /health (it's a socket.io server, not HTTP).
+    //     See mini-services/realtime-service/index.ts:
+    //       PORT = 3003       (public socket.io, hub for TVs + admins)
+    //       INTERNAL_PORT = 3004  (private HTTP API: /status, /health, /broadcast)
+    //   - stream:    control API on :8100 → /health (RTMP is :1935, HTTP-FLV is :8000)
     let app = http_get_status("http://127.0.0.1:3000/api/health", 2_000);
-    let realtime = http_get_status("http://127.0.0.1:3003/health", 2_000);
+    let realtime = http_get_status("http://127.0.0.1:3004/health", 2_000);  // BUG FIX: was :3003
     let stream = http_get_status("http://127.0.0.1:8100/health", 2_000);
     let database = check_db_writable(&cfg.program_data.join("data").join("db"));
     let storage = check_dir_writable(&cfg.program_data.join("data").join("media"));

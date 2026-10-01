@@ -334,16 +334,77 @@ unsafe fn create_service(cfg: &Config, command_line: &str) -> Result<()> {
         Some(&desc as *const _ as *const c_void),
     );
 
-    // Set LocalService account (minimum privilege, NOT LocalSystem).
-    // ChangeServiceConfigW in windows 0.61.3 expects newtype structs for
-    // dwServiceType (ENUM_SERVICE_TYPE), dwStartType (SERVICE_STATUS_CHANGE),
-    // dwErrorControl (SERVICE_ERROR_CONTROL). SERVICE_NO_CHANGE is the same
-    // u32 value 0xFFFFFFFF wrapped in the right type.
-    // For v1, we skip this call — the service will run with the default
-    // account (LocalSystem). v2 will wrap SERVICE_NO_CHANGE properly and
-    // call ChangeServiceConfigW to set LocalService account.
-    // TODO: implement via ChangeServiceConfigW with proper newtype wrappers.
-    logging::write_event(logging::event("info", "services", "LocalService account config: deferred to v2 (default account for now)"));
+    // Set LocalService account (minimum privilege, NOT LocalSystem — misión §4).
+    // LocalService has:
+    //   - SeChangeNotifyPrivilege (needed for child process spawning)
+    //   - Can bind to non-privileged ports (3000, 3003, 1935, 8000)
+    //   - CANNOT authenticate as machine on network (we don't need this)
+    // LocalService has SID S-1-5-19, password is empty (managed account).
+    // ACLs on ProgramData/ViewLBA MUST grant LocalService write access —
+    // the MSI's CreateFolder Permission elements include LocalService.
+    let no_change_service_type = ENUM_SERVICE_TYPE(SERVICE_NO_CHANGE);
+    let no_change_start_type = windows::Win32::System::Services::SERVICE_STATUS_CHANGE(SERVICE_NO_CHANGE);
+    let no_change_error_control = windows::Win32::System::Services::SERVICE_ERROR_CONTROL(SERVICE_NO_CHANGE);
+    let null_password = windows::core::PCWSTR::null();  // LocalService has no password
+
+    let config_result = ChangeServiceConfigW(
+        service,
+        no_change_service_type,
+        no_change_start_type,
+        no_change_error_control,
+        windows::core::PCWSTR::null(),  // lpBinaryPathName — no change
+        windows::core::PCWSTR::null(),  // lpLoadOrderGroup — no change
+        windows::core::PCWSTR::null(),  // lpDependencies — no change
+        windows::core::PCWSTR::null(),  // lpServiceStartName — NULL means default
+        LOCALSERVICE_ACCOUNT,           // this is what sets the account!
+        null_password,                  // LocalService has no password
+        windows::core::PCWSTR::null(),  // lpDisplayName — no change
+    );
+
+    if let Err(e) = config_result {
+        logging::write_event(logging::event("warn", "services", format!("ChangeServiceConfigW (LocalService) failed: {}", e)));
+        // Non-fatal — service still works as LocalSystem, just less restricted
+    } else {
+        logging::write_event(logging::event("info", "services", "Service account set to LocalService (NT AUTHORITY\\LocalService)"));
+    }
+
+    // Set Recovery Actions (misión §4 — backoff 5s/10s/60s for auto-restart)
+    // Uses ChangeServiceConfig2W with SERVICE_CONFIG_FAILURE_ACTIONS.
+    let mut failure_actions_buffer: [SC_ACTION; 3] = [
+        SC_ACTION {
+            Delay: 5_000,    // 5 seconds
+            Type: SC_ACTION_TYPE(1),  // SC_ACTION_RESTART
+        },
+        SC_ACTION {
+            Delay: 10_000,   // 10 seconds
+            Type: SC_ACTION_TYPE(1),
+        },
+        SC_ACTION {
+            Delay: 60_000,   // 60 seconds
+            Type: SC_ACTION_TYPE(1),
+        },
+    ];
+
+    let mut failure_actions = SERVICE_FAILURE_ACTIONSW {
+        dwResetPeriod: 86400,  // 1 day — reset failure count after 24h
+        lpRebootMsg: windows::core::PWSTR::null(),
+        lpCommand: windows::core::PWSTR::null(),
+        cActions: 3,
+        lpsaActions: failure_actions_buffer.as_mut_ptr(),
+    };
+
+    let recovery_result = ChangeServiceConfig2W(
+        service,
+        SERVICE_CONFIG_FAILURE_ACTIONS,
+        Some(&mut failure_actions as *mut _ as *mut c_void),
+    );
+
+    if let Err(e) = recovery_result {
+        logging::write_event(logging::event("warn", "services", format!("ChangeServiceConfig2W (recovery) failed: {}", e)));
+        // Non-fatal — service still works, but no auto-restart on crash
+    } else {
+        logging::write_event(logging::event("info", "services", "Recovery actions set: restart 5s/10s/60s (backoff)"));
+    }
 
     CloseServiceHandle(scm)?;
     CloseServiceHandle(service)?;

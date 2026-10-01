@@ -229,13 +229,29 @@ fn run_tray_loop(cfg: &config::TrayConfig, state: Arc<Mutex<TrayState>>) -> Resu
 }
 
 fn open_url(url: &str) {
+    // Use ShellExecuteW (Win32 native) — NO cmd.exe, NO PowerShell.
+    // This is the Windows-canonical way to "open URL in default browser".
+    // misión §5 forbids cmd.exe as a functional dependency.
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::process::CommandExt;
-        let _ = std::process::Command::new("cmd")
-            .args(["/c", "start", "", url])
-            .creation_flags(0x08000000) // CREATE_NO_WINDOW
-            .spawn();
+        use windows::core::PCWSTR;
+        use windows::Win32::UI::Shell::ShellExecuteW;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+        // Convert to wide string with null terminator
+        let wide: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
+        let verb_open: PCWSTR = windows::w!("open");
+
+        let _ = unsafe {
+            ShellExecuteW(
+                None,                // hwnd
+                verb_open,           // verb "open"
+                PCWSTR(wide.as_ptr()), // file (URL)
+                PCWSTR::null(),      // params
+                PCWSTR::null(),      // directory
+                SW_SHOWNORMAL,       // show cmd
+            )
+        };
     }
     #[cfg(not(target_os = "windows"))]
     {
