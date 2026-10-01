@@ -240,12 +240,14 @@ fn open_url(url: &str) {
 
         // Convert to wide string with null terminator
         let wide: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
-        let verb_open: PCWSTR = windows::w!("open");
+        // 'open' verb — use windows::core::w! macro (not windows::w!)
+        let verb_open: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
+        let verb_open_ptr: PCWSTR = PCWSTR(verb_open.as_ptr());
 
         let _ = unsafe {
             ShellExecuteW(
                 None,                // hwnd
-                verb_open,           // verb "open"
+                verb_open_ptr,       // verb "open"
                 PCWSTR(wide.as_ptr()), // file (URL)
                 PCWSTR::null(),      // params
                 PCWSTR::null(),      // directory
