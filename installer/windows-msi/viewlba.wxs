@@ -112,7 +112,7 @@
       <Component Id="cmp_viewlba_service_exe" Guid="*">
         <File Id="file_viewlba_service_exe" Source="$(var.BUILD_DIR)\viewlba-service.exe" KeyPath="yes" />
 
-        <!-- WiX-native service registration (NOT CustomAction --install) -->
+        <!-- WiX-native service registration (NOT CustomAction for registration) -->
         <ServiceInstall Name="ViewLBA"
                         DisplayName="ViewLBA Server"
                         Description="ViewLBA Server - native host for App + Realtime + Stream children"
@@ -393,7 +393,7 @@
 
     <!-- ================================================================
          Install sequence — ServiceInstall handles service registration
-         No CustomAction needed for --install/--uninstall
+         No CustomAction needed for install/uninstall
          ================================================================ -->
     <InstallExecuteSequence>
       <RemoveExistingProducts After="InstallInitialize" />
