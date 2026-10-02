@@ -145,6 +145,9 @@ jobs:
           dotnet tool install --global wix --version 4.0.5
           $env:Path = "$env:USERPROFILE\.dotnet\tools;$env:Path"
           wix --version
+          # Install UI extension (needed for WixUI_Minimal, WixUI_Common)
+          wix extension add -g WixToolset.UI.wixext
+          Write-Host "WiX UI extension installed"
 
       - name: Build MSI
         shell: pwsh
