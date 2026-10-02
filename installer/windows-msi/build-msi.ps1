@@ -23,7 +23,7 @@ param(
     [Parameter(Mandatory=$true)]
     [string]$OutDir,
 
-    [string]$UpgradeCode = "8F2D9E7A-1234-5678-9ABC-DEF012345678"
+    [string]$UpgradeCode = "E7A3F5B2-9C41-4D8E-A6F3-7B5E1D2C9A80"
 )
 
 $ErrorActionPreference = "Stop"
