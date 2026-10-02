@@ -49,7 +49,8 @@ import { fileURLToPath } from "node:url"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
-const REPO_ROOT = resolve(__dirname, "..", "..")
+// scripts/ is INSIDE the repo root, so only ONE ".." to reach the repo root
+const REPO_ROOT = resolve(__dirname, "..")
 
 // Parse args (bug fix: indexOf returns -1 when not found, causing args[-1+1]=args[0])
 const args = process.argv.slice(2)
