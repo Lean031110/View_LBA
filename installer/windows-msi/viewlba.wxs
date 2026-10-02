@@ -67,8 +67,9 @@
       </Component>
       <Component Id="cmp_tray" Guid="*">
         <File Id="file_tray" Source="$(var.BUILD_DIR)\viewlba-tray.exe" KeyPath="yes" />
-        <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run"
-                       Name="ViewLBATray" Value="[BIN_DIR]viewlba-tray.exe" Type="string" />
+        <RegistryKey Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run">
+          <RegistryValue Name="ViewLBATray" Value="[BIN_DIR]viewlba-tray.exe" Type="string" />
+        </RegistryKey>
       </Component>
       <Component Id="cmp_installer" Guid="*">
         <File Id="file_installer" Source="$(var.BUILD_DIR)\viewlba-installer.exe" KeyPath="yes" />
