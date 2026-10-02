@@ -298,7 +298,7 @@
         <Shortcut Id="sc_panel"
                   Name="ViewLBA Panel"
                   Target="[WindowsFolder]explorer.exe"
-                  Arguments="$(var.VIEWLBA_PANEL_URL)"
+                  Arguments="[VIEWLBA_PANEL_URL]"
                   Directory="VIEWLBA_SHORTCUTS_DIR"
                   Icon="viewlba.ico"
                   WorkingDirectory="BIN_DIR" />
@@ -332,7 +332,7 @@
         <Shortcut Id="sc_desktop_panel"
                   Name="ViewLBA Panel"
                   Target="[WindowsFolder]explorer.exe"
-                  Arguments="$(var.VIEWLBA_PANEL_URL)"
+                  Arguments="[VIEWLBA_PANEL_URL]"
                   Directory="DesktopFolder"
                   Icon="viewlba.ico"
                   WorkingDirectory="BIN_DIR" />
