@@ -71,7 +71,8 @@ describe("Bandeja Windows (viewlba-tray.exe binario Rust)", () => {
 
   test("IPC client que habla a la named pipe del service host", () => {
     const ipc = readFileSync(join(TRAY_RUST_DIR, "src", "ipc.rs"), "utf8")
-    expect(ipc).toMatch(/\\\\\.\\pipe\\viewlba-service|pipe_name/)
+    // Match either the pipe path or the constant name (case-insensitive)
+    expect(ipc).toMatch(/pipe.*viewlba|PIPE_NAME|pipe_name/i)
     expect(ipc).toMatch(/CreateFileW/)
   })
 

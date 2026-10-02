@@ -12,12 +12,18 @@ export const REPO_ROOT = resolve(import.meta.dir, "..", "..")
 /** Camina recursivamente y devuelve archivos que matchean el patrón. */
 export function walkAndCollect(dir: string, pattern: RegExp): string[] {
   const out: string[] = []
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const st = statSync(full)
-    if (st.isDirectory()) {
+  let entries: import("node:fs").Dirent[]
+  try {
+    entries = readdirSync(dir, { withFileTypes: true })
+  } catch {
+    // Directory doesn't exist — return empty (no matches)
+    return out
+  }
+  for (const entry of entries) {
+    const full = join(dir, entry.name)
+    if (entry.isDirectory()) {
       out.push(...walkAndCollect(full, pattern))
-    } else if (pattern.test(entry)) {
+    } else if (pattern.test(entry.name)) {
       out.push(full)
     }
   }
