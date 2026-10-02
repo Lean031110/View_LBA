@@ -254,9 +254,5 @@
       <ComponentRef Id="cmp_sc_tray" />
     </Feature>
 
-    <InstallExecuteSequence>
-      <RemoveExistingProducts After="InstallInitialize" />
-    </InstallExecuteSequence>
-
   </Package>
 </Wix>
