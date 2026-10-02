@@ -71,11 +71,11 @@
 
     <!-- Directories -->
     <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="VIEWLBA_PROGRAM_FILES_DIR" Name="ViewLB~1" LongName="ViewLBA Server">
+      <Directory Id="VIEWLBA_PROGRAM_FILES_DIR" Name="ViewLBA Server">
         <Directory Id="BIN_DIR" Name="bin" />
         <Directory Id="RUNTIME_DIR" Name="runtime" />
         <Directory Id="APP_DIR" Name="app" />
-        <Directory Id="MINI_SERVICES_DIR" Name="MINISE~1" LongName="mini-services" />
+        <Directory Id="MINI_SERVICES_DIR" Name="mini-services" />
         <Directory Id="THEMES_PF_DIR" Name="themes" />
         <Directory Id="PUBLIC_DIR" Name="public" />
       </Directory>
@@ -99,9 +99,8 @@
 
     <!-- Start Menu -->
     <StandardDirectory Id="ProgramMenuFolder">
-      <Directory Id="VIEWLBA_SHORTCUTS_DIR" Name="ViewLB~1" LongName="ViewLBA Server" />
+      <Directory Id="VIEWLBA_SHORTCUTS_DIR" Name="ViewLBA Server" />
     </StandardDirectory>
-    <Directory Id="DesktopFolder" />
 
     <!-- ================================================================
          Components: Program Files (binaries)
@@ -180,100 +179,163 @@
 
     <!-- config/ — LocalService: read ONLY (no write) -->
     <DirectoryRef Id="CONFIG_DIR">
-      <Component Id="cmp_config_dir" Guid="*" KeyPath="yes">
+      <Component Id="cmp_config_dir" Guid="*">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
           <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericExecute="yes" />
         </CreateFolder>
+      <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="<COMPONENT ID="CONFIG" GUID="*" KEYPATH="YES">
+        <CREATEFOLDER>
+          <PERMISSION USER="SYSTEM" GENERICALL="YES" />
+          <PERMISSION USER="ADMINISTRATORS" GENERICALL="YES" />
+          <PERMISSION USER="NT AUTHORITY\LOCALSERVICE" GENERICREAD="YES" GENERICEXECUTE="YES" />
+        </CREATEFOLDER>
+      </COMPONENT>" Value="1" Type="string" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
     <!-- data/db/ — LocalService: read + write -->
     <DirectoryRef Id="DB_DIR">
-      <Component Id="cmp_db_dir" Guid="*" KeyPath="yes">
+      <Component Id="cmp_db_dir" Guid="*">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
           <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" />
         </CreateFolder>
+      <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="<COMPONENT ID="DB" GUID="*" KEYPATH="YES">
+        <CREATEFOLDER>
+          <PERMISSION USER="SYSTEM" GENERICALL="YES" />
+          <PERMISSION USER="ADMINISTRATORS" GENERICALL="YES" />
+          <PERMISSION USER="NT AUTHORITY\LOCALSERVICE" GENERICREAD="YES" GENERICWRITE="YES" GENERICEXECUTE="YES" />
+        </CREATEFOLDER>
+      </COMPONENT>" Value="1" Type="string" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
     <!-- data/media/ — LocalService: read + write -->
     <DirectoryRef Id="MEDIA_DIR">
-      <Component Id="cmp_media_dir" Guid="*" KeyPath="yes">
+      <Component Id="cmp_media_dir" Guid="*">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
           <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" />
         </CreateFolder>
+      <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="<COMPONENT ID="MEDIA" GUID="*" KEYPATH="YES">
+        <CREATEFOLDER>
+          <PERMISSION USER="SYSTEM" GENERICALL="YES" />
+          <PERMISSION USER="ADMINISTRATORS" GENERICALL="YES" />
+          <PERMISSION USER="NT AUTHORITY\LOCALSERVICE" GENERICREAD="YES" GENERICWRITE="YES" GENERICEXECUTE="YES" />
+        </CREATEFOLDER>
+      </COMPONENT>" Value="1" Type="string" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
     <!-- data/backups/ — LocalService: read + write -->
     <DirectoryRef Id="BACKUPS_DIR">
-      <Component Id="cmp_backups_dir" Guid="*" KeyPath="yes">
+      <Component Id="cmp_backups_dir" Guid="*">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
           <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" />
         </CreateFolder>
+      <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="<COMPONENT ID="BACKUPS" GUID="*" KEYPATH="YES">
+        <CREATEFOLDER>
+          <PERMISSION USER="SYSTEM" GENERICALL="YES" />
+          <PERMISSION USER="ADMINISTRATORS" GENERICALL="YES" />
+          <PERMISSION USER="NT AUTHORITY\LOCALSERVICE" GENERICREAD="YES" GENERICWRITE="YES" GENERICEXECUTE="YES" />
+        </CREATEFOLDER>
+      </COMPONENT>" Value="1" Type="string" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
     <!-- data/store/ — LocalService: read + write -->
     <DirectoryRef Id="STORE_DIR">
-      <Component Id="cmp_store_dir" Guid="*" KeyPath="yes">
+      <Component Id="cmp_store_dir" Guid="*">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
           <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" />
         </CreateFolder>
+      <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="<COMPONENT ID="STORE" GUID="*" KEYPATH="YES">
+        <CREATEFOLDER>
+          <PERMISSION USER="SYSTEM" GENERICALL="YES" />
+          <PERMISSION USER="ADMINISTRATORS" GENERICALL="YES" />
+          <PERMISSION USER="NT AUTHORITY\LOCALSERVICE" GENERICREAD="YES" GENERICWRITE="YES" GENERICEXECUTE="YES" />
+        </CREATEFOLDER>
+      </COMPONENT>" Value="1" Type="string" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
     <!-- logs/ — LocalService: read + write, Users: read -->
     <DirectoryRef Id="LOGS_DIR">
-      <Component Id="cmp_logs_dir" Guid="*" KeyPath="yes">
+      <Component Id="cmp_logs_dir" Guid="*">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
           <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" />
           <Permission User="Users" GenericRead="yes" GenericExecute="yes" />
         </CreateFolder>
+      <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="<COMPONENT ID="LOGS" GUID="*" KEYPATH="YES">
+        <CREATEFOLDER>
+          <PERMISSION USER="SYSTEM" GENERICALL="YES" />
+          <PERMISSION USER="ADMINISTRATORS" GENERICALL="YES" />
+          <PERMISSION USER="NT AUTHORITY\LOCALSERVICE" GENERICREAD="YES" GENERICWRITE="YES" GENERICEXECUTE="YES" />
+          <PERMISSION USER="USERS" GENERICREAD="YES" GENERICEXECUTE="YES" />
+        </CREATEFOLDER>
+      </COMPONENT>" Value="1" Type="string" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
     <!-- credentials/ — SYSTEM + Administrators ONLY (NO LocalService) -->
     <DirectoryRef Id="CREDENTIALS_DIR">
-      <Component Id="cmp_credentials_dir" Guid="*" KeyPath="yes">
+      <Component Id="cmp_credentials_dir" Guid="*">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
         </CreateFolder>
+      <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="<COMPONENT ID="CREDENTIALS" GUID="*" KEYPATH="YES">
+        <CREATEFOLDER>
+          <PERMISSION USER="SYSTEM" GENERICALL="YES" />
+          <PERMISSION USER="ADMINISTRATORS" GENERICALL="YES" />
+        </CREATEFOLDER>
+      </COMPONENT>" Value="1" Type="string" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
     <!-- run/ — LocalService: read + write (PID files, IPC markers) -->
     <DirectoryRef Id="RUN_DIR">
-      <Component Id="cmp_run_dir" Guid="*" KeyPath="yes">
+      <Component Id="cmp_run_dir" Guid="*">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
           <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" />
         </CreateFolder>
+      <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="<COMPONENT ID="RUN" GUID="*" KEYPATH="YES">
+        <CREATEFOLDER>
+          <PERMISSION USER="SYSTEM" GENERICALL="YES" />
+          <PERMISSION USER="ADMINISTRATORS" GENERICALL="YES" />
+          <PERMISSION USER="NT AUTHORITY\LOCALSERVICE" GENERICREAD="YES" GENERICWRITE="YES" GENERICEXECUTE="YES" />
+        </CREATEFOLDER>
+      </COMPONENT>" Value="1" Type="string" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
     <!-- cache/ — LocalService: read + write -->
     <DirectoryRef Id="CACHE_DIR">
-      <Component Id="cmp_cache_dir" Guid="*" KeyPath="yes">
+      <Component Id="cmp_cache_dir" Guid="*">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
           <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" />
         </CreateFolder>
+      <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="<COMPONENT ID="CACHE" GUID="*" KEYPATH="YES">
+        <CREATEFOLDER>
+          <PERMISSION USER="SYSTEM" GENERICALL="YES" />
+          <PERMISSION USER="ADMINISTRATORS" GENERICALL="YES" />
+          <PERMISSION USER="NT AUTHORITY\LOCALSERVICE" GENERICREAD="YES" GENERICWRITE="YES" GENERICEXECUTE="YES" />
+        </CREATEFOLDER>
+      </COMPONENT>" Value="1" Type="string" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
