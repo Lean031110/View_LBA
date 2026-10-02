@@ -99,21 +99,51 @@ jobs:
         run: bun scripts/stage-windows.ts --version ${{ steps.version.outputs.version }}
         shell: pwsh
 
-      - name: Copy Rust binaries into staging
+      - name: Copy Rust binaries + icon + Bun into staging
         shell: pwsh
         run: |
           $stageBin = "dist\release\windows\ViewLBA-Server\bin"
+          $stageRuntime = "dist\release\windows\ViewLBA-Server\runtime"
           New-Item -ItemType Directory -Force -Path $stageBin | Out-Null
+          New-Item -ItemType Directory -Force -Path $stageRuntime | Out-Null
+
+          # Rust binaries
           Copy-Item "installer\native\target\x86_64-pc-windows-msvc\release\viewlba-service.exe" $stageBin -Force
           Copy-Item "installer\native\target\x86_64-pc-windows-msvc\release\viewlba-tray.exe" $stageBin -Force
-          # Copy viewlba-installer.exe if it was compiled
+
+          # viewlba-installer.exe (if compiled)
           if (Test-Path "dist\release\windows\stage\viewlba-installer.exe") {
             Copy-Item "dist\release\windows\stage\viewlba-installer.exe" $stageBin -Force
           }
-          # Copy icon
-          Copy-Item "installer\gui\src-tauri\icons\icon.ico" $stageBin -Force
-          Write-Host "Staging bin/ contents:"
-          Get-ChildItem $stageBin
+
+          # Icon — copy as viewlba.ico (WiX expects this name)
+          Copy-Item "installer\gui\src-tauri\icons\icon.ico" "$stageBin\viewlba.ico" -Force
+
+          # Bun runtime — copy from the installed Bun (setup-bun action)
+          $bunPath = (Get-Command bun -ErrorAction SilentlyContinue).Source
+          if (-not $bunPath) { $bunPath = "$env:USERPROFILE\.bun\bin\bun.exe" }
+          if (Test-Path $bunPath) {
+            Copy-Item $bunPath "$stageRuntime\bun.exe" -Force
+            Write-Host "Bun runtime copied from: $bunPath"
+          } else {
+            Write-Host "::warning::Bun runtime not found — staging will have placeholder"
+          }
+
+          # Verify all required files exist
+          $required = @(
+            "$stageBin\viewlba-service.exe",
+            "$stageBin\viewlba-tray.exe",
+            "$stageBin\viewlba.ico",
+            "$stageRuntime\bun.exe"
+          )
+          foreach ($f in $required) {
+            if (Test-Path $f) {
+              $size = (Get-Item $f).Length
+              Write-Host "OK: $f ($size bytes)"
+            } else {
+              Write-Host "::warning::Missing: $f"
+            }
+          }
 
       - name: Verify staging is complete
         shell: pwsh
