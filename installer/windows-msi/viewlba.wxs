@@ -1,37 +1,4 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  ViewLBA Server — WiX v4 MSI Installer (mission §3, §6, §7, §31)
-  ====================================================================
-  CANONICAL Windows installer. Uses WiX-native ServiceInstall +
-  ServiceControl (NOT CustomAction with viewlba-service.exe for registration).
-  The MSI is the SINGLE authority for service registration.
-
-  Routes:
-    Program Files\ViewLBA Server\     → bin/, runtime/, app/, mini-services/, themes/, public/
-    ProgramData\ViewLBA\              → config/, data/{db,media,backups,store}, logs/, credentials/, run/, cache/
-
-  ACL Matrix (mission §4: minimum privilege for LocalService):
-    config          = full : full : read (NO write) : none
-    data/db         = full : full : read+write        : none
-    data/media      = full : full : read+write        : none
-    data/backups    = full : full : read+write        : none
-    data/store      = full : full : read+write        : none
-    logs            = full : full : read+write        : read
-    credentials     = full : full : NONE              : none
-    run             = full : full : read+write        : none
-    cache           = full : full : read+write        : none
-
-  Uninstall: stops service via ServiceControl, removes Program Files,
-  CONSERVES ProgramData (DB, media, backups, config, secrets).
-
-  Build:
-    wix build installer/windows-msi/viewlba.wxs \
-         -o dist/release/windows/out/ViewLBA-Server-Setup-$(var.VERSION).msi \
-         -d VERSION=$(var.VERSION) \
-         -d BUILD_DIR=$(var.BUILD_DIR) \
-         -d PAYLOAD_DIR=$(var.PAYLOAD_DIR) \
-         -d UPGRADE_CODE=$(var.UPGRADE_CODE)
--->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="ViewLBA Server $(var.VERSION)"
            Manufacturer="ViewLBA"
@@ -42,36 +9,22 @@
            UpgradeCode="$(var.UPGRADE_CODE)">
 
     <SummaryInformation Codepage="1252"
-                        Description="ViewLBA Server $(var.VERSION) - Installer"
-                        Manufacturer="ViewLBA"
-                        Keywords="ViewLBA,Signage,Restaurant,Installer" />
+                        Description="ViewLBA Server $(var.VERSION) Installer"
+                        Manufacturer="ViewLBA" />
 
-    <!-- Major upgrade support: vA to vB upgrades cleanly (mission §J.1) -->
-    <MajorUpgrade DowngradeErrorMessage="A newer version of ViewLBA Server is already installed. The installer will now exit."
-                  Schedule="afterInstallInitialize"
-                  AllowSameVersion="no"
-                  Disallow="no" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of ViewLBA Server is already installed."
+                  Schedule="afterInstallInitialize" />
 
     <Media Id="1" Cabinet="viewlba.cab" EmbedCab="yes" />
 
-    <!-- Properties -->
-    <Property Id="VIEWLBA_PROGRAM_FILES" Value="[ProgramFiles64Folder]ViewLBA Server" />
-    <Property Id="VIEWLBA_PROGRAM_DATA" Value="[CommonAppDataFolder]ViewLBA" Secure="yes" />
     <Property Id="VIEWLBA_PANEL_URL" Value="http://localhost:3000" />
-
-    <!-- ARP properties (mission §J.3) -->
-    <Property Id="ARPINSTALLLOCATION" Value="[VIEWLBA_PROGRAM_FILES]" />
+    <Property Id="ARPINSTALLLOCATION" Value="[ProgramFiles64Folder]ViewLBA Server" />
     <Property Id="ARPDISPLAYNAME" Value="ViewLBA Server $(var.VERSION)" />
-    <Property Id="ARPCOMMENTS" Value="ViewLBA Server - digital signage for restaurants" />
-    <Property Id="ARPURLINFOABOUT" Value="https://github.com/Lean031110/View_LBA" />
     <Property Id="ARPNOMODIFY" Value="1" />
     <Property Id="ARPNOREPAIR" Value="1" />
-    <Property Id="ARPSYSTEMCOMPONENT" Value="0" />
-    <Property Id="ARPCONTACT" Value="ViewLBA" />
 
-    <!-- Directories -->
     <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="VIEWLBA_PROGRAM_FILES_DIR" Name="ViewLBA Server">
+      <Directory Id="VIEWLBA_PF" Name="ViewLBA Server">
         <Directory Id="BIN_DIR" Name="bin" />
         <Directory Id="RUNTIME_DIR" Name="runtime" />
         <Directory Id="APP_DIR" Name="app" />
@@ -82,7 +35,7 @@
     </StandardDirectory>
 
     <StandardDirectory Id="CommonAppDataFolder">
-      <Directory Id="VIEWLBA_PROGRAM_DATA_DIR" Name="ViewLBA">
+      <Directory Id="VIEWLBA_PD" Name="ViewLBA">
         <Directory Id="CONFIG_DIR" Name="config" />
         <Directory Id="DATA_DIR" Name="data">
           <Directory Id="DB_DIR" Name="db" />
@@ -97,366 +50,209 @@
       </Directory>
     </StandardDirectory>
 
-    <!-- Start Menu -->
     <StandardDirectory Id="ProgramMenuFolder">
-      <Directory Id="VIEWLBA_SHORTCUTS_DIR" Name="ViewLBA Server" />
+      <Directory Id="SHORTCUTS_DIR" Name="ViewLBA Server" />
     </StandardDirectory>
 
-    <!-- ================================================================
-         Components: Program Files (binaries)
-         ================================================================ -->
-
-    <!-- viewlba-service.exe + ServiceInstall (WiX native — mission J.4) -->
+    <!-- Binaries -->
     <DirectoryRef Id="BIN_DIR">
-      <Component Id="cmp_viewlba_service_exe" Guid="*">
-        <File Id="file_viewlba_service_exe" Source="$(var.BUILD_DIR)\viewlba-service.exe" KeyPath="yes" />
-
-        <!-- WiX-native service registration (NOT CustomAction for registration) -->
-        <ServiceInstall Name="ViewLBA"
-                        DisplayName="ViewLBA Server"
-                        Description="ViewLBA Server - native host for App + Realtime + Stream children"
-                        Type="ownProcess"
-                        Start="auto"
+      <Component Id="cmp_service" Guid="*">
+        <File Id="file_service" Source="$(var.BUILD_DIR)\viewlba-service.exe" KeyPath="yes" />
+        <ServiceInstall Name="ViewLBA" DisplayName="ViewLBA Server"
+                        Description="ViewLBA Server native host"
+                        Type="ownProcess" Start="auto"
                         Account="NT AUTHORITY\LocalService"
-                        ErrorControl="normal"
-                        Vital="yes" />
-
-        <!-- Stop on uninstall, remove on uninstall -->
-        <ServiceControl Name="ViewLBA"
-                        Stop="both"
-                        Remove="uninstall"
-                        Wait="yes" />
+                        ErrorControl="normal" Vital="yes" />
+        <ServiceControl Name="ViewLBA" Stop="both" Remove="uninstall" Wait="yes" />
       </Component>
-
-      <!-- viewlba-tray.exe + autostart (HKCU Run — per user, NOT HKLM) -->
-      <Component Id="cmp_viewlba_tray_exe" Guid="*">
-        <File Id="file_viewlba_tray_exe" Source="$(var.BUILD_DIR)\viewlba-tray.exe" KeyPath="yes" />
-        <RegistryKey Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run">
-          <RegistryValue Name="ViewLBATray"
-                         Value="&quot;[BIN_DIR]viewlba-tray.exe&quot;"
-                         Type="string" />
-        </RegistryKey>
+      <Component Id="cmp_tray" Guid="*">
+        <File Id="file_tray" Source="$(var.BUILD_DIR)\viewlba-tray.exe" KeyPath="yes" />
+        <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                       Name="ViewLBATray" Value="[BIN_DIR]viewlba-tray.exe" Type="string" />
       </Component>
-
-      <!-- viewlba-installer.exe (TS sidecar for DB/.env/admin setup) -->
-      <Component Id="cmp_viewlba_installer_exe" Guid="*">
-        <File Id="file_viewlba_installer_exe" Source="$(var.BUILD_DIR)\viewlba-installer.exe" KeyPath="yes" />
+      <Component Id="cmp_installer" Guid="*">
+        <File Id="file_installer" Source="$(var.BUILD_DIR)\viewlba-installer.exe" KeyPath="yes" />
       </Component>
-
-      <!-- Product icon -->
-      <Component Id="cmp_viewlba_ico" Guid="*">
-        <File Id="file_viewlba_ico" Source="$(var.BUILD_DIR)\viewlba.ico" KeyPath="yes" />
+      <Component Id="cmp_ico" Guid="*">
+        <File Id="file_ico" Source="$(var.BUILD_DIR)\viewlba.ico" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
-    <!-- Runtime (bun.exe) -->
     <DirectoryRef Id="RUNTIME_DIR">
-      <Component Id="cmp_runtime_bun_exe" Guid="*">
-        <File Id="file_runtime_bun_exe" Source="$(var.PAYLOAD_DIR)\runtime\bun.exe" KeyPath="yes" />
+      <Component Id="cmp_bun" Guid="*">
+        <File Id="file_bun" Source="$(var.PAYLOAD_DIR)\runtime\bun.exe" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
-    <!-- App (Next.js standalone) -->
     <DirectoryRef Id="APP_DIR">
-      <Component Id="cmp_app_server_js" Guid="*">
-        <File Id="file_app_server_js" Source="$(var.PAYLOAD_DIR)\app\server.js" KeyPath="yes" />
+      <Component Id="cmp_server" Guid="*">
+        <File Id="file_server" Source="$(var.PAYLOAD_DIR)\app\server.js" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
-    <!-- Mini-services -->
     <DirectoryRef Id="MINI_SERVICES_DIR">
-      <Component Id="cmp_realtime_index" Guid="*">
-        <File Id="file_realtime_index" Source="$(var.PAYLOAD_DIR)\mini-services\realtime-service\index.ts" KeyPath="yes" />
+      <Component Id="cmp_realtime" Guid="*">
+        <File Id="file_realtime" Source="$(var.PAYLOAD_DIR)\mini-services\realtime-service\index.ts" KeyPath="yes" />
       </Component>
-      <Component Id="cmp_stream_index" Guid="*">
-        <File Id="file_stream_index" Source="$(var.PAYLOAD_DIR)\mini-services\stream-service\index.ts" KeyPath="yes" />
+      <Component Id="cmp_stream" Guid="*">
+        <File Id="file_stream" Source="$(var.PAYLOAD_DIR)\mini-services\stream-service\index.ts" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
-    <!-- ================================================================
-         Components: ProgramData (ACL matrix — mission B)
-         ================================================================ -->
-
-    <!-- config/ — LocalService: read ONLY (no write) -->
+    <!-- ProgramData folders with ACL matrix -->
     <DirectoryRef Id="CONFIG_DIR">
-      <Component Id="cmp_config_dir" Guid="*">
+      <Component Id="cmp_config" Guid="*">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
           <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericExecute="yes" />
         </CreateFolder>
-      <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="<COMPONENT ID="CONFIG" GUID="*" KEYPATH="YES">
-        <CREATEFOLDER>
-          <PERMISSION USER="SYSTEM" GENERICALL="YES" />
-          <PERMISSION USER="ADMINISTRATORS" GENERICALL="YES" />
-          <PERMISSION USER="NT AUTHORITY\LOCALSERVICE" GENERICREAD="YES" GENERICEXECUTE="YES" />
-        </CREATEFOLDER>
-      </COMPONENT>" Value="1" Type="string" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="Config" Value="1" Type="string" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
-    <!-- data/db/ — LocalService: read + write -->
     <DirectoryRef Id="DB_DIR">
-      <Component Id="cmp_db_dir" Guid="*">
+      <Component Id="cmp_db" Guid="*">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
           <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" />
         </CreateFolder>
-      <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="<COMPONENT ID="DB" GUID="*" KEYPATH="YES">
-        <CREATEFOLDER>
-          <PERMISSION USER="SYSTEM" GENERICALL="YES" />
-          <PERMISSION USER="ADMINISTRATORS" GENERICALL="YES" />
-          <PERMISSION USER="NT AUTHORITY\LOCALSERVICE" GENERICREAD="YES" GENERICWRITE="YES" GENERICEXECUTE="YES" />
-        </CREATEFOLDER>
-      </COMPONENT>" Value="1" Type="string" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="DB" Value="1" Type="string" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
-    <!-- data/media/ — LocalService: read + write -->
     <DirectoryRef Id="MEDIA_DIR">
-      <Component Id="cmp_media_dir" Guid="*">
+      <Component Id="cmp_media" Guid="*">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
           <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" />
         </CreateFolder>
-      <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="<COMPONENT ID="MEDIA" GUID="*" KEYPATH="YES">
-        <CREATEFOLDER>
-          <PERMISSION USER="SYSTEM" GENERICALL="YES" />
-          <PERMISSION USER="ADMINISTRATORS" GENERICALL="YES" />
-          <PERMISSION USER="NT AUTHORITY\LOCALSERVICE" GENERICREAD="YES" GENERICWRITE="YES" GENERICEXECUTE="YES" />
-        </CREATEFOLDER>
-      </COMPONENT>" Value="1" Type="string" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="Media" Value="1" Type="string" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
-    <!-- data/backups/ — LocalService: read + write -->
     <DirectoryRef Id="BACKUPS_DIR">
-      <Component Id="cmp_backups_dir" Guid="*">
+      <Component Id="cmp_backups" Guid="*">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
           <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" />
         </CreateFolder>
-      <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="<COMPONENT ID="BACKUPS" GUID="*" KEYPATH="YES">
-        <CREATEFOLDER>
-          <PERMISSION USER="SYSTEM" GENERICALL="YES" />
-          <PERMISSION USER="ADMINISTRATORS" GENERICALL="YES" />
-          <PERMISSION USER="NT AUTHORITY\LOCALSERVICE" GENERICREAD="YES" GENERICWRITE="YES" GENERICEXECUTE="YES" />
-        </CREATEFOLDER>
-      </COMPONENT>" Value="1" Type="string" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="Backups" Value="1" Type="string" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
-    <!-- data/store/ — LocalService: read + write -->
     <DirectoryRef Id="STORE_DIR">
-      <Component Id="cmp_store_dir" Guid="*">
+      <Component Id="cmp_store" Guid="*">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
           <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" />
         </CreateFolder>
-      <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="<COMPONENT ID="STORE" GUID="*" KEYPATH="YES">
-        <CREATEFOLDER>
-          <PERMISSION USER="SYSTEM" GENERICALL="YES" />
-          <PERMISSION USER="ADMINISTRATORS" GENERICALL="YES" />
-          <PERMISSION USER="NT AUTHORITY\LOCALSERVICE" GENERICREAD="YES" GENERICWRITE="YES" GENERICEXECUTE="YES" />
-        </CREATEFOLDER>
-      </COMPONENT>" Value="1" Type="string" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="Store" Value="1" Type="string" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
-    <!-- logs/ — LocalService: read + write, Users: read -->
     <DirectoryRef Id="LOGS_DIR">
-      <Component Id="cmp_logs_dir" Guid="*">
+      <Component Id="cmp_logs" Guid="*">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
           <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" />
           <Permission User="Users" GenericRead="yes" GenericExecute="yes" />
         </CreateFolder>
-      <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="<COMPONENT ID="LOGS" GUID="*" KEYPATH="YES">
-        <CREATEFOLDER>
-          <PERMISSION USER="SYSTEM" GENERICALL="YES" />
-          <PERMISSION USER="ADMINISTRATORS" GENERICALL="YES" />
-          <PERMISSION USER="NT AUTHORITY\LOCALSERVICE" GENERICREAD="YES" GENERICWRITE="YES" GENERICEXECUTE="YES" />
-          <PERMISSION USER="USERS" GENERICREAD="YES" GENERICEXECUTE="YES" />
-        </CREATEFOLDER>
-      </COMPONENT>" Value="1" Type="string" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="Logs" Value="1" Type="string" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
-    <!-- credentials/ — SYSTEM + Administrators ONLY (NO LocalService) -->
     <DirectoryRef Id="CREDENTIALS_DIR">
-      <Component Id="cmp_credentials_dir" Guid="*">
+      <Component Id="cmp_credentials" Guid="*">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
         </CreateFolder>
-      <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="<COMPONENT ID="CREDENTIALS" GUID="*" KEYPATH="YES">
-        <CREATEFOLDER>
-          <PERMISSION USER="SYSTEM" GENERICALL="YES" />
-          <PERMISSION USER="ADMINISTRATORS" GENERICALL="YES" />
-        </CREATEFOLDER>
-      </COMPONENT>" Value="1" Type="string" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="Credentials" Value="1" Type="string" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
-    <!-- run/ — LocalService: read + write (PID files, IPC markers) -->
     <DirectoryRef Id="RUN_DIR">
-      <Component Id="cmp_run_dir" Guid="*">
+      <Component Id="cmp_run" Guid="*">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
           <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" />
         </CreateFolder>
-      <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="<COMPONENT ID="RUN" GUID="*" KEYPATH="YES">
-        <CREATEFOLDER>
-          <PERMISSION USER="SYSTEM" GENERICALL="YES" />
-          <PERMISSION USER="ADMINISTRATORS" GENERICALL="YES" />
-          <PERMISSION USER="NT AUTHORITY\LOCALSERVICE" GENERICREAD="YES" GENERICWRITE="YES" GENERICEXECUTE="YES" />
-        </CREATEFOLDER>
-      </COMPONENT>" Value="1" Type="string" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="Run" Value="1" Type="string" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
-    <!-- cache/ — LocalService: read + write -->
     <DirectoryRef Id="CACHE_DIR">
-      <Component Id="cmp_cache_dir" Guid="*">
+      <Component Id="cmp_cache" Guid="*">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
           <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" />
         </CreateFolder>
-      <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="<COMPONENT ID="CACHE" GUID="*" KEYPATH="YES">
-        <CREATEFOLDER>
-          <PERMISSION USER="SYSTEM" GENERICALL="YES" />
-          <PERMISSION USER="ADMINISTRATORS" GENERICALL="YES" />
-          <PERMISSION USER="NT AUTHORITY\LOCALSERVICE" GENERICREAD="YES" GENERICWRITE="YES" GENERICEXECUTE="YES" />
-        </CREATEFOLDER>
-      </COMPONENT>" Value="1" Type="string" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="Cache" Value="1" Type="string" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
-    <!-- ================================================================
-         Registry: InstallDir lookup (for upgrades + tray to find install)
-         ================================================================ -->
-    <Component Id="cmp_registry_root" Guid="*" Directory="TARGETDIR">
-      <RegistryKey Root="HKLM" Key="SOFTWARE\ViewLBA" ForceCreateOnInstall="yes">
+    <!-- Registry: InstallDir + ARP -->
+    <Component Id="cmp_reg" Guid="*" Directory="TARGETDIR">
+      <RegistryKey Root="HKLM" Key="SOFTWARE\ViewLBA">
         <RegistryValue Name="InstallDir" Value="[BIN_DIR]" Type="string" />
-        <RegistryValue Name="AppDir" Value="[APP_DIR]" Type="string" />
-        <RegistryValue Name="DataDir" Value="[VIEWLBA_PROGRAM_DATA_DIR]" Type="string" />
-        <RegistryValue Name="LogDir" Value="[LOGS_DIR]" Type="string" />
         <RegistryValue Name="Version" Value="$(var.VERSION)" Type="string" />
       </RegistryKey>
-    </Component>
-
-    <!-- ================================================================
-         Shortcuts: Start Menu (mission J.4)
-         ================================================================ -->
-    <DirectoryRef Id="VIEWLBA_SHORTCUTS_DIR">
-      <Component Id="cmp_shortcut_panel" Guid="*">
-        <Shortcut Id="sc_panel"
-                  Name="ViewLBA Panel"
-                  Target="[WindowsFolder]explorer.exe"
-                  Arguments="[VIEWLBA_PANEL_URL]"
-                  Directory="VIEWLBA_SHORTCUTS_DIR"
-                  Icon="viewlba.ico"
-                  WorkingDirectory="BIN_DIR" />
-        <RegistryValue Root="HKCU" Key="Software\ViewLBA\Shortcuts" Name="Panel" Value="[VIEWLBA_SHORTCUTS_DIR]ViewLBA Panel.lnk" Type="string" KeyPath="yes" />
-      </Component>
-
-      <Component Id="cmp_shortcut_tray" Guid="*">
-        <Shortcut Id="sc_tray"
-                  Name="ViewLBA Bandeja"
-                  Target="[BIN_DIR]viewlba-tray.exe"
-                  Directory="VIEWLBA_SHORTCUTS_DIR"
-                  Icon="viewlba.ico"
-                  WorkingDirectory="BIN_DIR" />
-        <RegistryValue Root="HKCU" Key="Software\ViewLBA\Shortcuts" Name="Tray" Value="[VIEWLBA_SHORTCUTS_DIR]ViewLBA Bandeja.lnk" Type="string" KeyPath="yes" />
-      </Component>
-
-      <Component Id="cmp_shortcut_credentials" Guid="*">
-        <Shortcut Id="sc_credentials"
-                  Name="ViewLBA Credenciales"
-                  Target="[WindowsFolder]System32\notepad.exe"
-                  Arguments="[CREDENTIALS_DIR]CREDENCIALES.txt"
-                  Directory="VIEWLBA_SHORTCUTS_DIR"
-                  Icon="viewlba.ico" />
-        <RegistryValue Root="HKCU" Key="Software\ViewLBA\Shortcuts" Name="Credentials" Value="[VIEWLBA_SHORTCUTS_DIR]ViewLBA Credenciales.lnk" Type="string" KeyPath="yes" />
-      </Component>
-    </DirectoryRef>
-
-    <!-- Desktop shortcuts -->
-    <DirectoryRef Id="DesktopFolder">
-      <Component Id="cmp_desktop_panel" Guid="*">
-        <Shortcut Id="sc_desktop_panel"
-                  Name="ViewLBA Panel"
-                  Target="[WindowsFolder]explorer.exe"
-                  Arguments="[VIEWLBA_PANEL_URL]"
-                  Directory="DesktopFolder"
-                  Icon="viewlba.ico"
-                  WorkingDirectory="BIN_DIR" />
-        <RegistryValue Root="HKCU" Key="Software\ViewLBA\Shortcuts" Name="DesktopPanel" Value="[DesktopFolder]ViewLBA Panel.lnk" Type="string" KeyPath="yes" />
-      </Component>
-    </DirectoryRef>
-
-    <!-- Icon reference -->
-    <Icon Id="viewlba.ico" SourceFile="$(var.BUILD_DIR)\viewlba.ico" />
-
-    <!-- ================================================================
-         ARP entry (mission J.3)
-         ================================================================ -->
-    <Component Id="cmp_arp" Guid="*" Directory="TARGETDIR">
       <RegistryKey Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\ViewLBA">
         <RegistryValue Name="DisplayName" Value="ViewLBA Server $(var.VERSION)" Type="string" />
         <RegistryValue Name="DisplayVersion" Value="$(var.VERSION)" Type="string" />
         <RegistryValue Name="Publisher" Value="ViewLBA" Type="string" />
-        <RegistryValue Name="InstallLocation" Value="[VIEWLBA_PROGRAM_FILES]" Type="string" />
+        <RegistryValue Name="InstallLocation" Value="[ProgramFiles64Folder]ViewLBA Server" Type="string" />
         <RegistryValue Name="UninstallString" Value="[System64Folder]msiexec.exe /x [ProductCode]" Type="string" />
         <RegistryValue Name="DisplayIcon" Value="[BIN_DIR]viewlba-service.exe" Type="string" />
         <RegistryValue Name="NoModify" Value="1" Type="integer" />
         <RegistryValue Name="NoRepair" Value="1" Type="integer" />
-        <RegistryValue Name="URLInfoAbout" Value="https://github.com/Lean031110/View_LBA" Type="string" />
       </RegistryKey>
     </Component>
 
-    <!-- ================================================================
-         Features
-         ================================================================ -->
-    <Feature Id="ProductFeature" Title="ViewLBA Server" Level="1"
-             Description="ViewLBA Server - signage for restaurants."
-             Display="expand" AllowAbsent="no">
-      <ComponentRef Id="cmp_viewlba_service_exe" />
-      <ComponentRef Id="cmp_viewlba_tray_exe" />
-      <ComponentRef Id="cmp_viewlba_installer_exe" />
-      <ComponentRef Id="cmp_viewlba_ico" />
-      <ComponentRef Id="cmp_runtime_bun_exe" />
-      <ComponentRef Id="cmp_app_server_js" />
-      <ComponentRef Id="cmp_realtime_index" />
-      <ComponentRef Id="cmp_stream_index" />
-      <ComponentRef Id="cmp_config_dir" />
-      <ComponentRef Id="cmp_db_dir" />
-      <ComponentRef Id="cmp_media_dir" />
-      <ComponentRef Id="cmp_backups_dir" />
-      <ComponentRef Id="cmp_store_dir" />
-      <ComponentRef Id="cmp_logs_dir" />
-      <ComponentRef Id="cmp_credentials_dir" />
-      <ComponentRef Id="cmp_run_dir" />
-      <ComponentRef Id="cmp_cache_dir" />
-      <ComponentRef Id="cmp_registry_root" />
-      <ComponentRef Id="cmp_shortcut_panel" />
-      <ComponentRef Id="cmp_shortcut_tray" />
-      <ComponentRef Id="cmp_shortcut_credentials" />
-      <ComponentRef Id="cmp_desktop_panel" />
-      <ComponentRef Id="cmp_arp" />
+    <!-- Start Menu shortcuts -->
+    <DirectoryRef Id="SHORTCUTS_DIR">
+      <Component Id="cmp_sc_panel" Guid="*">
+        <Shortcut Id="sc_panel" Name="ViewLBA Panel" Target="[WindowsFolder]explorer.exe"
+                  Arguments="[VIEWLBA_PANEL_URL]" Directory="SHORTCUTS_DIR" />
+        <RegistryValue Root="HKCU" Key="Software\ViewLBA\Shortcuts" Name="Panel" Value="1" Type="string" KeyPath="yes" />
+      </Component>
+      <Component Id="cmp_sc_tray" Guid="*">
+        <Shortcut Id="sc_tray" Name="ViewLBA Bandeja" Target="[BIN_DIR]viewlba-tray.exe" Directory="SHORTCUTS_DIR" />
+        <RegistryValue Root="HKCU" Key="Software\ViewLBA\Shortcuts" Name="Tray" Value="1" Type="string" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="ProductFeature" Title="ViewLBA Server" Level="1">
+      <ComponentRef Id="cmp_service" />
+      <ComponentRef Id="cmp_tray" />
+      <ComponentRef Id="cmp_installer" />
+      <ComponentRef Id="cmp_ico" />
+      <ComponentRef Id="cmp_bun" />
+      <ComponentRef Id="cmp_server" />
+      <ComponentRef Id="cmp_realtime" />
+      <ComponentRef Id="cmp_stream" />
+      <ComponentRef Id="cmp_config" />
+      <ComponentRef Id="cmp_db" />
+      <ComponentRef Id="cmp_media" />
+      <ComponentRef Id="cmp_backups" />
+      <ComponentRef Id="cmp_store" />
+      <ComponentRef Id="cmp_logs" />
+      <ComponentRef Id="cmp_credentials" />
+      <ComponentRef Id="cmp_run" />
+      <ComponentRef Id="cmp_cache" />
+      <ComponentRef Id="cmp_reg" />
+      <ComponentRef Id="cmp_sc_panel" />
+      <ComponentRef Id="cmp_sc_tray" />
     </Feature>
 
-    <!-- ================================================================
-         Install sequence — ServiceInstall handles service registration
-         No CustomAction needed for install/uninstall
-         ================================================================ -->
     <InstallExecuteSequence>
       <RemoveExistingProducts After="InstallInitialize" />
     </InstallExecuteSequence>
