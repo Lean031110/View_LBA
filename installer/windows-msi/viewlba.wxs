@@ -3,25 +3,23 @@
   ViewLBA Server — WiX v4 MSI Installer (mission §3, §6, §7, §31)
   ====================================================================
   CANONICAL Windows installer. Uses WiX-native ServiceInstall +
-  ServiceControl (NOT CustomAction with viewlba-service.exe --install).
+  ServiceControl (NOT CustomAction with viewlba-service.exe for registration).
   The MSI is the SINGLE authority for service registration.
 
   Routes:
     Program Files\ViewLBA Server\     → bin/, runtime/, app/, mini-services/, themes/, public/
     ProgramData\ViewLBA\              → config/, data/{db,media,backups,store}, logs/, credentials/, run/, cache/
 
-  ACL Matrix (mission §4 — minimum privilege for LocalService):
-    | Ruta          | SYSTEM | Administrators | LocalService      | Users |
-    |---------------|--------|----------------|-------------------|-------|
-    | config        | full   | full           | read (NO write)   | (none)|
-    | data/db       | full   | full           | read+write        | (none)|
-    | data/media    | full   | full           | read+write        | (none)|
-    | data/backups  | full   | full           | read+write        | (none)|
-    | data/store    | full   | full           | read+write        | (none)|
-    | logs          | full   | full           | read+write        | read  |
-    | credentials   | full   | full           | (NONE)            | (none)|
-    | run           | full   | full           | read+write        | (none)|
-    | cache         | full   | full           | read+write        | (none)|
+  ACL Matrix (mission §4: minimum privilege for LocalService):
+    config          = full : full : read (NO write) : none
+    data/db         = full : full : read+write        : none
+    data/media      = full : full : read+write        : none
+    data/backups    = full : full : read+write        : none
+    data/store      = full : full : read+write        : none
+    logs            = full : full : read+write        : read
+    credentials     = full : full : NONE              : none
+    run             = full : full : read+write        : none
+    cache           = full : full : read+write        : none
 
   Uninstall: stops service via ServiceControl, removes Program Files,
   CONSERVES ProgramData (DB, media, backups, config, secrets).
