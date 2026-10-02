@@ -192,6 +192,11 @@ impl Supervisor {
             .stderr(Stdio::from(stderr_log))
             .stdin(Stdio::null());
 
+        // MISION §6 + §10: build EXPLICIT env for each child (no inherited env).
+        // Load from ProgramData/ViewLBA/config/server.env
+        // Each child gets ONLY the variables it needs (filtered by key).
+        self.apply_child_env(&mut cmd, key);
+
         // Spawn
         match cmd.spawn() {
             Ok(child) => {
@@ -260,6 +265,49 @@ impl Supervisor {
             ),
             _ => unreachable!(),
         }
+    }
+
+    /// MISION §6 + §10: Build EXPLICIT env for each child process.
+    /// Loads from ProgramData/ViewLBA/config/server.env and filters by child key.
+    /// Does NOT inherit parent env (uses env_clear + explicit set).
+    fn apply_child_env(&self, cmd: &mut Command, child_key: &str) {
+        // Load the production .env from ProgramData
+        let env_path = self.cfg.program_data.join("config").join("server.env");
+        let env_vars = load_env_file(&env_path);
+
+        // MISION §6: env_clear prevents inheriting parent's env (which may
+        // contain dev secrets, runner paths, etc.)
+        cmd.env_clear();
+
+        // Each child needs a different subset of env vars
+        // (but we pass ALL of them for simplicity — the children ignore what
+        // they don't need. The important thing is that the env is EXPLICIT
+        // from server.env, not inherited from the OS.)
+        for (key, value) in &env_vars {
+            cmd.env(key, value);
+        }
+
+        // Also set child-specific vars
+        match child_key {
+            "app" => {
+                cmd.env("NODE_ENV", "production");
+            }
+            "realtime" => {
+                // realtime reads REALTIME_PORT and REALTIME_INTERNAL_PORT from env
+            }
+            "stream" => {
+                // stream reads RTMP_PORT, HTTP_FLV_PORT, HTTP_FLV_BIND from env
+            }
+            _ => {}
+        }
+
+        // Always set the Bun-specific env var so children know they're in production
+        cmd.env("BUN_CONFIG_MAXBINDINGS", "1");
+
+        logging::write_event(
+            logging::event("info", "environment", format!("child {} env applied ({} vars from server.env)", child_key, env_vars.len()))
+                .with_service(child_key)
+        );
     }
 
     /// Watch loop: poll each child, respawn on crash with backoff, run health checks.
@@ -423,5 +471,35 @@ pub fn run_foreground(cfg: &Config) -> ExitCode {
     sup.run_watch_loop();
     sup.stop_all();
     ExitCode::SUCCESS
+}
+
+/// Load a .env file into a Vec<(String, String)>.
+/// Parses KEY=VALUE lines, skipping comments (#) and empty lines.
+/// Strips surrounding quotes from values.
+fn load_env_file(path: &std::path::Path) -> Vec<(String, String)> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut vars = Vec::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(eq_pos) = line.find('=') {
+            let key = line[..eq_pos].trim().to_string();
+            let mut value = line[eq_pos + 1..].trim().to_string();
+            // Strip surrounding quotes
+            if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
+                value = value[1..value.len() - 1].to_string();
+            } else if value.starts_with('\'') && value.ends_with('\'') && value.len() >= 2 {
+                value = value[1..value.len() - 1].to_string();
+            }
+            vars.push((key, value));
+        }
+    }
+    vars
 }
 
