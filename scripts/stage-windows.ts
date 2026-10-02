@@ -51,10 +51,12 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 const REPO_ROOT = resolve(__dirname, "..", "..")
 
-// Parse args
+// Parse args (bug fix: indexOf returns -1 when not found, causing args[-1+1]=args[0])
 const args = process.argv.slice(2)
-const versionArg = args[args.indexOf("--version") + 1] ?? readVersionFile()
-const outArg = args[args.indexOf("--out") + 1] ?? join(REPO_ROOT, "dist", "release", "windows", "ViewLBA-Server")
+const versionIdx = args.indexOf("--version")
+const versionArg = versionIdx >= 0 ? args[versionIdx + 1] : readVersionFile()
+const outIdx = args.indexOf("--out")
+const outArg = outIdx >= 0 ? args[outIdx + 1] : join(REPO_ROOT, "dist", "release", "windows", "ViewLBA-Server")
 
 const VERSION = versionArg
 const STAGE_DIR = resolve(outArg)
