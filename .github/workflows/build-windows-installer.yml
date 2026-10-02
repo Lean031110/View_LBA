@@ -297,13 +297,13 @@ jobs:
         run: |
           $version = (Get-Content "${{ runner.temp }}/downloaded/manifest.json" | ConvertFrom-Json).version
           $msi = "${{ runner.temp }}/downloaded/ViewLBA-Server-Setup-$version.msi"
-          Write-Host "Installing: $msi"
           $logFile = "${{ runner.temp }}/msi-install.log"
-          Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /l*v `"$logFile`"" -Wait
-          Write-Host "Install exit code: $LASTEXITCODE"
+          Write-Host "Installing: $msi"
+          $proc = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /l*v `"$logFile`"" -Wait -PassThru
+          Write-Host "Install exit code: $($proc.ExitCode)"
           if (Test-Path $logFile) {
-            Write-Host "--- Install log (last 30 lines) ---"
-            Get-Content $logFile -Tail 30
+            Write-Host "--- Install log (last 50 lines) ---"
+            Get-Content $logFile -Tail 50
           }
 
       - name: Verify service registered in SCM
