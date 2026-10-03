@@ -293,33 +293,16 @@ jobs:
           }
 
       - name: Install MSI silently
-        shell: pwsh
+        shell: cmd
         run: |
-          $version = (Get-Content "${{ runner.temp }}/downloaded/manifest.json" | ConvertFrom-Json).version
-          $msi = "${{ runner.temp }}/downloaded/ViewLBA-Server-Setup-$version.msi"
-          $logFile = "${{ runner.temp }}/msi-install.log"
-
-          # Verify MSI exists and has non-zero size
-          if (-not (Test-Path $msi)) { throw "MSI not found: $msi" }
-          $size = (Get-Item $msi).Length
-          Write-Host "MSI size: $size bytes ($([math]::Round($size / 1MB, 1)) MB)"
-
-          # Use Start-Process with array args (NOT string) for proper quoting
-          Write-Host "Installing MSI..."
-          $proc = Start-Process -FilePath "msiexec.exe" -ArgumentList @("/i", "`"$msi`"", "/qn", "/l*v", "`"$logFile`"") -Wait -PassThru
-          $exitCode = $proc.ExitCode
-          Write-Host "Install exit code: $exitCode"
-
-          # Print error lines from install log
-          if (Test-Path $logFile) {
-            Write-Host "--- Install log (errors) ---"
-            $errors = Get-Content $logFile | Where-Object { $_ -match 'error|Return value 3|failed|ServiceInstall|1920|1923' }
-            if ($errors) { $errors | Select-Object -Last 30 } else { Write-Host "(no error lines found)" }
-            Write-Host "--- Install log (last 50 lines) ---"
-            Get-Content $logFile -Tail 50
-          } else {
-            Write-Host "::warning::No install log file produced"
-          }
+          :: Copy MSI to a simple path to avoid quoting issues
+          copy /Y "D:\a\_temp\downloaded\ViewLBA-Server-Setup-3.2.3.msi" "C:\temp\ViewLBA.msi" 2>nul
+          if not exist "C:\temp" mkdir "C:\temp"
+          copy /Y "D:\a\_temp\downloaded\ViewLBA-Server-Setup-3.2.3.msi" "C:\temp\ViewLBA.msi"
+          dir "C:\temp\ViewLBA.msi"
+          :: Install with msiexec using cmd (no PowerShell quoting issues)
+          msiexec /i "C:\temp\ViewLBA.msi" /qn /l*v "C:\temp\msi-install.log"
+          echo MSI exit code: %ERRORLEVEL%
 
       - name: Verify service registered in SCM
         shell: pwsh
