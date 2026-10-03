@@ -56,25 +56,6 @@ jobs:
           "version=$v" | Out-File -Encoding ASCII -FilePath $env:GITHUB_OUTPUT -Append
 
       # ================================================================
-      # 0. Branding — generate Windows icons from official logo-mark.svg
-      # ================================================================
-      - name: Generate Windows icons from official logo-mark.svg
-        shell: pwsh
-        run: |
-          bun installer/branding/generate-windows-icons.ts
-          # Verify generated files exist
-          $ico = "installer\branding\generated\windows\viewlba.ico"
-          if (-not (Test-Path $ico)) { throw "viewlba.ico not generated" }
-          $size = (Get-Item $ico).Length
-          if ($size -lt 1000) { throw "viewlba.ico too small ($size bytes)" }
-          Write-Host "OK: viewlba.ico ($size bytes)"
-          # Copy official icon to staging bin/ (replaces old generic icon)
-          $stageBin = "dist\release\windows\ViewLBA-Server\bin"
-          New-Item -ItemType Directory -Force -Path $stageBin | Out-Null
-          Copy-Item $ico "$stageBin\viewlba.ico" -Force
-          Write-Host "Official icon copied to staging bin\viewlba.ico"
-
-      # ================================================================
       # 1. Build Rust binaries
       # ================================================================
       - name: Install Rust toolchain (stable, MSVC)
@@ -101,6 +82,23 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      # ================================================================
+      # 0b. Branding — generate Windows icons from official logo-mark.svg
+      #     Runs AFTER bun install (needs @resvg/resvg-js)
+      # ================================================================
+      - name: Generate Windows icons from official logo-mark.svg
+        shell: pwsh
+        run: |
+          bun installer/branding/generate-windows-icons.ts
+          $ico = "installer\branding\generated\windows\viewlba.ico"
+          if (-not (Test-Path $ico)) { throw "viewlba.ico not generated" }
+          $size = (Get-Item $ico).Length
+          if ($size -lt 1000) { throw "viewlba.ico too small" }
+          Write-Host "OK: viewlba.ico ($size bytes)"
+          $stageBin = "dist\release\windows\ViewLBA-Server\bin"
+          New-Item -ItemType Directory -Force -Path $stageBin | Out-Null
+          Copy-Item $ico "$stageBin\viewlba.ico" -Force
 
       - name: Generate Prisma client
         run: bun x prisma generate
