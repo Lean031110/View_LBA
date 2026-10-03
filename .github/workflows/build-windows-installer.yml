@@ -314,11 +314,28 @@ jobs:
       - name: Verify ARP entry exists
         shell: pwsh
         run: |
-          $arp = Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ViewLBA" -ErrorAction SilentlyContinue
-          if (-not $arp) { throw "ARP entry not found" }
-          Write-Host "DisplayName: $($arp.DisplayName)"
-          Write-Host "DisplayVersion: $($arp.DisplayVersion)"
-          Write-Host "Publisher: $($arp.Publisher)"
+          # Search ALL Uninstall entries for ViewLBA (WiX creates under {ProductCode})
+          $found = $false
+          $uninstallKeys = @(
+            "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall",
+            "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
+          )
+          foreach ($key in $uninstallKeys) {
+            $items = Get-ChildItem $key -ErrorAction SilentlyContinue
+            foreach ($item in $items) {
+              $props = Get-ItemProperty $item.PSPath -ErrorAction SilentlyContinue
+              if ($props.DisplayName -match "ViewLBA") {
+                Write-Host "Found ARP entry: $($item.PSChildName)"
+                Write-Host "DisplayName: $($props.DisplayName)"
+                Write-Host "DisplayVersion: $($props.DisplayVersion)"
+                Write-Host "Publisher: $($props.Publisher)"
+                $found = $true
+                break
+              }
+            }
+            if ($found) { break }
+          }
+          if (-not $found) { throw "ARP entry with DisplayName matching 'ViewLBA' not found" }
 
       - name: Verify Program Files installed
         shell: pwsh
