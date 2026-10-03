@@ -102,7 +102,7 @@
 
     <!-- ProgramData folders with ACL matrix -->
     <DirectoryRef Id="CONFIG_DIR">
-      <Component Id="cmp_config" Guid="*">
+      <Component Id="cmp_config" Guid="*" Permanent="yes">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
@@ -113,7 +113,7 @@
     </DirectoryRef>
 
     <DirectoryRef Id="DB_DIR">
-      <Component Id="cmp_db" Guid="*">
+      <Component Id="cmp_db" Guid="*" Permanent="yes">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
@@ -124,7 +124,7 @@
     </DirectoryRef>
 
     <DirectoryRef Id="MEDIA_DIR">
-      <Component Id="cmp_media" Guid="*">
+      <Component Id="cmp_media" Guid="*" Permanent="yes">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
@@ -135,7 +135,7 @@
     </DirectoryRef>
 
     <DirectoryRef Id="BACKUPS_DIR">
-      <Component Id="cmp_backups" Guid="*">
+      <Component Id="cmp_backups" Guid="*" Permanent="yes">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
@@ -146,7 +146,7 @@
     </DirectoryRef>
 
     <DirectoryRef Id="STORE_DIR">
-      <Component Id="cmp_store" Guid="*">
+      <Component Id="cmp_store" Guid="*" Permanent="yes">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
@@ -157,7 +157,7 @@
     </DirectoryRef>
 
     <DirectoryRef Id="LOGS_DIR">
-      <Component Id="cmp_logs" Guid="*">
+      <Component Id="cmp_logs" Guid="*" Permanent="yes">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
@@ -169,7 +169,7 @@
     </DirectoryRef>
 
     <DirectoryRef Id="CREDENTIALS_DIR">
-      <Component Id="cmp_credentials" Guid="*">
+      <Component Id="cmp_credentials" Guid="*" Permanent="yes">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
@@ -179,7 +179,7 @@
     </DirectoryRef>
 
     <DirectoryRef Id="RUN_DIR">
-      <Component Id="cmp_run" Guid="*">
+      <Component Id="cmp_run" Guid="*" Permanent="yes">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
@@ -190,7 +190,7 @@
     </DirectoryRef>
 
     <DirectoryRef Id="CACHE_DIR">
-      <Component Id="cmp_cache" Guid="*">
+      <Component Id="cmp_cache" Guid="*" Permanent="yes">
         <CreateFolder>
           <Permission User="SYSTEM" GenericAll="yes" />
           <Permission User="Administrators" GenericAll="yes" />
