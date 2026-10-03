@@ -200,14 +200,18 @@
       </Component>
     </DirectoryRef>
 
-    <!-- Registry: InstallDir + ARP -->
+    <!-- Registry: InstallDir -->
     <Component Id="cmp_reg" Guid="*" Directory="TARGETDIR">
       <RegistryKey Root="HKLM" Key="SOFTWARE\ViewLBA">
         <RegistryValue Name="InstallDir" Value="[BIN_DIR]" Type="string" />
         <RegistryValue Name="Version" Value="$(var.VERSION)" Type="string" KeyPath="yes" />
       </RegistryKey>
+    </Component>
+
+    <!-- ARP entry (separate component for reliability) -->
+    <Component Id="cmp_arp" Guid="*" Directory="TARGETDIR">
       <RegistryKey Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\ViewLBA">
-        <RegistryValue Name="DisplayName" Value="ViewLBA Server $(var.VERSION)" Type="string" />
+        <RegistryValue Name="DisplayName" Value="ViewLBA Server $(var.VERSION)" Type="string" KeyPath="yes" />
         <RegistryValue Name="DisplayVersion" Value="$(var.VERSION)" Type="string" />
         <RegistryValue Name="Publisher" Value="ViewLBA" Type="string" />
         <RegistryValue Name="InstallLocation" Value="[ProgramFiles64Folder]ViewLBA Server" Type="string" />
@@ -250,6 +254,7 @@
       <ComponentRef Id="cmp_run" />
       <ComponentRef Id="cmp_cache" />
       <ComponentRef Id="cmp_reg" />
+      <ComponentRef Id="cmp_arp" />
       <ComponentRef Id="cmp_sc_panel" />
       <ComponentRef Id="cmp_sc_tray" />
     </Feature>
