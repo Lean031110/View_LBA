@@ -204,7 +204,7 @@
     <Component Id="cmp_reg" Guid="*" Directory="TARGETDIR">
       <RegistryKey Root="HKLM" Key="SOFTWARE\ViewLBA">
         <RegistryValue Name="InstallDir" Value="[BIN_DIR]" Type="string" />
-        <RegistryValue Name="Version" Value="$(var.VERSION)" Type="string" />
+        <RegistryValue Name="Version" Value="$(var.VERSION)" Type="string" KeyPath="yes" />
       </RegistryKey>
       <RegistryKey Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\ViewLBA">
         <RegistryValue Name="DisplayName" Value="ViewLBA Server $(var.VERSION)" Type="string" />
