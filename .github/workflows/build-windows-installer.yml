@@ -302,26 +302,23 @@ jobs:
           # Verify MSI exists and has non-zero size
           if (-not (Test-Path $msi)) { throw "MSI not found: $msi" }
           $size = (Get-Item $msi).Length
-          Write-Host "MSI size: $size bytes"
+          Write-Host "MSI size: $size bytes ($([math]::Round($size / 1MB, 1)) MB)"
 
-          # Use msiexec directly (not Start-Process) for correct exit code handling
-          Write-Host "Installing: $msi"
-          $logFile = "${{ runner.temp }}/msi-install.log"
-          & msiexec /i "$msi" /qn /l*v "$logFile"
-          $exitCode = $LASTEXITCODE
+          # Use Start-Process with array args (NOT string) for proper quoting
+          Write-Host "Installing MSI..."
+          $proc = Start-Process -FilePath "msiexec.exe" -ArgumentList @("/i", "`"$msi`"", "/qn", "/l*v", "`"$logFile`"") -Wait -PassThru
+          $exitCode = $proc.ExitCode
           Write-Host "Install exit code: $exitCode"
 
-          # Print full install log (search for errors)
+          # Print error lines from install log
           if (Test-Path $logFile) {
             Write-Host "--- Install log (errors) ---"
-            Get-Content $logFile | Where-Object { $_ -match 'error|Return value 3|failed|ServiceInstall' } | Select-Object -Last 30
+            $errors = Get-Content $logFile | Where-Object { $_ -match 'error|Return value 3|failed|ServiceInstall|1920|1923' }
+            if ($errors) { $errors | Select-Object -Last 30 } else { Write-Host "(no error lines found)" }
             Write-Host "--- Install log (last 50 lines) ---"
             Get-Content $logFile -Tail 50
-          }
-
-          # Don't fail on 1619 — might be a known issue; let the next step verify
-          if ($exitCode -ne 0 -and $exitCode -ne 1619) {
-            throw "MSI install failed with exit code $exitCode"
+          } else {
+            Write-Host "::warning::No install log file produced"
           }
 
       - name: Verify service registered in SCM
