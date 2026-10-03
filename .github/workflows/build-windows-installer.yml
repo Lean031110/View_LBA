@@ -340,9 +340,33 @@ jobs:
       - name: Verify Program Files installed
         shell: pwsh
         run: |
-          $pf = "C:\Program Files\ViewLBA Server\bin"
-          if (-not (Test-Path "$pf\viewlba-service.exe")) { throw "viewlba-service.exe not in Program Files" }
-          Write-Host "OK: viewlba-service.exe in Program Files"
+          # Check both 64-bit and 32-bit Program Files
+          $paths = @(
+            "C:\Program Files\ViewLBA Server",
+            "C:\Program Files (x86)\ViewLBA Server"
+          )
+          $found = $false
+          foreach ($base in $paths) {
+            if (Test-Path "$base\bin\viewlba-service.exe") {
+              Write-Host "OK: $base\bin\viewlba-service.exe exists"
+              $found = $true
+              break
+            }
+          }
+          if (-not $found) {
+            # Diagnostic: list what's actually installed
+            Write-Host "::error::viewlba-service.exe not found in Program Files"
+            Write-Host "=== Searching for ViewLBA in Program Files ==="
+            Get-ChildItem "C:\Program Files" -Filter "ViewLBA*" -Recurse -ErrorAction SilentlyContinue | Select-Object FullName
+            Get-ChildItem "C:\Program Files (x86)" -Filter "ViewLBA*" -Recurse -ErrorAction SilentlyContinue | Select-Object FullName
+            Write-Host "=== Listing C:\Program Files\ViewLBA Server ==="
+            if (Test-Path "C:\Program Files\ViewLBA Server") {
+              Get-ChildItem "C:\Program Files\ViewLBA Server" -Recurse | Select-Object FullName
+            } else {
+              Write-Host "C:\Program Files\ViewLBA Server does not exist"
+            }
+            throw "viewlba-service.exe not in Program Files"
+          }
 
       - name: Verify ProgramData structure
         shell: pwsh
