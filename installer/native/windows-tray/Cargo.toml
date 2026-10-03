@@ -40,3 +40,6 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # CLI
 pico-args = "0.5"
+
+# PE resource embedding for Windows icon (mision W)
+embed-resource = "3"

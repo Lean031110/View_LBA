@@ -41,3 +41,6 @@ ureq = { version = "2.12", default-features = false, features = ["tls"] }
 
 # CLI parsing (minimal)
 pico-args = "0.5"
+
+# PE resource embedding for Windows icon (mision W)
+embed-resource = "3"

@@ -56,6 +56,25 @@ jobs:
           "version=$v" | Out-File -Encoding ASCII -FilePath $env:GITHUB_OUTPUT -Append
 
       # ================================================================
+      # 0. Branding — generate Windows icons from official logo-mark.svg
+      # ================================================================
+      - name: Generate Windows icons from official logo-mark.svg
+        shell: pwsh
+        run: |
+          bun installer/branding/generate-windows-icons.ts
+          # Verify generated files exist
+          $ico = "installer\branding\generated\windows\viewlba.ico"
+          if (-not (Test-Path $ico)) { throw "viewlba.ico not generated" }
+          $size = (Get-Item $ico).Length
+          if ($size -lt 1000) { throw "viewlba.ico too small ($size bytes)" }
+          Write-Host "OK: viewlba.ico ($size bytes)"
+          # Copy official icon to staging bin/ (replaces old generic icon)
+          $stageBin = "dist\release\windows\ViewLBA-Server\bin"
+          New-Item -ItemType Directory -Force -Path $stageBin | Out-Null
+          Copy-Item $ico "$stageBin\viewlba.ico" -Force
+          Write-Host "Official icon copied to staging bin\viewlba.ico"
+
+      # ================================================================
       # 1. Build Rust binaries
       # ================================================================
       - name: Install Rust toolchain (stable, MSVC)
@@ -116,8 +135,15 @@ jobs:
             Copy-Item "dist\release\windows\stage\viewlba-installer.exe" $stageBin -Force
           }
 
-          # Icon — copy as viewlba.ico (WiX expects this name)
-          Copy-Item "installer\gui\src-tauri\icons\icon.ico" "$stageBin\viewlba.ico" -Force
+          # Icon — use OFFICIAL branding icon (from branding step, not old Tauri icon)
+          $officialIco = "installer\branding\generated\windows\viewlba.ico"
+          if (Test-Path $officialIco) {
+            Copy-Item $officialIco "$stageBin\viewlba.ico" -Force
+            Write-Host "Official viewlba.ico copied (from branding generation)"
+          } else {
+            Write-Host "::error::Official viewlba.ico not found — branding step must run first"
+            throw "Branding icon missing"
+          }
 
           # Bun runtime — copy from the installed Bun (setup-bun action)
           $bunPath = (Get-Command bun -ErrorAction SilentlyContinue).Source
