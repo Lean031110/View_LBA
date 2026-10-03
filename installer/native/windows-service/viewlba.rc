@@ -1,0 +1,2 @@
+// Windows PE resource — embeds viewlba.ico into the executable
+1 ICON "../../branding/generated/windows/viewlba.ico"

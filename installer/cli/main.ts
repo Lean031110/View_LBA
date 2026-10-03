@@ -23,7 +23,7 @@ import { ask, askPassword, closeStdin } from "../../scripts/lib/prompt"
 import { initializeProduction } from "../../scripts/lib/production-init"
 import { readEnvFile } from "../../scripts/lib/env-file"
 import { runInstall, resolvePackageRoot, checkExisting } from "../core/install"
-import { resolveNssm } from "../windows/adapter"
+import { resolveServiceHost } from "../windows/adapter"
 import { resolveLayout } from "../core/layout"
 import { normalizeConfig } from "../core/config"
 import { runPreflight } from "../core/preflight"
@@ -103,7 +103,7 @@ function detectPlatform(): "linux" | "windows" {
 function adapterFor(platform: "linux" | "windows", packageRoot = resolvePackageRoot()): LinuxServiceAdapter | WindowsServiceAdapter {
   return platform === "linux"
     ? new LinuxServiceAdapter()
-    : new WindowsServiceAdapter(resolveNssm(packageRoot))
+    : new WindowsServiceAdapter(resolveServiceHost(packageRoot))
 }
 
 // ---------------------------------------------------------------- install

@@ -1,0 +1,263 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="ViewLBA Server $(var.VERSION)"
+           Manufacturer="ViewLBA"
+           Version="$(var.VERSION)"
+           Language="3082"
+           Codepage="1252"
+           InstallerVersion="500"
+           UpgradeCode="$(var.UPGRADE_CODE)">
+
+    <SummaryInformation Codepage="1252"
+                        Description="ViewLBA Server $(var.VERSION) Installer"
+                        Manufacturer="ViewLBA" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of ViewLBA Server is already installed."
+                  Schedule="afterInstallInitialize" />
+
+    <Media Id="1" Cabinet="viewlba.cab" EmbedCab="yes" />
+
+    <Property Id="VIEWLBA_PANEL_URL" Value="http://localhost:3000" />
+    <Property Id="ARPINSTALLLOCATION" Value="[ProgramFiles64Folder]ViewLBA Server" />
+    <Property Id="ARPDISPLAYNAME" Value="ViewLBA Server $(var.VERSION)" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="VIEWLBA_PF" Name="ViewLBA Server">
+        <Directory Id="BIN_DIR" Name="bin" />
+        <Directory Id="RUNTIME_DIR" Name="runtime" />
+        <Directory Id="APP_DIR" Name="app" />
+        <Directory Id="MINI_SERVICES_DIR" Name="mini-services" />
+        <Directory Id="THEMES_PF_DIR" Name="themes" />
+        <Directory Id="PUBLIC_DIR" Name="public" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="VIEWLBA_PD" Name="ViewLBA">
+        <Directory Id="CONFIG_DIR" Name="config" />
+        <Directory Id="DATA_DIR" Name="data">
+          <Directory Id="DB_DIR" Name="db" />
+          <Directory Id="MEDIA_DIR" Name="media" />
+          <Directory Id="BACKUPS_DIR" Name="backups" />
+          <Directory Id="STORE_DIR" Name="store" />
+        </Directory>
+        <Directory Id="LOGS_DIR" Name="logs" />
+        <Directory Id="CREDENTIALS_DIR" Name="credentials" />
+        <Directory Id="RUN_DIR" Name="run" />
+        <Directory Id="CACHE_DIR" Name="cache" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="SHORTCUTS_DIR" Name="ViewLBA Server" />
+    </StandardDirectory>
+
+    <!-- Binaries -->
+    <DirectoryRef Id="BIN_DIR">
+      <Component Id="cmp_service" Guid="*">
+        <File Id="file_service" Source="$(var.BUILD_DIR)\viewlba-service.exe" KeyPath="yes" />
+        <ServiceInstall Name="ViewLBA" DisplayName="ViewLBA Server"
+                        Description="ViewLBA Server native host"
+                        Type="ownProcess" Start="auto"
+                        Account="NT AUTHORITY\LocalService"
+                        ErrorControl="normal" Vital="yes" />
+        <ServiceControl Name="ViewLBA" Stop="both" Remove="uninstall" Wait="yes" />
+      </Component>
+      <Component Id="cmp_tray" Guid="*">
+        <File Id="file_tray" Source="$(var.BUILD_DIR)\viewlba-tray.exe" KeyPath="yes" />
+        <RegistryKey Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run">
+          <RegistryValue Name="ViewLBATray" Value="[BIN_DIR]viewlba-tray.exe" Type="string" />
+        </RegistryKey>
+      </Component>
+      <Component Id="cmp_installer" Guid="*">
+        <File Id="file_installer" Source="$(var.BUILD_DIR)\viewlba-installer.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="cmp_ico" Guid="*">
+        <File Id="file_ico" Source="$(var.BUILD_DIR)\viewlba.ico" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="RUNTIME_DIR">
+      <Component Id="cmp_bun" Guid="*">
+        <File Id="file_bun" Source="$(var.PAYLOAD_DIR)\runtime\bun.exe" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="APP_DIR">
+      <Component Id="cmp_server" Guid="*">
+        <File Id="file_server" Source="$(var.PAYLOAD_DIR)\app\server.js" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="MINI_SERVICES_DIR">
+      <Component Id="cmp_realtime" Guid="A1B2C3D4-E5F6-7890-ABCD-EF1234567890">
+        <File Id="file_realtime" Source="$(var.PAYLOAD_DIR)\mini-services\realtime-service\index.ts" KeyPath="yes" />
+      </Component>
+      <Component Id="cmp_stream" Guid="B2C3D4E5-F6A7-8901-BCDE-F12345678901">
+        <File Id="file_stream" Source="$(var.PAYLOAD_DIR)\mini-services\stream-service\index.ts" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <!-- ProgramData folders with ACL matrix -->
+    <DirectoryRef Id="CONFIG_DIR">
+      <Component Id="cmp_config" Guid="*" Permanent="yes">
+        <CreateFolder>
+          <Permission User="SYSTEM" GenericAll="yes" />
+          <Permission User="Administrators" GenericAll="yes" />
+          <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericExecute="yes" />
+        </CreateFolder>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="Config" Value="1" Type="string" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="DB_DIR">
+      <Component Id="cmp_db" Guid="*" Permanent="yes">
+        <CreateFolder>
+          <Permission User="SYSTEM" GenericAll="yes" />
+          <Permission User="Administrators" GenericAll="yes" />
+          <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" />
+        </CreateFolder>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="DB" Value="1" Type="string" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="MEDIA_DIR">
+      <Component Id="cmp_media" Guid="*" Permanent="yes">
+        <CreateFolder>
+          <Permission User="SYSTEM" GenericAll="yes" />
+          <Permission User="Administrators" GenericAll="yes" />
+          <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" />
+        </CreateFolder>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="Media" Value="1" Type="string" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="BACKUPS_DIR">
+      <Component Id="cmp_backups" Guid="*" Permanent="yes">
+        <CreateFolder>
+          <Permission User="SYSTEM" GenericAll="yes" />
+          <Permission User="Administrators" GenericAll="yes" />
+          <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" />
+        </CreateFolder>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="Backups" Value="1" Type="string" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="STORE_DIR">
+      <Component Id="cmp_store" Guid="*" Permanent="yes">
+        <CreateFolder>
+          <Permission User="SYSTEM" GenericAll="yes" />
+          <Permission User="Administrators" GenericAll="yes" />
+          <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" />
+        </CreateFolder>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="Store" Value="1" Type="string" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="LOGS_DIR">
+      <Component Id="cmp_logs" Guid="*" Permanent="yes">
+        <CreateFolder>
+          <Permission User="SYSTEM" GenericAll="yes" />
+          <Permission User="Administrators" GenericAll="yes" />
+          <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" />
+          <Permission User="Users" GenericRead="yes" GenericExecute="yes" />
+        </CreateFolder>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="Logs" Value="1" Type="string" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="CREDENTIALS_DIR">
+      <Component Id="cmp_credentials" Guid="*" Permanent="yes">
+        <CreateFolder>
+          <Permission User="SYSTEM" GenericAll="yes" />
+          <Permission User="Administrators" GenericAll="yes" />
+        </CreateFolder>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="Credentials" Value="1" Type="string" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="RUN_DIR">
+      <Component Id="cmp_run" Guid="*" Permanent="yes">
+        <CreateFolder>
+          <Permission User="SYSTEM" GenericAll="yes" />
+          <Permission User="Administrators" GenericAll="yes" />
+          <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" />
+        </CreateFolder>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="Run" Value="1" Type="string" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="CACHE_DIR">
+      <Component Id="cmp_cache" Guid="*" Permanent="yes">
+        <CreateFolder>
+          <Permission User="SYSTEM" GenericAll="yes" />
+          <Permission User="Administrators" GenericAll="yes" />
+          <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" />
+        </CreateFolder>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="Cache" Value="1" Type="string" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <!-- Registry: InstallDir -->
+    <Component Id="cmp_reg" Guid="*" Directory="TARGETDIR">
+      <RegistryKey Root="HKLM" Key="SOFTWARE\ViewLBA">
+        <RegistryValue Name="InstallDir" Value="[BIN_DIR]" Type="string" />
+        <RegistryValue Name="Version" Value="$(var.VERSION)" Type="string" KeyPath="yes" />
+      </RegistryKey>
+    </Component>
+
+    <!-- ARP entry (separate component for reliability) -->
+    <Component Id="cmp_arp" Guid="*" Directory="TARGETDIR">
+      <RegistryKey Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\ViewLBA">
+        <RegistryValue Name="DisplayName" Value="ViewLBA Server $(var.VERSION)" Type="string" KeyPath="yes" />
+        <RegistryValue Name="DisplayVersion" Value="$(var.VERSION)" Type="string" />
+        <RegistryValue Name="Publisher" Value="ViewLBA" Type="string" />
+        <RegistryValue Name="InstallLocation" Value="[ProgramFiles64Folder]ViewLBA Server" Type="string" />
+        <RegistryValue Name="UninstallString" Value="[System64Folder]msiexec.exe /x [ProductCode]" Type="string" />
+        <RegistryValue Name="DisplayIcon" Value="[BIN_DIR]viewlba-service.exe" Type="string" />
+        <RegistryValue Name="NoModify" Value="1" Type="integer" />
+        <RegistryValue Name="NoRepair" Value="1" Type="integer" />
+      </RegistryKey>
+    </Component>
+
+    <!-- Start Menu shortcuts -->
+    <DirectoryRef Id="SHORTCUTS_DIR">
+      <Component Id="cmp_sc_panel" Guid="*">
+        <Shortcut Id="sc_panel" Name="ViewLBA Panel" Target="[WindowsFolder]explorer.exe"
+                  Arguments="[VIEWLBA_PANEL_URL]" Directory="SHORTCUTS_DIR" />
+        <RegistryValue Root="HKCU" Key="Software\ViewLBA\Shortcuts" Name="Panel" Value="1" Type="string" KeyPath="yes" />
+      </Component>
+      <Component Id="cmp_sc_tray" Guid="*">
+        <Shortcut Id="sc_tray" Name="ViewLBA Bandeja" Target="[BIN_DIR]viewlba-tray.exe" Directory="SHORTCUTS_DIR" />
+        <RegistryValue Root="HKCU" Key="Software\ViewLBA\Shortcuts" Name="Tray" Value="1" Type="string" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="ProductFeature" Title="ViewLBA Server" Level="1">
+      <ComponentRef Id="cmp_service" />
+      <ComponentRef Id="cmp_tray" />
+      <ComponentRef Id="cmp_installer" />
+      <ComponentRef Id="cmp_ico" />
+      <ComponentRef Id="cmp_bun" />
+      <ComponentRef Id="cmp_server" />
+      <ComponentRef Id="cmp_realtime" />
+      <ComponentRef Id="cmp_stream" />
+      <ComponentRef Id="cmp_config" />
+      <ComponentRef Id="cmp_db" />
+      <ComponentRef Id="cmp_media" />
+      <ComponentRef Id="cmp_backups" />
+      <ComponentRef Id="cmp_store" />
+      <ComponentRef Id="cmp_logs" />
+      <ComponentRef Id="cmp_credentials" />
+      <ComponentRef Id="cmp_run" />
+      <ComponentRef Id="cmp_cache" />
+      <ComponentRef Id="cmp_reg" />
+      <ComponentRef Id="cmp_arp" />
+      <ComponentRef Id="cmp_sc_panel" />
+      <ComponentRef Id="cmp_sc_tray" />
+    </Feature>
+
+  </Package>
+</Wix>

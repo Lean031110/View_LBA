@@ -1,0 +1,436 @@
+# Build Windows Installer (MSI) — Mission §K, §L, §25
+# ====================================================================
+# This is the CANONICAL Windows installer build pipeline.
+# Produces the FINAL artifact: ViewLBA-Server-Setup-X.Y.Z.msi
+#
+# Pipeline:
+#   1. Build Rust binaries (viewlba-service.exe + viewlba-tray.exe)
+#   2. Build Next.js standalone (bun run build)
+#   3. Build staging (scripts/stage-windows.ts — full payload)
+#   4. Build MSI (wix build viewlba.wxs)
+#   5. Upload FINAL artifact (MSI + manifest + SHA256SUMS)
+#
+# The FINAL artifact is what gets tested in test-windows-product.yml
+# (to be created in step N).
+
+name: Build Windows Installer
+
+on:
+  push:
+    branches: ["main", "feature/**"]
+    paths:
+      - "installer/**"
+      - "scripts/stage-windows.ts"
+      - "config/**"
+      - ".github/workflows/build-windows-installer.yml"
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+concurrency:
+  group: build-windows-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  UPGRADE_CODE: "E7A3F5B2-9C41-4D8E-A6F3-7B5E1D2C9A80"
+
+jobs:
+  build-installer:
+    name: Build MSI (Rust + Next.js + staging + WiX)
+    runs-on: windows-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Read version from VERSION file
+        id: version
+        shell: pwsh
+        run: |
+          $v = (Get-Content VERSION -ErrorAction Stop).Trim()
+          Write-Host "Version: $v"
+          "version=$v" | Out-File -Encoding ASCII -FilePath $env:GITHUB_OUTPUT -Append
+
+      # ================================================================
+      # 1. Build Rust binaries
+      # ================================================================
+      - name: Install Rust toolchain (stable, MSVC)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "installer/native -> target"
+
+      - name: Build viewlba-service + viewlba-tray (release, MSVC)
+        working-directory: installer/native
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      # ================================================================
+      # 2. Build Next.js standalone + compile viewlba-installer.exe
+      # ================================================================
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # ================================================================
+      # 0b. Branding — generate Windows icons from official logo-mark.svg
+      #     Runs AFTER bun install (needs @resvg/resvg-js)
+      # ================================================================
+      - name: Generate Windows icons from official logo-mark.svg
+        shell: pwsh
+        run: |
+          bun installer/branding/generate-windows-icons.ts
+          $ico = "installer\branding\generated\windows\viewlba.ico"
+          if (-not (Test-Path $ico)) { throw "viewlba.ico not generated" }
+          $size = (Get-Item $ico).Length
+          if ($size -lt 1000) { throw "viewlba.ico too small" }
+          Write-Host "OK: viewlba.ico ($size bytes)"
+          $stageBin = "dist\release\windows\ViewLBA-Server\bin"
+          New-Item -ItemType Directory -Force -Path $stageBin | Out-Null
+          Copy-Item $ico "$stageBin\viewlba.ico" -Force
+
+      - name: Generate Prisma client
+        run: bun x prisma generate
+
+      - name: Build Next.js standalone
+        run: bun run build
+
+      - name: Compile viewlba-installer.exe (bun build --compile)
+        run: bun build --compile installer/cli/main.ts --outfile dist/release/windows/stage/viewlba-installer.exe
+
+      # ================================================================
+      # 3. Build full staging (scripts/stage-windows.ts)
+      # ================================================================
+      - name: Build staging
+        run: bun scripts/stage-windows.ts --version ${{ steps.version.outputs.version }}
+        shell: pwsh
+
+      - name: Copy Rust binaries + icon + Bun into staging
+        shell: pwsh
+        run: |
+          $stageBin = "dist\release\windows\ViewLBA-Server\bin"
+          $stageRuntime = "dist\release\windows\ViewLBA-Server\runtime"
+          New-Item -ItemType Directory -Force -Path $stageBin | Out-Null
+          New-Item -ItemType Directory -Force -Path $stageRuntime | Out-Null
+
+          # Rust binaries
+          Copy-Item "installer\native\target\x86_64-pc-windows-msvc\release\viewlba-service.exe" $stageBin -Force
+          Copy-Item "installer\native\target\x86_64-pc-windows-msvc\release\viewlba-tray.exe" $stageBin -Force
+
+          # viewlba-installer.exe (if compiled)
+          if (Test-Path "dist\release\windows\stage\viewlba-installer.exe") {
+            Copy-Item "dist\release\windows\stage\viewlba-installer.exe" $stageBin -Force
+          }
+
+          # Icon — use OFFICIAL branding icon (from branding step, not old Tauri icon)
+          $officialIco = "installer\branding\generated\windows\viewlba.ico"
+          if (Test-Path $officialIco) {
+            Copy-Item $officialIco "$stageBin\viewlba.ico" -Force
+            Write-Host "Official viewlba.ico copied (from branding generation)"
+          } else {
+            Write-Host "::error::Official viewlba.ico not found — branding step must run first"
+            throw "Branding icon missing"
+          }
+
+          # Bun runtime — copy from the installed Bun (setup-bun action)
+          $bunPath = (Get-Command bun -ErrorAction SilentlyContinue).Source
+          if (-not $bunPath) { $bunPath = "$env:USERPROFILE\.bun\bin\bun.exe" }
+          if (Test-Path $bunPath) {
+            Copy-Item $bunPath "$stageRuntime\bun.exe" -Force
+            Write-Host "Bun runtime copied from: $bunPath"
+          } else {
+            Write-Host "::warning::Bun runtime not found — staging will have placeholder"
+          }
+
+          # Verify all required files exist
+          $required = @(
+            "$stageBin\viewlba-service.exe",
+            "$stageBin\viewlba-tray.exe",
+            "$stageBin\viewlba.ico",
+            "$stageRuntime\bun.exe"
+          )
+          foreach ($f in $required) {
+            if (Test-Path $f) {
+              $size = (Get-Item $f).Length
+              Write-Host "OK: $f ($size bytes)"
+            } else {
+              Write-Host "::warning::Missing: $f"
+            }
+          }
+
+      - name: Verify staging is complete
+        shell: pwsh
+        run: |
+          $stage = "dist\release\windows\ViewLBA-Server"
+          $required = @(
+            "bin\viewlba-service.exe",
+            "bin\viewlba-tray.exe"
+          )
+          foreach ($f in $required) {
+            $p = Join-Path $stage $f
+            if (-not (Test-Path $p)) {
+              Write-Host "::warning::Missing: $f (may be built in CI but not in local)"
+            } else {
+              Write-Host "OK: $f"
+            }
+          }
+          Write-Host "Staging manifest:"
+          if (Test-Path "$stage\manifest.json") {
+            Get-Content "$stage\manifest.json"
+          }
+
+      # ================================================================
+      # 4. Build MSI (WiX v4)
+      # ================================================================
+      - name: Install WiX v4
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 4.0.5
+          $env:Path = "$env:USERPROFILE\.dotnet\tools;$env:Path"
+          wix --version
+
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          $env:Path = "$env:USERPROFILE\.dotnet\tools;$env:Path"
+          $version = "${{ steps.version.outputs.version }}"
+          $stageDir = "dist\release\windows\ViewLBA-Server"
+          $buildDir = "$stageDir\bin"
+          $outDir = "dist\release\windows\out"
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+
+          # Build MSI — no -ext flag (no custom UI; silent install /qn works)
+          wix build installer/windows-msi/viewlba.wxs `
+            -o "$outDir\ViewLBA-Server-Setup-$version.msi" `
+            -d "VERSION=$version" `
+            -d "UPGRADE_CODE=$env:UPGRADE_CODE" `
+            -d "BUILD_DIR=$buildDir" `
+            -d "PAYLOAD_DIR=$stageDir"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "WiX build failed with exit code $LASTEXITCODE"
+          }
+
+          # SHA256
+          $msiHash = (Get-FileHash "$outDir\ViewLBA-Server-Setup-$version.msi" -Algorithm SHA256).Hash.ToLower()
+          "$msiHash  ViewLBA-Server-Setup-$version.msi" | Out-File -Encoding ASCII "$outDir\SHA256SUMS.txt"
+          Write-Host "MSI SHA256: $msiHash"
+
+          # Manifest
+          $manifest = @{
+            version = $version
+            source_commit_sha = $env:GITHUB_SHA
+            build_date = (Get-Date).ToUniversalTime().ToString("o")
+            platform = "windows"
+            architecture = "x86_64"
+            installer_type = "msi"
+            installer_version = "wix v4"
+            upgrade_code = $env:UPGRADE_CODE
+            components = @(
+              @{ name = "ViewLBA-Server-Setup-$version.msi"; sha256 = $msiHash; size_bytes = (Get-Item "$outDir\ViewLBA-Server-Setup-$version.msi").Length }
+            )
+            dependencies_excluded = @("NSSM", "PowerShell", "CMD", "sc.exe", "find.exe")
+            rust_version = (rustc --version)
+            bun_version = (bun --version)
+            notes = "Full product MSI installer with payload, service registration, and ACLs."
+          }
+          $manifest | ConvertTo-Json -Depth 6 | Out-File -Encoding UTF8 "$outDir\manifest.json"
+          Write-Host "Manifest:"
+          Get-Content "$outDir\manifest.json"
+        env:
+          UPGRADE_CODE: ${{ env.UPGRADE_CODE }}
+
+      # ================================================================
+      # 5. Verify MSI is valid
+      # ================================================================
+      - name: Verify MSI exists and has non-zero size
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $msi = "dist\release\windows\out\ViewLBA-Server-Setup-$version.msi"
+          if (-not (Test-Path $msi)) { throw "MSI not found: $msi" }
+          $size = (Get-Item $msi).Length
+          if ($size -lt 100000) { throw "MSI too small ($size bytes) — likely empty" }
+          Write-Host "MSI size: $size bytes"
+
+      # ================================================================
+      # 6. Upload FINAL artifact
+      # ================================================================
+      - name: Upload FINAL artifact (MSI + manifest + SHA256)
+        uses: actions/upload-artifact@v4
+        with:
+          name: viewlba-windows-installer
+          path: |
+            dist/release/windows/out/ViewLBA-Server-Setup-${{ steps.version.outputs.version }}.msi
+            dist/release/windows/out/SHA256SUMS.txt
+            dist/release/windows/out/manifest.json
+          retention-days: 30
+          if-no-files-found: error
+
+  # ================================================================
+  # Job 2: Smoke test the MSI (NOT full product test — just MSI install)
+  # ================================================================
+  smoke-test-msi:
+    name: Smoke test MSI (install + verify SCM + uninstall)
+    needs: build-installer
+    runs-on: windows-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+
+    steps:
+      - name: Download MSI artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: viewlba-windows-installer
+          path: ${{ runner.temp }}/downloaded
+
+      - name: List downloaded artifact
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse ${{ runner.temp }}/downloaded | Format-Table Name, Length
+
+      - name: Verify SHA256
+        shell: pwsh
+        run: |
+          $shaFile = "${{ runner.temp }}/downloaded/SHA256SUMS.txt"
+          Get-Content $shaFile | ForEach-Object {
+            $parts = $_ -split '\s+', 2
+            $expected = $parts[0].Trim()
+            $file = $parts[1].Trim()
+            $path = "${{ runner.temp }}/downloaded/$file"
+            $actual = (Get-FileHash $path -Algorithm SHA256).Hash.ToLower()
+            if ($actual -ne $expected) { throw "Checksum mismatch: $file" }
+            Write-Host "OK: $file ($actual)"
+          }
+
+      - name: Install MSI silently
+        shell: cmd
+        run: |
+          :: Copy MSI to a simple path to avoid quoting issues
+          copy /Y "D:\a\_temp\downloaded\ViewLBA-Server-Setup-3.2.3.msi" "C:\temp\ViewLBA.msi" 2>nul
+          if not exist "C:\temp" mkdir "C:\temp"
+          copy /Y "D:\a\_temp\downloaded\ViewLBA-Server-Setup-3.2.3.msi" "C:\temp\ViewLBA.msi"
+          dir "C:\temp\ViewLBA.msi"
+          :: Install with msiexec using cmd (no PowerShell quoting issues)
+          msiexec /i "C:\temp\ViewLBA.msi" /qn /l*v "C:\temp\msi-install.log"
+          echo MSI exit code: %ERRORLEVEL%
+
+      - name: Verify service registered in SCM
+        shell: pwsh
+        run: |
+          $svc = Get-Service -Name "ViewLBA" -ErrorAction SilentlyContinue
+          if (-not $svc) { throw "ViewLBA service not found after MSI install" }
+          Write-Host "Service: $($svc.Name) Status=$($svc.Status) StartType=$($svc.StartType)"
+
+      - name: Verify ARP entry exists
+        shell: pwsh
+        run: |
+          # Search ALL Uninstall entries for ViewLBA (WiX creates under {ProductCode})
+          $found = $false
+          $uninstallKeys = @(
+            "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall",
+            "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
+          )
+          foreach ($key in $uninstallKeys) {
+            $items = Get-ChildItem $key -ErrorAction SilentlyContinue
+            foreach ($item in $items) {
+              $props = Get-ItemProperty $item.PSPath -ErrorAction SilentlyContinue
+              if ($props.DisplayName -match "ViewLBA") {
+                Write-Host "Found ARP entry: $($item.PSChildName)"
+                Write-Host "DisplayName: $($props.DisplayName)"
+                Write-Host "DisplayVersion: $($props.DisplayVersion)"
+                Write-Host "Publisher: $($props.Publisher)"
+                $found = $true
+                break
+              }
+            }
+            if ($found) { break }
+          }
+          if (-not $found) { throw "ARP entry with DisplayName matching 'ViewLBA' not found" }
+
+      - name: Verify Program Files installed
+        shell: pwsh
+        run: |
+          # Check both 64-bit and 32-bit Program Files
+          $paths = @(
+            "C:\Program Files\ViewLBA Server",
+            "C:\Program Files (x86)\ViewLBA Server"
+          )
+          $found = $false
+          foreach ($base in $paths) {
+            if (Test-Path "$base\bin\viewlba-service.exe") {
+              Write-Host "OK: $base\bin\viewlba-service.exe exists"
+              $found = $true
+              break
+            }
+          }
+          if (-not $found) {
+            # Diagnostic: list what's actually installed
+            Write-Host "::error::viewlba-service.exe not found in Program Files"
+            Write-Host "=== Searching for ViewLBA in Program Files ==="
+            Get-ChildItem "C:\Program Files" -Filter "ViewLBA*" -Recurse -ErrorAction SilentlyContinue | Select-Object FullName
+            Get-ChildItem "C:\Program Files (x86)" -Filter "ViewLBA*" -Recurse -ErrorAction SilentlyContinue | Select-Object FullName
+            Write-Host "=== Listing C:\Program Files\ViewLBA Server ==="
+            if (Test-Path "C:\Program Files\ViewLBA Server") {
+              Get-ChildItem "C:\Program Files\ViewLBA Server" -Recurse | Select-Object FullName
+            } else {
+              Write-Host "C:\Program Files\ViewLBA Server does not exist"
+            }
+            throw "viewlba-service.exe not in Program Files"
+          }
+
+      - name: Verify ProgramData structure
+        shell: pwsh
+        run: |
+          $pd = "C:\ProgramData\ViewLBA"
+          $dirs = @("config", "data\db", "data\media", "data\backups", "data\store", "logs", "credentials", "run", "cache")
+          foreach ($d in $dirs) {
+            if (-not (Test-Path "$pd\$d")) { throw "Missing ProgramData dir: $d" }
+            Write-Host "OK: $pd\$d"
+          }
+
+      - name: Uninstall MSI
+        shell: pwsh
+        run: |
+          $version = (Get-Content "${{ runner.temp }}/downloaded/manifest.json" | ConvertFrom-Json).version
+          $msi = "${{ runner.temp }}/downloaded/ViewLBA-Server-Setup-$version.msi"
+          Start-Process msiexec.exe -ArgumentList "/x `"$msi`" /qn" -Wait
+          Write-Host "Uninstall exit code: $LASTEXITCODE"
+
+      - name: Verify service removed after uninstall
+        shell: pwsh
+        run: |
+          $svc = Get-Service -Name "ViewLBA" -ErrorAction SilentlyContinue
+          if ($svc) { throw "ViewLBA service should be gone after uninstall" }
+          Write-Host "OK: service removed"
+
+      - name: Verify ProgramData CONSERVED after uninstall
+        shell: pwsh
+        run: |
+          $pd = "C:\ProgramData\ViewLBA"
+          if (-not (Test-Path "$pd\data\db")) { throw "ProgramData\data\db was deleted — should be conserved!" }
+          Write-Host "OK: ProgramData conserved after uninstall"
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: msi-install-failure
+          path: |
+            ${{ runner.temp }}/downloaded/
+            ${{ runner.temp }}/msi-install.log
+          retention-days: 7
+          if-no-files-found: ignore

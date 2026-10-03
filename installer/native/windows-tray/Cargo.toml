@@ -1,0 +1,46 @@
+[package]
+name = "viewlba-tray"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "ViewLBA Server — native Windows tray binary (no PowerShell). IPC client to the service host."
+
+[[bin]]
+name = "viewlba-tray"
+path = "src/main.rs"
+
+[dependencies]
+# Microsoft official `windows` crate
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
+    "Win32_System_Pipes",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi",
+] }
+
+# Tray icon + event loop (cross-platform minimal, used for Windows only)
+tray-icon = "0.19"
+tao = "0.30"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Time
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+# CLI
+pico-args = "0.5"
+
+[build-dependencies]
+# PE resource embedding for Windows icon (mision W)
+embed-resource = "3"
