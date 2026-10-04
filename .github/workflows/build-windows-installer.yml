@@ -282,9 +282,11 @@ jobs:
           $version = "${{ steps.version.outputs.version }}"
           $ico = (Resolve-Path "installer\branding\generated\windows\viewlba.ico" -ErrorAction Stop).Path
           $msiName = "ViewLBA-Server-Setup-$version.msi"
-          $outExe = "dist\release\windows\out\ViewLBA-Server-Setup-$version.exe"
           $outDir = "dist\release\windows\out"
           New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+          # NSIS resolves OutFile relative to the .nsi file, not CWD
+          # So we must use an absolute path
+          $outExe = (Resolve-Path $outDir).Path + "\ViewLBA-Server-Setup-$version.exe"
 
           Write-Host "ICO path: $ico"
           Write-Host "ICO exists: $(Test-Path $ico)"
