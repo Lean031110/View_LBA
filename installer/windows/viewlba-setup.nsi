@@ -23,7 +23,6 @@
 ; ============================================================================
 
 Unicode true
-ManifestDPIAware on
 
 !ifndef VERSION
   !error "VERSION requerido: -DVERSION=3.2.3"
@@ -51,7 +50,7 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 VIAddVersionKey "CompanyName" "ViewLBA"
 VIAddVersionKey "LegalCopyright" "MIT License"
 VIAddVersionKey "FileDescription" "ViewLBA Server Setup Bootstrapper"
-VIProductVersion "3.2.3.0"
+VIProductVersion "${VERSION}.0"
 
 ; ---------------------------------------------------------------------------
 ; Section: launch MSI
@@ -96,9 +95,9 @@ SectionEnd
 
 Function .onInit
   ; Single instance check — prevent multiple bootstrappers
-  System::Call 'kernel32::CreateMutex(p 0, i 0, t "ViewLBA-Setup-Bootstrapper") p .r1'
-  System::Call 'kernel32::GetLastError() i .r2'
-  ${If} $2 == 183  ; ERROR_ALREADY_EXISTS
+  System::Call 'kernel32::CreateMutex(p 0, i 0, t "ViewLBA-Setup") p .r1 ?e'
+  Pop $0
+  ${If} $0 != 0
     Quit
   ${EndIf}
 FunctionEnd

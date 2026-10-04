@@ -284,12 +284,8 @@ jobs:
           $msiName = "ViewLBA-Server-Setup-$version.msi"
           $outExe = "dist\release\windows\out\ViewLBA-Server-Setup-$version.exe"
 
-          makensis `
-            -DVERSION=$version `
-            -DICO=$ico `
-            -DMSI_NAME=$msiName `
-            -DOUT_EXE=$outExe `
-            installer\windows\viewlba-setup.nsi
+          # Build with makensis (single line, no backtick continuation)
+          & makensis "-DVERSION=$version" "-DICO=$ico" "-DMSI_NAME=$msiName" "-DOUT_EXE=$outExe" "installer\windows\viewlba-setup.nsi"
 
           if ($LASTEXITCODE -ne 0) {
             throw "NSIS bootstrapper build failed with exit code $LASTEXITCODE"
