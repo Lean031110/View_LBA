@@ -280,9 +280,13 @@ jobs:
         run: |
           $env:Path = "$env:ProgramFiles (x86)\NSIS;$env:Path"
           $version = "${{ steps.version.outputs.version }}"
-          $ico = "installer\branding\generated\windows\viewlba.ico"
+          $ico = (Resolve-Path "installer\branding\generated\windows\viewlba.ico" -ErrorAction Stop).Path
           $msiName = "ViewLBA-Server-Setup-$version.msi"
           $outExe = "dist\release\windows\out\ViewLBA-Server-Setup-$version.exe"
+
+          Write-Host "ICO path: $ico"
+          Write-Host "ICO exists: $(Test-Path $ico)"
+          Write-Host "ICO size: $((Get-Item $ico).Length) bytes"
 
           # Build with makensis (single line, no backtick continuation)
           & makensis "-DVERSION=$version" "-DICO=$ico" "-DMSI_NAME=$msiName" "-DOUT_EXE=$outExe" "installer\windows\viewlba-setup.nsi"
