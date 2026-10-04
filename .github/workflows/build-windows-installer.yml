@@ -265,14 +265,82 @@ jobs:
           Write-Host "MSI size: $size bytes"
 
       # ================================================================
+      # 6. Build Setup.exe bootstrapper (NSIS — pure wrapper for MSI)
+      # ================================================================
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress 2>$null
+          # Add NSIS to PATH
+          $env:Path = "$env:ProgramFiles (x86)\NSIS;$env:Path"
+          makensis /VERSION
+
+      - name: Build Setup.exe bootstrapper
+        shell: pwsh
+        run: |
+          $env:Path = "$env:ProgramFiles (x86)\NSIS;$env:Path"
+          $version = "${{ steps.version.outputs.version }}"
+          $ico = "installer\branding\generated\windows\viewlba.ico"
+          $msiName = "ViewLBA-Server-Setup-$version.msi"
+          $outExe = "dist\release\windows\out\ViewLBA-Server-Setup-$version.exe"
+
+          makensis `
+            -DVERSION=$version `
+            -DICO=$ico `
+            -DMSI_NAME=$msiName `
+            -DOUT_EXE=$outExe `
+            installer\windows\viewlba-setup.nsi
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "NSIS bootstrapper build failed with exit code $LASTEXITCODE"
+          }
+
+          # Verify bootstrapper exists
+          if (-not (Test-Path $outExe)) { throw "Setup.exe not found: $outExe" }
+          $exeSize = (Get-Item $outExe).Length
+          Write-Host "Setup.exe size: $exeSize bytes"
+
+          # Update SHA256SUMS to include both MSI and EXE
+          $msiHash = (Get-FileHash "dist\release\windows\out\ViewLBA-Server-Setup-$version.msi" -Algorithm SHA256).Hash.ToLower()
+          $exeHash = (Get-FileHash $outExe -Algorithm SHA256).Hash.ToLower()
+          "$msiHash  ViewLBA-Server-Setup-$version.msi" | Out-File -Encoding ASCII "dist\release\windows\out\SHA256SUMS.txt"
+          "$exeHash  ViewLBA-Server-Setup-$version.exe" | Add-Content -Encoding ASCII "dist\release\windows\out\SHA256SUMS.txt"
+
+          # Update manifest to include both components
+          $manifest = @{
+            version = $version
+            source_commit_sha = $env:GITHUB_SHA
+            build_date = (Get-Date).ToUniversalTime().ToString("o")
+            platform = "windows"
+            architecture = "x86_64"
+            installer_type = "msi+bootstrapper"
+            upgrade_code = $env:UPGRADE_CODE
+            components = @(
+              @{ name = "ViewLBA-Server-Setup-$version.msi"; sha256 = $msiHash; size_bytes = (Get-Item "dist\release\windows\out\ViewLBA-Server-Setup-$version.msi").Length; role = "canonical MSI installer" }
+              @{ name = "ViewLBA-Server-Setup-$version.exe"; sha256 = $exeHash; size_bytes = $exeSize; role = "bootstrapper (wraps MSI)" }
+            )
+            dependencies_excluded = @("NSSM", "PowerShell", "CMD", "sc.exe", "find.exe")
+            branding = @{
+              icon_source = "public/logo-mark.svg"
+              icon_sha256 = (Get-FileHash $ico -Algorithm SHA256).Hash.ToLower()
+            }
+          }
+          $manifest | ConvertTo-Json -Depth 6 | Out-File -Encoding UTF8 "dist\release\windows\out\manifest.json"
+          Write-Host "Final manifest:"
+          Get-Content "dist\release\windows\out\manifest.json"
+        env:
+          UPGRADE_CODE: ${{ env.UPGRADE_CODE }}
+
+      # ================================================================
       # 6. Upload FINAL artifact
       # ================================================================
-      - name: Upload FINAL artifact (MSI + manifest + SHA256)
+      - name: Upload FINAL artifact (MSI + EXE + manifest + SHA256)
         uses: actions/upload-artifact@v4
         with:
           name: viewlba-windows-installer
           path: |
             dist/release/windows/out/ViewLBA-Server-Setup-${{ steps.version.outputs.version }}.msi
+            dist/release/windows/out/ViewLBA-Server-Setup-${{ steps.version.outputs.version }}.exe
             dist/release/windows/out/SHA256SUMS.txt
             dist/release/windows/out/manifest.json
           retention-days: 30
