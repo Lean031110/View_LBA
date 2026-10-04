@@ -117,58 +117,37 @@ describe("Bandeja Windows (viewlba-tray.exe binario Rust)", () => {
 // ---------------------------------------------------------------------------
 // Windows — REGRESIÓN DEL CUELGUE DEL SETUP.exe (21.er build de v3.2.0)
 // ---------------------------------------------------------------------------
-describe("REGRESIÓN: lanzamiento de la bandeja en el NSI (21.er build)", () => {
+// NOTA: El NSI ahora es un PURE bootstrapper (Mision M).
+// Tray launch, autostart, shortcuts, uninstall — todo lo maneja el MSI.
+// Estas verificaciones se hacen en contracts-wix-msi.test.ts.
+// ---------------------------------------------------------------------------
+describe("REGRESIÓN: bootstrapper NSI (21.er build) — puro wrapper MSI", () => {
   const nsi = readFileSync(NSI, "utf8")
 
-  test("la bandeja se lanza con `Exec` (NO espera) — NUNCA con nsExec", () => {
-    // La línea que lanza viewlba-tray.exe DEBE ser un Exec puro.
-    const trayLines = nsi.split("\n").filter((l) => l.includes("viewlba-tray.exe") && !l.trimStart().startsWith(";"))
-    expect(trayLines.length).toBeGreaterThan(0)
-    for (const line of trayLines) {
-      // toda línea que ARRANCA la bandeja debe usar Exec (con o sin prefijo)
-      if (/Exec|ShellExec/i.test(line)) {
-        expect(line).not.toMatch(/nsExec::Exec\b/)
-      }
-    }
+  test("NSI ejecuta msiexec /i (no instala directamente)", () => {
+    expect(nsi).toMatch(/msiexec/i)
   })
 
-  test("ningún lanzamiento de proceso de larga vida usa nsExec::Exec sin /TIMEOUT", () => {
-    // nsExec::Exec/ExecToLog ESPERAN al proceso: para procesos de larga vida
-    // (bandeja) solo se admite /TIMEOUT acotado o Exec directo.
-    const offenders = nsi
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => /^nsExec::Exec(\s|$)/.test(l))
-      .filter((l) => !/\/TIMEOUT=/.test(l))
-    // Las únicas llamadas nsExec::Exec «puras» permitidas: sidecar install
-    // (que termina solo) y service install/uninstall (que terminan solos).
-    for (const l of offenders) {
-      expect(l).toMatch(/viewlba-installer|viewlba-service/)
-    }
+  test("NSI NO usa nsExec::Exec (regresión del 21.er build)", () => {
+    const offenders = nsi.split("\n").map(l => l.trim()).filter(l => /^nsExec::Exec(\s|$)/.test(l))
+    expect(offenders.length).toBe(0)
   })
 
-  test("autostart de la bandeja con la sesión (HKCU Run)", () => {
-    expect(nsi).toContain("CurrentVersion\\Run")
-    expect(nsi).toContain("viewlba-tray.exe")
-    expect(nsi).toContain("${APPNAME}Tray")
+  test("NSI NO lanza tray directamente (lo hace el MSI)", () => {
+    expect(nsi).not.toMatch(/viewlba-tray\.exe/i)
   })
 
-  test("el desinstalador quita la bandeja (autostart + proceso)", () => {
-    const uninstall = nsi.split('Section "Uninstall"')[1] ?? ""
-    expect(uninstall).toContain("DeleteRegValue HKCU")
-    // El NSI usa ${APPNAME}Tray que NSIS expande a "ViewLBA ServerTray" o
-    // aceptamos también el patrón ViewLBATray sin espacio
-    expect(uninstall).toMatch(/\$\{APPNAME\}Tray|ViewLBATray/)
+  test("NSI NO crea shortcuts (los hace el MSI)", () => {
+    expect(nsi).not.toMatch(/CreateShortCut/i)
   })
 
-  test("accesos directos de la bandeja en escritorio + menú Inicio", () => {
-    expect(nsi).toContain("ViewLBA - Bandeja.lnk")
-    expect(nsi).toContain("$DESKTOP")
+  test("NSI NO crea ProgramData (lo hace el MSI)", () => {
+    expect(nsi).not.toMatch(/CreateDirectory.*ProgramData/i)
   })
 })
 
 // ---------------------------------------------------------------------------
-// Linux — bandeja (TypeScript puro sobre el runtime bun EMPAQUETADO — v3.2.2:
+// // Linux — bandeja (TypeScript puro sobre el runtime bun EMPAQUETADO — v3.2.2:
 // cero dependencias del sistema: sin python3-gi, sin GTK, sin gir — 100 % offline)
 // ---------------------------------------------------------------------------
 describe("Bandeja Linux (tray.ts — TypeScript sobre bun empaquetado)", () => {
