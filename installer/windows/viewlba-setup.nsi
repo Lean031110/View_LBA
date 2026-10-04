@@ -44,7 +44,6 @@ RequestExecutionLevel admin
 SetCompressor /SOLID lzma
 
 VIAddVersionKey "ProductName" "ViewLBA Server"
-VIAddVersionKey "ProductName" "ViewLBA Server"
 VIAddVersionKey "FileVersion" "${VERSION}"
 VIAddVersionKey "ProductVersion" "${VERSION}"
 VIAddVersionKey "CompanyName" "ViewLBA"
