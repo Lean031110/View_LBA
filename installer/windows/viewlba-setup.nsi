@@ -24,6 +24,8 @@
 
 Unicode true
 
+!include "LogicLib.nsh"
+
 !ifndef VERSION
   !error "VERSION requerido: -DVERSION=3.2.3"
 !endif
