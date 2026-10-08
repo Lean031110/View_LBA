@@ -70,29 +70,37 @@ impl Default for Config {
 pub fn load_config() -> Config {
     let mut cfg = Config::default();
 
+    // AUTO-DETECT install path from binary location
+    // The service binary is at: <Program Files>\ViewLBA Server\bin\viewlba-service.exe
+    // So the install root is 3 levels up from the binary
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(bin_dir) = exe_path.parent() {
+            if let Some(install_root) = bin_dir.parent() {
+                // Check if this looks like our install dir (has "bin" subfolder)
+                if bin_dir.ends_with("bin") {
+                    cfg.program_files = install_root.to_path_buf();
+                    cfg.bun_path = install_root.join("runtime").join("bun.exe");
+                    cfg.app_dir = install_root.join("app");
+                    cfg.app_entry = cfg.app_dir.join("scripts").join("start.ts");
+                    cfg.realtime_dir = install_root.join("mini-services").join("realtime-service");
+                    cfg.realtime_entry = cfg.realtime_dir.join("index.ts");
+                    cfg.stream_entry = cfg.app_dir.join("mini-services").join("stream-service").join("index.ts");
+                    cfg.log_dir = cfg.program_data.join("logs");
+                    cfg.pid_dir = cfg.program_data.join("run");
+                }
+            }
+        }
+    }
+
     // Env overrides (for debugging and CI)
     if let Ok(v) = env::var("VIEWLBA_PROGRAM_FILES") {
         cfg.program_files = PathBuf::from(v);
     }
     if let Ok(v) = env::var("VIEWLBA_PROGRAM_DATA") {
         cfg.program_data = PathBuf::from(v);
+        cfg.log_dir = cfg.program_data.join("logs");
+        cfg.pid_dir = cfg.program_data.join("run");
     }
-
-    // Re-derive dependent paths
-    let bin_dir = cfg.program_files.join("bin");
-    let runtime_dir = cfg.program_files.join("runtime");
-    let app_dir = cfg.program_files.join("app");
-    let mini_services = cfg.program_files.join("mini-services");
-
-    cfg.bun_path = runtime_dir.join("bun.exe");
-    cfg.app_dir = app_dir.clone();
-    cfg.app_entry = app_dir.join("scripts").join("start.ts");
-    cfg.realtime_dir = mini_services.join("realtime-service");
-    cfg.realtime_entry = cfg.realtime_dir.join("index.ts");
-    cfg.stream_dir = cfg.program_data.join("data");
-    cfg.stream_entry = app_dir.join("mini-services").join("stream-service").join("index.ts");
-    cfg.log_dir = cfg.program_data.join("logs");
-    cfg.pid_dir = cfg.program_data.join("run");
 
     cfg
 }
