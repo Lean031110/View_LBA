@@ -408,19 +408,25 @@ jobs:
           }
 
       # ================================================================
-      # Helper: install MSI with ExitCode check
+      # Install MSI — uses cmd shell (Start-Process has quoting issues in pwsh 7)
       # ================================================================
-      - name: Install MSI silently (with ExitCode check)
+      - name: Read manifest + copy MSI to C:\temp
         shell: pwsh
+        id: msi_path
         run: |
           $version = (Get-Content "${{ runner.temp }}/downloaded/manifest.json" | ConvertFrom-Json).version
           $msi = "${{ runner.temp }}/downloaded/ViewLBA-Server-Setup-$version.msi"
-          Write-Host "Installing: $msi"
-          $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/l*v', "`"C:\temp\msi-install.log`"" -Wait -PassThru
-          $ec = $p.ExitCode
-          Write-Host "Install ExitCode: $ec"
-          if ($ec -notin @(0, 3010)) { throw "msiexec install failed with exit code $ec" }
-          Start-Sleep -Seconds 5
+          if (-not (Test-Path "C:\temp")) { New-Item -ItemType Directory -Path "C:\temp" | Out-Null }
+          Copy-Item $msi "C:\temp\ViewLBA.msi" -Force
+          $size = (Get-Item "C:\temp\ViewLBA.msi").Length
+          Write-Host "MSI copied to C:\temp\ViewLBA.msi ($size bytes)"
+
+      - name: Install MSI silently (cmd + ERRORLEVEL check)
+        shell: cmd
+        run: |
+          msiexec /i "C:\temp\ViewLBA.msi" /qn /l*v "C:\temp\msi-install.log"
+          echo MSI ExitCode: %ERRORLEVEL%
+          if %ERRORLEVEL% NEQ 0 if %ERRORLEVEL% NEQ 3010 exit 1
 
       # ================================================================
       # Verify service: exists + Running + LocalService + StartType=Auto
@@ -533,14 +539,13 @@ jobs:
       - name: "[O] Upgrade test — create data + reinstall + verify SHA256"
         shell: pwsh
         run: |
-          $version = (Get-Content "${{ runner.temp }}/downloaded/manifest.json" | ConvertFrom-Json).version
-          $msi = "${{ runner.temp }}/downloaded/ViewLBA-Server-Setup-$version.msi"
+          $msi = "C:\temp\ViewLBA.msi"
           $pd = "C:\ProgramData\ViewLBA"
 
           # Step 1: Create sentinel data with known SHA256
           Write-Host "=== [O] Creating sentinel data ==="
           $sentinelFile = "$pd\data\db\upgrade-sentinel.txt"
-          $sentinelContent = "UPGRADE_SENTinel_$(Get-Date -Format 'o')"
+          $sentinelContent = "UPGRADE_SENTINEL_$(Get-Date -Format 'o')"
           [System.IO.File]::WriteAllText($sentinelFile, $sentinelContent)
           $sentinelHash = (Get-FileHash $sentinelFile -Algorithm SHA256).Hash
           Write-Host "Sentinel SHA256 before: $sentinelHash"
@@ -562,7 +567,7 @@ jobs:
 
           # Step 2: Reinstall (upgrade simulation — same version)
           Write-Host "=== [O] Reinstalling MSI (upgrade simulation) ==="
-          $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn' -Wait -PassThru
+          $p = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn" -Wait -PassThru
           $ec = $p.ExitCode
           Write-Host "Upgrade ExitCode: $ec"
           if ($ec -notin @(0, 3010)) { throw "Upgrade msiexec failed with exit code $ec" }
@@ -631,8 +636,7 @@ jobs:
       - name: "[R] Reinstall test — uninstall + verify SHA256 + install again"
         shell: pwsh
         run: |
-          $version = (Get-Content "${{ runner.temp }}/downloaded/manifest.json" | ConvertFrom-Json).version
-          $msi = "${{ runner.temp }}/downloaded/ViewLBA-Server-Setup-$version.msi"
+          $msi = "C:\temp\ViewLBA.msi"
           $pd = "C:\ProgramData\ViewLBA"
 
           # Record SHA256 before uninstall
@@ -640,7 +644,7 @@ jobs:
           $beforeHash = (Get-FileHash $sentinelFile -Algorithm SHA256).Hash
 
           # Uninstall
-          $pu = Start-Process msiexec.exe -ArgumentList '/x', "`"$msi`"", '/qn' -Wait -PassThru
+          $pu = Start-Process msiexec.exe -ArgumentList "/x `"$msi`" /qn" -Wait -PassThru
           $ecU = $pu.ExitCode
           Write-Host "Uninstall ExitCode: $ecU"
           if ($ecU -notin @(0, 3010)) { throw "Uninstall msiexec failed with exit code $ecU" }
@@ -658,7 +662,7 @@ jobs:
           Write-Host "OK: Sentinel SHA256 matches after uninstall"
 
           # Install again
-          $pi = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn' -Wait -PassThru
+          $pi = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn" -Wait -PassThru
           $ecI = $pi.ExitCode
           Write-Host "Reinstall ExitCode: $ecI"
           if ($ecI -notin @(0, 3010)) { throw "Reinstall msiexec failed with exit code $ecI" }
@@ -683,11 +687,10 @@ jobs:
       - name: "[S] Offline test — block outbound + install + verify + cleanup"
         shell: pwsh
         run: |
-          $version = (Get-Content "${{ runner.temp }}/downloaded/manifest.json" | ConvertFrom-Json).version
-          $msi = "${{ runner.temp }}/downloaded/ViewLBA-Server-Setup-$version.msi"
+          $msi = "C:\temp\ViewLBA.msi"
 
           # Uninstall first (clean state)
-          $pu = Start-Process msiexec.exe -ArgumentList '/x', "`"$msi`"", '/qn' -Wait -PassThru
+          $pu = Start-Process msiexec.exe -ArgumentList "/x `"$msi`" /qn" -Wait -PassThru
           Write-Host "Pre-uninstall ExitCode: $($pu.ExitCode)"
           Start-Sleep -Seconds 3
 
@@ -698,7 +701,7 @@ jobs:
 
           try {
             # Install while offline
-            $po = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn' -Wait -PassThru
+            $po = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn" -Wait -PassThru
             $ecO = $po.ExitCode
             Write-Host "Offline install ExitCode: $ecO"
             if ($ecO -notin @(0, 3010)) { throw "Offline install msiexec failed with exit code $ecO" }
@@ -737,10 +740,9 @@ jobs:
       - name: Final uninstall + verify
         shell: pwsh
         run: |
-          $version = (Get-Content "${{ runner.temp }}/downloaded/manifest.json" | ConvertFrom-Json).version
-          $msi = "${{ runner.temp }}/downloaded/ViewLBA-Server-Setup-$version.msi"
+          $msi = "C:\temp\ViewLBA.msi"
 
-          $pu = Start-Process msiexec.exe -ArgumentList '/x', "`"$msi`"", '/qn' -Wait -PassThru
+          $pu = Start-Process msiexec.exe -ArgumentList "/x `"$msi`" /qn" -Wait -PassThru
           $ec = $pu.ExitCode
           Write-Host "Final uninstall ExitCode: $ec"
           if ($ec -notin @(0, 3010)) { throw "Final uninstall failed with exit code $ec" }
