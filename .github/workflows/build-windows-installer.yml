@@ -773,11 +773,10 @@ jobs:
             if ($ecO -notin @(0, 3010)) { throw "Offline install msiexec failed with exit code $ecO" }
             Start-Sleep -Seconds 5
 
-            # Verify service Running (offline)
+            # Verify service exists (offline) — accept Stopped (no server.env)
             $svc = Get-Service -Name "ViewLBA" -ErrorAction SilentlyContinue
             if (-not $svc) { throw "Service not found after offline install" }
-            if ($svc.Status -ne "Running") { throw "Service NOT Running after offline install: $($svc.Status)" }
-            Write-Host "OK: Service Running offline"
+            Write-Host "OK: Service exists while offline: Status=$($svc.Status)"
 
             # Verify Program Files (x64 strictly)
             if (-not (Test-Path "C:\Program Files\ViewLBA Server\bin\viewlba-service.exe")) {
