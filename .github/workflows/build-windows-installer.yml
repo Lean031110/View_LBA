@@ -509,7 +509,8 @@ jobs:
 
           # Step 1: Fresh install
           Write-Host "=== [O] Step 1: Fresh install ==="
-          & msiexec /i "$msi" /qn /l*v "C:\temp\upgrade-install1.log"
+          $p1 = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/l*v', "`"C:\temp\upgrade-install1.log`"" -Wait -PassThru
+          Write-Host "Install exit: $($p1.ExitCode)"
           Start-Sleep -Seconds 3
           $svc = Get-Service -Name "ViewLBA" -ErrorAction SilentlyContinue
           if (-not $svc) { throw "Service not found after fresh install" }
@@ -527,9 +528,9 @@ jobs:
 
           # Step 3: Reinstall (simulate upgrade — same version, msiexec handles it)
           Write-Host "=== [O] Step 3: Reinstall (upgrade) ==="
-          & msiexec /i "$msi" /qn /l*v "C:\temp\upgrade-install2.log"
-          $upgradeExit = $LASTEXITCODE
-          Write-Host "Upgrade exit code: $upgradeExit"
+          $p2 = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/l*v', "`"C:\temp\upgrade-install2.log`"" -Wait -PassThru
+          Write-Host "Upgrade exit: $($p2.ExitCode)"
+          Write-Host "Upgrade completed"
           Start-Sleep -Seconds 3
 
           # Step 4: Verify data preserved
@@ -608,7 +609,8 @@ jobs:
 
           # Step 1: Uninstall
           Write-Host "Step 1: Uninstall..."
-          & msiexec /x "$msi" /qn /l*v "C:\temp\reinstall-uninstall.log"
+          $pu = Start-Process msiexec.exe -ArgumentList '/x', "`"$msi`"", '/qn' -Wait -PassThru
+          Write-Host "Uninstall exit: $($pu.ExitCode)"
           Start-Sleep -Seconds 3
           $svc = Get-Service -Name "ViewLBA" -ErrorAction SilentlyContinue
           if ($svc) { throw "Service should be gone after uninstall" }
@@ -620,7 +622,8 @@ jobs:
 
           # Step 3: Install again
           Write-Host "Step 2: Install again..."
-          & msiexec /i "$msi" /qn /l*v "C:\temp\reinstall-install.log"
+          $pi = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn' -Wait -PassThru
+          Write-Host "Reinstall exit: $($pi.ExitCode)"
           Start-Sleep -Seconds 3
 
           # Step 4: Verify service registered again
@@ -652,7 +655,7 @@ jobs:
 
           # Step 1: Uninstall first (clean state)
           Write-Host "Step 1: Uninstall for clean state..."
-          & msiexec /x "$msi" /qn 2>$null
+          Start-Process msiexec.exe -ArgumentList '/x', "`"$msi`"", '/qn' -Wait -ErrorAction SilentlyContinue | Out-Null
           Start-Sleep -Seconds 3
 
           # Step 2: Block outbound traffic (allow localhost)
@@ -667,9 +670,9 @@ jobs:
 
           # Step 3: Install MSI while offline
           Write-Host "Step 3: Install MSI while offline..."
-          & msiexec /i "$msi" /qn /l*v "C:\temp\offline-install.log"
-          $offlineExit = $LASTEXITCODE
-          Write-Host "Offline install exit code: $offlineExit"
+          $po = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/l*v', "`"C:\temp\offline-install.log`"" -Wait -PassThru
+          Write-Host "Offline install exit: $($po.ExitCode)"
+          Write-Host "Offline install completed"
 
           # Step 4: Verify service registered (offline)
           $svc = Get-Service -Name "ViewLBA" -ErrorAction SilentlyContinue
@@ -693,7 +696,7 @@ jobs:
 
           # Step 7: Final uninstall (clean state for next test)
           Write-Host "Step 7: Final cleanup uninstall..."
-          & msiexec /x "$msi" /qn 2>$null
+          Start-Process msiexec.exe -ArgumentList '/x', "`"$msi`"", '/qn' -Wait -ErrorAction SilentlyContinue | Out-Null
           Start-Sleep -Seconds 3
 
           Write-Host "=== [S] Offline test PASS ==="
