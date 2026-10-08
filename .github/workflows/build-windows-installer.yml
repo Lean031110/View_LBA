@@ -177,19 +177,35 @@ jobs:
       - name: Generate deterministic staging manifest (relpath + size + SHA256)
         shell: pwsh
         run: |
-          $stage = "dist\release\windows\ViewLBA-Server"
-          $manifestPath = "dist\release\windows\out\staging-manifest.json"
+          $stage = (Resolve-Path "dist\release\windows\ViewLBA-Server").Path
+          $manifestPath = (Resolve-Path "dist\release\windows\out").Path + "\staging-manifest.json"
           New-Item -ItemType Directory -Force -Path (Split-Path $manifestPath) | Out-Null
-          $files = Get-ChildItem -Recurse -File $stage | Sort-Object FullName
+          Write-Host "Stage root: $stage"
+          $files = Get-ChildItem -Recurse -File -LiteralPath $stage | Sort-Object FullName
+          Write-Host "Found $($files.Count) files in staging"
           $entries = @()
+          $skipped = @()
           foreach ($f in $files) {
             $rel = $f.FullName.Substring($stage.Length + 1).Replace('\','/')
-            $hash = (Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLower()
-            $entries += [PSCustomObject]@{
-              path = $rel
-              size_bytes = $f.Length
-              sha256 = $hash
+            # Use -LiteralPath to handle long paths + special chars safely
+            try {
+              $hashObj = Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256 -ErrorAction Stop
+              if (-not $hashObj -or -not $hashObj.Hash) {
+                throw "Hash property missing"
+              }
+              $hash = $hashObj.Hash.ToLower()
+              $entries += [PSCustomObject]@{
+                path = $rel
+                size_bytes = $f.Length
+                sha256 = $hash
+              }
+            } catch {
+              Write-Host "::warning::Skipping file (hash failed): $rel — $_"
+              $skipped += $rel
             }
+          }
+          if ($skipped.Count -gt 0) {
+            Write-Host "Skipped $($skipped.Count) files (locked or unreadable)"
           }
           $manifest = [PSCustomObject]@{
             generated_at = (Get-Date).ToUniversalTime().ToString("o")
@@ -197,11 +213,12 @@ jobs:
             total_files = $entries.Count
             total_bytes = ($entries | Measure-Object -Property size_bytes -Sum).Sum
             files = $entries
+            skipped_count = $skipped.Count
             excludes = @(".git", ".cache", "node_modules", "*.log", "*.tmp")
           }
           $manifest | ConvertTo-Json -Depth 6 | Out-File -Encoding UTF8 $manifestPath
-          Write-Host "Staging manifest: $($entries.Count) files, $(($manifest.total_bytes)) bytes total"
-          Get-Content $manifestPath | Select-Object -First 30
+          Write-Host "Staging manifest: $($entries.Count) files, $($manifest.total_bytes) bytes total"
+          Get-Content $manifestPath | Select-Object -First 5
 
       - name: Verify staging is complete (strict)
         shell: pwsh
