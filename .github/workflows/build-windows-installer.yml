@@ -534,7 +534,7 @@ jobs:
           # Step 4: Verify data preserved
           Write-Host "=== [O] Step 4: Verify data preserved ==="
           if (-not (Test-Path $testFile)) { throw "upgrade-test-marker.txt was DELETED during upgrade!" }
-          $content = Get-Content $testFile -Raw
+          $content = (Get-Content $testFile -Raw).Trim()
           if ($content -ne "UPGRADE_TEST_DATA_v1") { throw "upgrade-test-marker.txt content CHANGED during upgrade!" }
           Write-Host "OK: upgrade-test-marker.txt preserved with correct content"
 
