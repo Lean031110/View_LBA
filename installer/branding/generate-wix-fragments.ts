@@ -38,11 +38,11 @@ interface HarvestConfig {
 }
 
 const CONFIGS: HarvestConfig[] = [
-  { dirName: "app", dirRef: "APP_DIR", componentGroup: "AppFiles", excludes: [] },
-  { dirName: "mini-services", dirRef: "MINI_SERVICES_DIR", componentGroup: "MiniServicesFiles", excludes: [] },
-  { dirName: "themes", dirRef: "THEMES_PF_DIR", componentGroup: "ThemesFiles", excludes: [] },
-  { dirName: "public", dirRef: "PUBLIC_DIR", componentGroup: "PublicFiles", excludes: [] },
-  { dirName: "config", dirRef: "CONFIG_DIR", componentGroup: "ConfigFiles", excludes: [] },
+  { dirName: "app", dirRef: "APP_DIR", componentGroup: "AppFiles", excludes: [".git", ".cache"] },
+  { dirName: "mini-services", dirRef: "MINI_SERVICES_DIR", componentGroup: "MiniServicesFiles", excludes: [".git", ".cache"] },
+  { dirName: "themes", dirRef: "THEMES_PF_DIR", componentGroup: "ThemesFiles", excludes: [".git"] },
+  { dirName: "public", dirRef: "PUBLIC_DIR", componentGroup: "PublicFiles", excludes: [".git"] },
+  { dirName: "config", dirRef: "CONFIG_DIR", componentGroup: "ConfigFiles", excludes: [".git"] },
 ]
 
 let componentCounter = 0
