@@ -11,7 +11,6 @@
            Language="3082"
            Codepage="1252"
            InstallerVersion="500"
-           Platform="x64"
            UpgradeCode="$(var.UPGRADE_CODE)">
 
     <SummaryInformation Codepage="1252"
