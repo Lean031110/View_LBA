@@ -178,9 +178,12 @@ jobs:
         shell: pwsh
         run: |
           $stage = (Resolve-Path "dist\release\windows\ViewLBA-Server").Path
-          $manifestPath = (Resolve-Path "dist\release\windows\out").Path + "\staging-manifest.json"
-          New-Item -ItemType Directory -Force -Path (Split-Path $manifestPath) | Out-Null
+          $outDir = "dist\release\windows\out"
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+          $outDirAbs = (Resolve-Path $outDir).Path
+          $manifestPath = Join-Path $outDirAbs "staging-manifest.json"
           Write-Host "Stage root: $stage"
+          Write-Host "Manifest path: $manifestPath"
           $files = Get-ChildItem -Recurse -File -LiteralPath $stage | Sort-Object FullName
           Write-Host "Found $($files.Count) files in staging"
           $entries = @()
