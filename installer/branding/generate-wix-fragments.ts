@@ -24,6 +24,7 @@
 import { readdirSync, statSync, writeFileSync, mkdirSync } from "node:fs"
 import { join, relative, dirname, basename, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import { createHash } from "node:crypto"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -87,8 +88,14 @@ function generateFragment(config: HarvestConfig, stagingDir: string): string {
   for (const file of files) {
     const id = `f${safeDirName}_${componentCounter++}`
     const sourcePath = `$(var.PAYLOAD_DIR)\\${config.dirName}\\${file.relativePath.replace(/\//g, "\\")}`
+    // Generate deterministic GUID from full file path (not just filename)
+    // This prevents WIX0369 duplicate GUID errors when files have same name
+    const guidInput = `${config.dirName}\\${file.relativePath.replace(/\//g, "\\")}`
+    const guidHash = createHash("sha256").update(guidInput).digest("hex")
+    // Format as GUID: first 32 hex chars → 8-4-4-4-12 format
+    const guid = `${guidHash.substring(0,8)}-${guidHash.substring(8,12)}-${guidHash.substring(12,16)}-${guidHash.substring(16,20)}-${guidHash.substring(20,32)}`.toUpperCase()
 
-    components.push(`      <Component Id="${id}" Guid="*">`)
+    components.push(`      <Component Id="${id}" Guid="${guid}">`)
     components.push(`        <File Id="${id}" Source="${sourcePath}" KeyPath="yes" />`)
     components.push(`      </Component>`)
     componentRefs.push(`      <ComponentRef Id="${id}" />`)
