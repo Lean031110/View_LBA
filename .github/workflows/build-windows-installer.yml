@@ -200,6 +200,34 @@ jobs:
           $env:Path = "$env:USERPROFILE\.dotnet\tools;$env:Path"
           wix --version
 
+      # ================================================================
+      # 3b. Harvest staging into WiX fragments (include ALL files)
+      # ================================================================
+      - name: Harvest staging into WiX fragments
+        shell: pwsh
+        run: |
+          $env:Path = "$env:USERPROFILE\.dotnet\tools;$env:Path"
+          $stageDir = "dist\release\windows\ViewLBA-Server"
+          
+          # Harvest each subdirectory that needs ALL files included
+          # app/ (Next.js standalone + node_modules + .next + prisma + scripts)
+          wix heat dir "$stageDir\app" -o installer\windows-msi\app-fragments.wxs -cg AppFiles -dr APP_DIR -var var.PAYLOAD_DIR -gg -sfrag -srd -ke
+          
+          # mini-services/ (realtime + stream + their node_modules)
+          wix heat dir "$stageDir\mini-services" -o installer\windows-msi\mini-services-fragments.wxs -cg MiniServicesFiles -dr MINI_SERVICES_DIR -var var.PAYLOAD_DIR -gg -sfrag -srd -ke
+          
+          # themes/
+          wix heat dir "$stageDir\themes" -o installer\windows-msi\themes-fragments.wxs -cg ThemesFiles -dr THEMES_PF_DIR -var var.PAYLOAD_DIR -gg -sfrag -srd -ke
+          
+          # public/
+          wix heat dir "$stageDir\public" -o installer\windows-msi\public-fragments.wxs -cg PublicFiles -dr PUBLIC_DIR -var var.PAYLOAD_DIR -gg -sfrag -srd -ke
+          
+          # config/ (templates)
+          wix heat dir "$stageDir\config" -o installer\windows-msi\config-fragments.wxs -cg ConfigFiles -dr CONFIG_DIR -var var.PAYLOAD_DIR -gg -sfrag -srd -ke
+          
+          Write-Host "Harvested WiX fragments:"
+          Get-ChildItem installer\windows-msi\*-fragments.wxs | Format-Table Name, Length
+
       - name: Build MSI
         shell: pwsh
         run: |

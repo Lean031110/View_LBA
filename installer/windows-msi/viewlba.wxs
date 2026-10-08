@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <?include app-fragments.wxs ?>
+  <?include mini-services-fragments.wxs ?>
+  <?include themes-fragments.wxs ?>
+  <?include public-fragments.wxs ?>
+  <?include config-fragments.wxs ?>
   <Package Name="ViewLBA Server $(var.VERSION)"
            Manufacturer="ViewLBA"
            Version="$(var.VERSION)"
@@ -85,20 +90,11 @@
       </Component>
     </DirectoryRef>
 
-    <DirectoryRef Id="APP_DIR">
-      <Component Id="cmp_server" Guid="*">
-        <File Id="file_server" Source="$(var.PAYLOAD_DIR)\app\server.js" KeyPath="yes" />
-      </Component>
-    </DirectoryRef>
+    <!-- App directory structure (files harvested via wix heat) -->
+    <DirectoryRef Id="APP_DIR" />
 
-    <DirectoryRef Id="MINI_SERVICES_DIR">
-      <Component Id="cmp_realtime" Guid="A1B2C3D4-E5F6-7890-ABCD-EF1234567890">
-        <File Id="file_realtime" Source="$(var.PAYLOAD_DIR)\mini-services\realtime-service\index.ts" KeyPath="yes" />
-      </Component>
-      <Component Id="cmp_stream" Guid="B2C3D4E5-F6A7-8901-BCDE-F12345678901">
-        <File Id="file_stream" Source="$(var.PAYLOAD_DIR)\mini-services\stream-service\index.ts" KeyPath="yes" />
-      </Component>
-    </DirectoryRef>
+    <!-- Mini-services directory structure (files harvested via wix heat) -->
+    <DirectoryRef Id="MINI_SERVICES_DIR" />
 
     <!-- ProgramData folders with ACL matrix -->
     <DirectoryRef Id="CONFIG_DIR">
@@ -241,9 +237,6 @@
       <ComponentRef Id="cmp_installer" />
       <ComponentRef Id="cmp_ico" />
       <ComponentRef Id="cmp_bun" />
-      <ComponentRef Id="cmp_server" />
-      <ComponentRef Id="cmp_realtime" />
-      <ComponentRef Id="cmp_stream" />
       <ComponentRef Id="cmp_config" />
       <ComponentRef Id="cmp_db" />
       <ComponentRef Id="cmp_media" />
@@ -257,6 +250,11 @@
       <ComponentRef Id="cmp_arp" />
       <ComponentRef Id="cmp_sc_panel" />
       <ComponentRef Id="cmp_sc_tray" />
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentGroupRef Id="MiniServicesFiles" />
+      <ComponentGroupRef Id="ThemesFiles" />
+      <ComponentGroupRef Id="PublicFiles" />
+      <ComponentGroupRef Id="ConfigFiles" />
     </Feature>
 
   </Package>
