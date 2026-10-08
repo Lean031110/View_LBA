@@ -224,6 +224,7 @@ jobs:
 
           # Build MSI — no -ext flag (no custom UI; silent install /qn works)
           wix build installer/windows-msi/viewlba.wxs `
+            -arch x64 `
             -o "$outDir\ViewLBA-Server-Setup-$version.msi" `
             -d "VERSION=$version" `
             -d "UPGRADE_CODE=$env:UPGRADE_CODE" `
