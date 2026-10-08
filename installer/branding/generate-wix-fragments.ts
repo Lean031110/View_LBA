@@ -48,6 +48,7 @@ const CONFIGS: HarvestConfig[] = [
 let componentCounter = 0
 
 function sanitizeId(s: string): string {
+  // WiX identifiers: A-Z, a-z, 0-9, underscore, period. Must start with letter/underscore.
   return s.replace(/[^a-zA-Z0-9_]/g, "_").replace(/^(\d)/, "_$1")
 }
 
@@ -76,12 +77,15 @@ function generateFragment(config: HarvestConfig, stagingDir: string): string {
   const sourceDir = join(stagingDir, config.dirName)
   const files = walk(sourceDir, "", config.excludes ?? [])
 
+  // Sanitize dirName for WiX identifiers (replace hyphens with underscores)
+  const safeDirName = sanitizeId(config.dirName)
+
   componentCounter = 0
   const components: string[] = []
   const componentRefs: string[] = []
 
   for (const file of files) {
-    const id = `f${config.dirName}_${componentCounter++}`
+    const id = `f${safeDirName}_${componentCounter++}`
     const sourcePath = `$(var.PAYLOAD_DIR)\\${config.dirName}\\${file.relativePath.replace(/\//g, "\\")}`
 
     components.push(`      <Component Id="${id}" Guid="*">`)
