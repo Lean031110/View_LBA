@@ -91,7 +91,7 @@ function generateFragment(config: HarvestConfig, stagingDir: string): string {
   }
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Include xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Fragment>
     <DirectoryRef Id="${config.dirRef}">
 ${components.join("\n")}
@@ -100,7 +100,7 @@ ${components.join("\n")}
 ${componentRefs.join("\n")}
     </ComponentGroup>
   </Fragment>
-</Wix>
+</Include>
 `
 }
 
