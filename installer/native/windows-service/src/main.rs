@@ -61,8 +61,21 @@ fn main() -> ExitCode {
     } else if pico.contains("--run") {
         Action::RunAsService
     } else {
-        eprintln!("viewlba-service: no action specified. Use --help.");
-        return ExitCode::from(2);
+        // No recognized flags — try to start as service (SCM starts without args)
+        // If StartServiceCtrlDispatcherW fails, we're not running as a service
+        // and should print help
+        #[cfg(target_os = "windows")]
+        {
+            // Try service mode — SCM starts the binary without --run
+            let cfg = config::load_config();
+            logging::init(&cfg);
+            return service::run_as_service(&cfg);
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            eprintln!("viewlba-service: no action specified. Use --help.");
+            return ExitCode::from(2);
+        }
     };
 
     let cfg = config::load_config();
