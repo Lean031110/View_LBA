@@ -270,10 +270,29 @@ jobs:
       - name: Install NSIS
         shell: pwsh
         run: |
-          choco install nsis -y --no-progress 2>$null
-          # Add NSIS to PATH
+          # Check if NSIS is already installed
+          $nsisPath = "$env:ProgramFiles (x86)\NSIS\makensis.exe"
+          if (-not (Test-Path $nsisPath)) {
+            Write-Host "NSIS not found, installing..."
+            # Try chocolatey first
+            choco install nsis -y --no-progress --limit-output 2>&1 | Out-Null
+            if (-not (Test-Path $nsisPath)) {
+              Write-Host "Chocolatey failed, downloading NSIS directly..."
+              $url = "https://prdownloads.sourceforge.net/nsis/nsis-3.10-setup.exe"
+              $installer = "$env:TEMP\nsis-setup.exe"
+              Invoke-WebRequest -Uri $url -OutFile $installer -ErrorAction SilentlyContinue
+              if (Test-Path $installer) {
+                Start-Process $installer -ArgumentList "/S" -Wait
+              }
+            }
+          }
+          # Verify
           $env:Path = "$env:ProgramFiles (x86)\NSIS;$env:Path"
-          makensis /VERSION
+          if (Get-Command makensis -ErrorAction SilentlyContinue) {
+            makensis /VERSION
+          } else {
+            throw "makensis not found after install attempts"
+          }
 
       - name: Build Setup.exe bootstrapper
         shell: pwsh
