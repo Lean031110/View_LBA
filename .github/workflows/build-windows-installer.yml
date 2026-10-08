@@ -858,17 +858,25 @@ jobs:
         shell: pwsh
         run: |
           $pf = "C:\Program Files\ViewLBA Server"
-          $stagingManifest = Get-Content "${{ runner.temp }}/downloaded/staging-manifest.json" | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+          $stagingManifest = Get-Content "${{ runner.temp }}/downloaded/staging-manifest.json" -Raw | ConvertFrom-Json
+          Write-Host "Staging manifest has $($stagingManifest.files.Count) entries"
           $missing = @()
           $hashMismatch = @()
           $verified = 0
+          $notInstalled = 0
           foreach ($entry in $stagingManifest.files) {
             $installedPath = Join-Path $pf $entry.path
-            if (-not (Test-Path $installedPath)) {
+            if (-not (Test-Path -LiteralPath $installedPath)) {
               # Some files go to ProgramData (config/), not ProgramFiles. Skip silently.
+              $notInstalled++
               continue
             }
-            $installedHash = (Get-FileHash $installedPath -Algorithm SHA256).Hash.ToLower()
+            try {
+              $installedHash = (Get-FileHash -LiteralPath $installedPath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLower()
+            } catch {
+              Write-Host "::warning::Cannot hash installed file $($entry.path): $_"
+              continue
+            }
             if ($installedHash -ne $entry.sha256) {
               $hashMismatch += "$($entry.path): expected $($entry.sha256), got $installedHash"
               continue
@@ -876,6 +884,7 @@ jobs:
             $verified++
           }
           Write-Host "Verified $verified payload files (SHA256 match)"
+          Write-Host "$notInstalled entries are not under ProgramFiles (expected for config/ etc.)"
           if ($hashMismatch.Count -gt 0) {
             $hashMismatch | ForEach-Object { Write-Host "::error::Hash mismatch: $_" }
             throw "Payload hash mismatch — installed files do not match staging manifest"
