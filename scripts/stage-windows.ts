@@ -187,14 +187,19 @@ function main() {
   // ================================================================
   // 3. app/ — Next.js standalone build (misión §12)
   //    scripts/build.ts produces .next/standalone which contains server.js
+  //    The standalone output INCLUDES node_modules/ with bundled deps — we
+  //    MUST copy this too, or the bun children won't be able to resolve
+  //    imports and will crash immediately on spawn.
   // ================================================================
   const appDir = join(STAGE_DIR, "app")
   ensureDir(appDir)
 
   const standaloneDir = join(REPO_ROOT, ".next", "standalone")
   if (existsSync(standaloneDir)) {
-    copyDir(standaloneDir, appDir, ["node_modules"])
-    console.log(`[stage-windows] ✓ app/ (Next.js standalone)`)
+    // Copy the ENTIRE standalone output, INCLUDING node_modules/ (the bundled
+    // dependencies that Next.js traced as required for runtime).
+    copyDir(standaloneDir, appDir)
+    console.log(`[stage-windows] ✓ app/ (Next.js standalone + node_modules)`)
   } else {
     console.log(`[stage-windows] ⚠ .next/standalone not built (run bun run build first)`)
     writeFileSync(join(appDir, "server.js.placeholder"), "built by bun run build")
@@ -215,12 +220,26 @@ function main() {
     console.log(`[stage-windows] ✓ app/scripts/`)
   }
 
-  // Copy node_modules/.prisma (Prisma client + engines)
+  // Copy node_modules/.prisma (Prisma client + engines) — overlaid on top
+  // of the standalone's node_modules/ to ensure the latest prisma client
+  // (the standalone may include a stale version).
   const prismaClientSrc = join(REPO_ROOT, "node_modules", ".prisma")
   if (existsSync(prismaClientSrc)) {
     copyDir(prismaClientSrc, join(appDir, "node_modules", ".prisma"))
     console.log(`[stage-windows] ✓ app/node_modules/.prisma/ (Prisma client + engines)`)
   }
+
+  // Verify app/server.js + app/node_modules/ exist (sanity check)
+  const serverJs = join(appDir, "server.js")
+  const appNodeModules = join(appDir, "node_modules")
+  if (!existsSync(serverJs)) {
+    throw `[stage-windows] app/server.js MISSING — Next.js standalone build did not produce server.js`
+  }
+  if (!existsSync(appNodeModules)) {
+    throw `[stage-windows] app/node_modules/ MISSING — standalone copy did not include node_modules`
+  }
+  console.log(`[stage-windows] ✓ app/server.js exists`)
+  console.log(`[stage-windows] ✓ app/node_modules/ exists`)
 
   // ================================================================
   // 4. mini-services/ — realtime-service + stream-service

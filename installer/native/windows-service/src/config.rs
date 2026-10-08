@@ -50,11 +50,16 @@ impl Default for Config {
             program_data: program_data_for_self,
             bun_path: runtime_dir.join("bun.exe"),
             app_dir: app_dir_for_self.clone(),
-            app_entry: app_dir_for_self.join("scripts").join("start.ts"),
+            // Next.js standalone produces server.js at the ROOT of the standalone
+            // output. The stage-windows.ts copies .next/standalone/* → app/*
+            // (so app/server.js exists). The standalone server.js uses cwd to
+            // find .next/ and node_modules/ — cwd must be app_dir.
+            app_entry: app_dir_for_self.join("server.js"),
             realtime_dir: mini_services_for_self.clone().join("realtime-service"),
             realtime_entry: mini_services_for_self.join("realtime-service").join("index.ts"),
-            stream_dir: program_data.join("data"),
-            stream_entry: app_dir.join("mini-services").join("stream-service").join("index.ts"),
+            // stream-service is in mini-services/, NOT app/mini-services/
+            stream_dir: mini_services.clone().join("stream-service"),
+            stream_entry: mini_services.join("stream-service").join("index.ts"),
             log_dir: program_data.join("logs"),
             pid_dir: program_data.join("run"),
             pipe_name: r"\\.\pipe\viewlba-service".to_string(),
@@ -81,10 +86,15 @@ pub fn load_config() -> Config {
                     cfg.program_files = install_root.to_path_buf();
                     cfg.bun_path = install_root.join("runtime").join("bun.exe");
                     cfg.app_dir = install_root.join("app");
-                    cfg.app_entry = cfg.app_dir.join("scripts").join("start.ts");
+                    // Next.js standalone produces server.js at the ROOT of the
+                    // standalone output (not under scripts/). The stage-windows.ts
+                    // copies .next/standalone/* → app/* (so app/server.js exists).
+                    cfg.app_entry = cfg.app_dir.join("server.js");
                     cfg.realtime_dir = install_root.join("mini-services").join("realtime-service");
                     cfg.realtime_entry = cfg.realtime_dir.join("index.ts");
-                    cfg.stream_entry = cfg.app_dir.join("mini-services").join("stream-service").join("index.ts");
+                    // stream-service is in mini-services/, NOT app/mini-services/
+                    cfg.stream_dir = install_root.join("mini-services").join("stream-service");
+                    cfg.stream_entry = cfg.stream_dir.join("index.ts");
                     cfg.log_dir = cfg.program_data.join("logs");
                     cfg.pid_dir = cfg.program_data.join("run");
                 }
