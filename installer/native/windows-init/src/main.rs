@@ -12,8 +12,8 @@
 //!    - IF the file already exists → LEAVES IT UNTOUCHED (mission §25: never
 //!      overwrite existing configuration; this protects upgrades).
 //!    - File inherits the restrictive ACL of the parent CONFIG_DIR
-//!      (SYSTEM+Admins full, LocalService RX). No need to set an explicit
-//!      DACL — we do so as defense-in-depth.
+//!      (SYSTEM+Admins full, LocalService RX) — set by WiX via
+//!      <CreateFolder><Permission>... on the CONFIG_DIR component.
 //!
 //! 2. CONFIGURES SCM RECOVERY ACTIONS on the ViewLBA service:
 //!    - 1st failure: Restart service (delay 60s)
@@ -60,49 +60,6 @@ mod win32 {
         let mut v: Vec<u16> = s.encode_utf16().collect();
         v.push(0);
         v
-    }
-
-    /// Set a restrictive DACL on a file using SDDL string:
-    /// D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;LS)(A;;FRFX;;;BU)
-    /// — Protected (P) so inheritance is OFF; explicit ACEs for SYSTEM, Admins,
-    /// LocalService (RX), Built-in Users (RX).
-    ///
-    /// Non-fatal if this fails: the file already inherits a restrictive ACL
-    /// from the parent CONFIG_DIR (set by WiX). We try anyway for defense in
-    /// depth.
-    pub fn set_file_dacl_sddl(path: &std::path::Path, sddl: &str) -> Result<(), String> {
-        use windows::Win32::Security::SECURITY_DESCRIPTOR;
-        use windows::Win32::Security::DACL_SECURITY_INFORMATION;
-        use windows::Win32::Security::Authorization::{
-            ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
-        };
-        use windows::Win32::Storage::FileSystem::SetFileSecurityW;
-
-        unsafe {
-            let path_w = wstr(&path.to_string_lossy());
-            let sddl_w = wstr(sddl);
-            let mut p_sd: *mut c_void = std::ptr::null_mut();
-            let r = ConvertStringSecurityDescriptorToSecurityDescriptorW(
-                PCWSTR(sddl_w.as_ptr()),
-                SDDL_REVISION_1,
-                &mut p_sd,
-                std::ptr::null_mut(),
-            );
-            if r.is_err() {
-                return Err(format!("ConvertStringSDDL failed: {:?}", r));
-            }
-            let r2 = SetFileSecurityW(
-                PCWSTR(path_w.as_ptr()),
-                DACL_SECURITY_INFORMATION,
-                p_sd as *const SECURITY_DESCRIPTOR,
-            );
-            // Free the SD via LocalFree (SDDL allocates with LocalAlloc).
-            let _ = windows::Win32::Foundation::LocalFree(p_sd as *const _ as *mut _);
-            if r2.is_err() {
-                return Err(format!("SetFileSecurityW failed: {:?}", r2));
-            }
-            Ok(())
-        }
     }
 
     /// Configure recovery actions on the ViewLBA service via ChangeServiceConfig2W.
@@ -168,14 +125,12 @@ mod win32 {
         v.push(0);
         v
     }
-    pub fn set_file_dacl_sddl(_p: &std::path::Path, _sddl: &str) -> Result<(), String> {
-        Err("DACLs only supported on Windows".into())
-    }
     pub fn set_service_recovery_actions(_n: &str) -> Result<(), String> {
         Err("SCM only supported on Windows".into())
     }
 }
 
+#[allow(unused_imports)]
 use win32::*;
 
 fn program_data() -> PathBuf {
@@ -292,17 +247,10 @@ fn write_server_env() -> Result<(), String> {
         content.len()
     ));
 
-    // Defense-in-depth: set explicit SDDL on the file too (parent dir ACL
-    // already grants LocalService RX, but explicit is safer).
-    #[cfg(target_os = "windows")]
-    {
-        let sddl = "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;LS)(A;;FRFX;;;BU)";
-        if let Err(e) = win32::set_file_dacl_sddl(&env_path, sddl) {
-            log(&format!("WARN: set_file_dacl_sddl (non-fatal, parent ACL covers): {}", e));
-        } else {
-            log("DACL on server.env: SYSTEM+F, Admins+F, LocalService+RX, Users+R");
-        }
-    }
+    // NOTE: We do NOT set an explicit SDDL DACL on the file. The parent
+    // CONFIG_DIR already has a restrictive ACL set by WiX (SYSTEM+Admins
+    // full, LocalService RX), and the file inherits it by default. This
+    // keeps the binary small and avoids windows-rs API surface complexity.
 
     Ok(())
 }
