@@ -439,6 +439,7 @@ jobs:
           msiexec /i "C:\temp\ViewLBA.msi" /qn /l*v "C:\temp\msi-install.log"
           echo MSI ExitCode: %ERRORLEVEL%
           if %ERRORLEVEL% NEQ 0 if %ERRORLEVEL% NEQ 3010 exit 1
+          timeout /t 10 /nobreak >nul
 
       # ================================================================
       # Verify service: exists + Running + LocalService + StartType=Auto
