@@ -3,6 +3,7 @@
 # Members:
 #   - windows-service: service host (SCM-registered, manages 3 children)
 #   - windows-tray:    tray icon binary (named-pipe IPC client)
+#   - windows-init:    first-boot initializer (writes server.env, sets recovery)
 #
 # Both crates compile to native Windows MSVC binaries. They do NOT cross-compile
 # from Linux because windows-rs requires MSVC linker for windows-targeted
@@ -13,6 +14,7 @@ resolver = "2"
 members = [
     "windows-service",
     "windows-tray",
+    "windows-init",
 ]
 
 [workspace.package]

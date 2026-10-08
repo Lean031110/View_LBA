@@ -65,10 +65,20 @@
         <File Id="file_service" Source="$(var.BUILD_DIR)\viewlba-service.exe" KeyPath="yes" />
         <ServiceInstall Name="ViewLBA" DisplayName="ViewLBA Server"
                         Description="ViewLBA Server native host"
-                        Type="ownProcess" Start="auto"
+                        Type="ownProcess"
+                        Start="auto"
                         Account="NT AUTHORITY\LocalService"
-                        ErrorControl="normal" Vital="yes" />
-        <ServiceControl Name="ViewLBA" Stop="both" Remove="uninstall" Wait="yes" />
+                        ErrorControl="normal"
+                        Vital="yes">
+          <ServiceConfig ResetPeriodInSec="86400"
+                         OnInstall="yes"
+                         OnReinstall="yes"
+                         RebootMessage="ViewLBA Server restarting after failure" />
+          <ServiceFailureAction Type="restart" Delay="60000" />
+          <ServiceFailureAction Type="restart" Delay="60000" />
+          <ServiceFailureAction Type="restart" Delay="60000" />
+        </ServiceInstall>
+        <ServiceControl Name="ViewLBA" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
       </Component>
       <Component Id="cmp_tray" Guid="*">
         <File Id="file_tray" Source="$(var.BUILD_DIR)\viewlba-tray.exe" KeyPath="yes" />
@@ -79,10 +89,27 @@
       <Component Id="cmp_installer" Guid="*">
         <File Id="file_installer" Source="$(var.BUILD_DIR)\viewlba-installer.exe" KeyPath="yes" />
       </Component>
+      <Component Id="cmp_init" Guid="*">
+        <File Id="file_init" Source="$(var.BUILD_DIR)\viewlba-init.exe" KeyPath="yes" />
+      </Component>
       <Component Id="cmp_ico" Guid="*">
         <File Id="file_ico" Source="$(var.BUILD_DIR)\viewlba.ico" KeyPath="yes" />
       </Component>
     </DirectoryRef>
+
+    <!-- Deferred CustomAction: run viewlba-init.exe after InstallFiles,
+         before StartServices. Writes server.env (idempotent) and sets
+         SCM recovery actions on the ViewLBA service. -->
+    <CustomAction Id="RunViewLBAInit"
+                  FileRef="file_init"
+                  ExeCommand=""
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="check" />
+
+    <InstallExecuteSequence>
+      <Custom Action="RunViewLBAInit" Before="StartServices" After="InstallFiles" />
+    </InstallExecuteSequence>
 
     <DirectoryRef Id="RUNTIME_DIR">
       <Component Id="cmp_bun" Guid="*">
@@ -212,7 +239,7 @@
         <RegistryValue Name="Publisher" Value="ViewLBA" Type="string" />
         <RegistryValue Name="InstallLocation" Value="[ProgramFiles64Folder]ViewLBA Server" Type="string" />
         <RegistryValue Name="UninstallString" Value="[System64Folder]msiexec.exe /x [ProductCode]" Type="string" />
-        <RegistryValue Name="DisplayIcon" Value="[BIN_DIR]viewlba-service.exe" Type="string" />
+        <RegistryValue Name="DisplayIcon" Value="[BIN_DIR]viewlba.ico" Type="string" />
         <RegistryValue Name="NoModify" Value="1" Type="integer" />
         <RegistryValue Name="NoRepair" Value="1" Type="integer" />
       </RegistryKey>
@@ -235,6 +262,7 @@
       <ComponentRef Id="cmp_service" />
       <ComponentRef Id="cmp_tray" />
       <ComponentRef Id="cmp_installer" />
+      <ComponentRef Id="cmp_init" />
       <ComponentRef Id="cmp_ico" />
       <ComponentRef Id="cmp_bun" />
       <ComponentRef Id="cmp_config" />
