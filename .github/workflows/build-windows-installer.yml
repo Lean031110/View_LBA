@@ -1119,7 +1119,7 @@ jobs:
 
           # UPGRADE: install current MSI over previous (MajorUpgrade triggers)
           Write-Host "=== [O] Installing current version $version over previous $prev ==="
-          $p = Start-Process msiexec.exe -ArgumentList "/i `"$currentMsi`" /qn" -Wait -PassThru
+          $p = Start-Process msiexec.exe -ArgumentList "/i `"$currentMsi`" /qn /l*v `"C:\temp\msi-upgrade.log`"" -Wait -PassThru
           $ec = $p.ExitCode
           Write-Host "Upgrade ExitCode: $ec"
           if ($ec -notin @(0, 3010)) { throw "Upgrade msiexec failed with exit code $ec" }
