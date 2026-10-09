@@ -270,6 +270,18 @@ impl Supervisor {
     /// MISION §6 + §10: Build EXPLICIT env for each child process.
     /// Loads from ProgramData/ViewLBA/config/server.env and filters by child key.
     /// Does NOT inherit parent env (uses env_clear + explicit set).
+    ///
+    /// CRITICAL: We must ALSO set essential Windows env vars that Bun needs
+    /// to even start:
+    ///   - SYSTEMROOT (so Win32 APIs find system DLLs)
+    ///   - TEMP / TMP (writable temp dir; LocalService's default doesn't work
+    ///     when the service runs as LocalService)
+    ///   - USERPROFILE / HOME (Bun's cache + config dir)
+    ///   - PATH (so child processes can find DLLs; minimal = %SystemRoot%\System32)
+    ///   - PATHEXT (so CreateProcess finds .exe via PATHEXT)
+    ///
+    /// Without SYSTEMROOT, bun.exe crashes on startup with STATUS_STACK_BUFFER_OVERRUN
+    /// (0xC0000409) because the C runtime can't find kernel32.dll.
     fn apply_child_env(&self, cmd: &mut Command, child_key: &str) {
         // Load the production .env from ProgramData
         let env_path = self.cfg.program_data.join("config").join("server.env");
@@ -279,15 +291,52 @@ impl Supervisor {
         // contain dev secrets, runner paths, etc.)
         cmd.env_clear();
 
-        // Each child needs a different subset of env vars
-        // (but we pass ALL of them for simplicity — the children ignore what
-        // they don't need. The important thing is that the env is EXPLICIT
-        // from server.env, not inherited from the OS.)
+        // 1. ESSENTIAL Windows env vars (set BEFORE server.env so server.env
+        //    can override if needed).
+        #[cfg(target_os = "windows")]
+        {
+            // SYSTEMROOT — required by VC++ runtime, kernel32, etc.
+            let systemroot = std::env::var("SYSTEMROOT").unwrap_or_else(|_| r"C:\Windows".to_string());
+            cmd.env("SYSTEMROOT", &systemroot);
+
+            // PATH — minimal path that lets children find DLLs. LocalService
+            // has very limited PATH by default; this makes DLL resolution work.
+            let min_path = format!(
+                r"{}\System32;{}\System32\Wbem;{}\System32\WindowsPowerShell\v1.0",
+                systemroot, systemroot, systemroot
+            );
+            cmd.env("PATH", &min_path);
+
+            // PATHEXT — so CreateProcess finds .exe extensions
+            cmd.env("PATHEXT", ".COM;.EXE;.BAT;.CMD;.VBS;.JS;.WS;.MSC");
+
+            // TEMP / TMP — LocalService's default doesn't work; use ProgramData
+            let temp_dir = self.cfg.program_data.join("cache").join("temp");
+            let _ = std::fs::create_dir_all(&temp_dir);
+            cmd.env("TEMP", temp_dir.to_string_lossy().as_ref());
+            cmd.env("TMP", temp_dir.to_string_lossy().as_ref());
+
+            // USERPROFILE / HOME / APPDATA — Bun's cache + config dir
+            let user_dir = self.cfg.program_data.join("cache").join("home");
+            let _ = std::fs::create_dir_all(&user_dir);
+            cmd.env("USERPROFILE", user_dir.to_string_lossy().as_ref());
+            cmd.env("HOME", user_dir.to_string_lossy().as_ref());
+            cmd.env("APPDATA", user_dir.to_string_lossy().as_ref());
+            cmd.env("LOCALAPPDATA", user_dir.to_string_lossy().as_ref());
+
+            // BUN_INSTALL — Bun's cache root (overrides default ~/.bun which
+            // LocalService can't access).
+            let bun_cache = self.cfg.program_data.join("cache").join("bun");
+            let _ = std::fs::create_dir_all(&bun_cache);
+            cmd.env("BUN_INSTALL", bun_cache.to_string_lossy().as_ref());
+        }
+
+        // 2. server.env vars — these override the essential ones if set.
         for (key, value) in &env_vars {
             cmd.env(key, value);
         }
 
-        // Also set child-specific vars
+        // 3. Child-specific vars
         match child_key {
             "app" => {
                 cmd.env("NODE_ENV", "production");
