@@ -475,24 +475,34 @@ fn grant_wa_via_powershell(root: &std::path::Path) -> Result<(), String> {
 $root = '{root_str}'
 $identity = 'NT AUTHORITY\LocalService'
 $rights = [System.Security.AccessControl.FileSystemRights]::WriteAttributes
-$inhFlags = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+$dirInh = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+$fileInh = [System.Security.AccessControl.InheritanceFlags]::None
 $propFlags = [System.Security.AccessControl.PropagationFlags]::None
 $acType = [System.Security.AccessControl.AccessControlType]::Allow
 
-$items = @($root)
-$items += Get-ChildItem -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+$items = @(@{{ path = $root; isDir = $true }})
+$childItems = Get-ChildItem -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+foreach ($child in $childItems) {{
+    $items += @{{ path = $child.FullName; isDir = $child.PSIsContainer }}
+}}
+
 $count = 0
 $failed = 0
 foreach ($item in $items) {{
     try {{
-        $acl = Get-Acl -LiteralPath $item
+        $acl = Get-Acl -LiteralPath $item.path
+        # Use different inheritance flags for files vs directories.
+        # Files CANNOT have inheritance flags (they have no children).
+        # .NET throws "No flags can be set" if you pass inheritance flags
+        # to a file's FileSystemAccessRule.
+        $inhFlags = if ($item.isDir) {{ $dirInh }} else {{ $fileInh }}
         $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($identity, $rights, $inhFlags, $propFlags, $acType)
         $acl.AddAccessRule($rule)
-        Set-Acl -LiteralPath $item -AclObject $acl
+        Set-Acl -LiteralPath $item.path -AclObject $acl
         $count++
     }} catch {{
         $failed++
-        Write-Host "  WARN: $item : $_"
+        if ($failed -le 10) {{ Write-Host "  WARN: $($item.path) : $_" }}
     }}
 }}
 Write-Host "WA granted to LocalService on $count items ($failed failed)"
