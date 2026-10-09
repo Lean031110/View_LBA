@@ -321,7 +321,13 @@ fn grant_localservice_rx_program_files() -> Result<(), String> {
         + r"\System32\icacls.exe";
 
     let path_str = pf.to_string_lossy();
-    let subject = "NT AUTHORITY\\LocalService:(OI)(CI)RX";
+    // Use the SID S-1-5-19 directly (asterisk prefix tells icacls to treat
+    // the input as a SID, not a name). This avoids any name-resolution
+    // ambiguity between "NT AUTHORITY\LocalService" and "NT AUTHORITY\LOCAL SERVICE"
+    // — both resolve to S-1-5-19, but the SID is unambiguous.
+    // The grant uses (OI)(CI) so the ACL is inheritable by all subdirs and
+    // files recursively (combined with /T).
+    let subject = "*S-1-5-19:(OI)(CI)RX";
 
     log(&format!("Running icacls to grant LocalService RX on {} (recursive)", path_str));
 
@@ -330,7 +336,6 @@ fn grant_localservice_rx_program_files() -> Result<(), String> {
         .arg("/grant")
         .arg(subject)
         .arg("/T")  // recursive
-        .arg("/L")  // avoid following symlinks
         .arg("/Q")  // quiet (less output)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -349,7 +354,7 @@ fn grant_localservice_rx_program_files() -> Result<(), String> {
         ));
     }
 
-    log(&format!("icacls OK — LocalService RX granted recursively on {}", path_str));
+    log(&format!("icacls OK — LocalService (S-1-5-19) RX granted recursively on {}", path_str));
     Ok(())
 }
 

@@ -937,16 +937,30 @@ jobs:
           Write-Host "=== ACL on C:\Program Files\ViewLBA Server\app\server.js ==="
           & icacls "C:\Program Files\ViewLBA Server\app\server.js" 2>&1 | ForEach-Object { Write-Host $_ }
           Write-Host ""
-          Write-Host "=== ACL on C:\Program Files\ViewLBA Server\app (dir) ==="
-          & icacls "C:\Program Files\ViewLBA Server\app" 2>&1 | ForEach-Object { Write-Host $_ }
-          Write-Host ""
-          Write-Host "=== ACL on C:\Program Files\ViewLBA Server (root) ==="
-          & icacls "C:\Program Files\ViewLBA Server" 2>&1 | ForEach-Object { Write-Host $_ }
-          Write-Host ""
-          Write-Host "=== LocalService SID ==="
-          & icacls "C:\Program Files\ViewLBA Server\app\server.js" /findsid "NT AUTHORITY\LocalService" 2>&1 | ForEach-Object { Write-Host $_ }
+
+          # Diagnostic: try reading the file as the runner user (should always work)
+          Write-Host "=== Reading app/server.js as runner user ==="
+          try {
+            $content = Get-Content "C:\Program Files\ViewLBA Server\app\server.js" -TotalCount 5
+            $content | ForEach-Object { Write-Host "  $_" }
+            Write-Host "OK: runner user can read app/server.js"
+          } catch {
+            Write-Host "::error::runner user CANNOT read app/server.js: $_"
+          }
           Write-Host ""
 
+          # Diagnostic: ALSO grant Everyone RX (test if LocalService grant
+          # isn't enough for some reason)
+          Write-Host "=== Granting Everyone RX on ProgramFiles (diagnostic) ==="
+          & icacls "C:\Program Files\ViewLBA Server" /grant "Everyone:(OI)(CI)RX" /T /Q 2>&1 | ForEach-Object { Write-Host $_ }
+          Write-Host ""
+
+          # Restart service to clear backoff state (so children respawn immediately)
+          Write-Host "=== Restarting ViewLBA service (to clear backoff) ==="
+          Restart-Service -Name "ViewLBA" -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 15
+
+          # Now check children
           $procs = Get-Process -ErrorAction SilentlyContinue | Where-Object {
             $_.ProcessName -match "viewlba-service|bun"
           }
@@ -961,6 +975,10 @@ jobs:
             Write-Host "=== realtime.err.log (last 10 lines) ==="
             if (Test-Path "C:\ProgramData\ViewLBA\logs\realtime.err.log") {
               Get-Content "C:\ProgramData\ViewLBA\logs\realtime.err.log" -Tail 10 | ForEach-Object { Write-Host "  $_" }
+            }
+            Write-Host "=== stream.err.log (last 10 lines) ==="
+            if (Test-Path "C:\ProgramData\ViewLBA\logs\stream.err.log") {
+              Get-Content "C:\ProgramData\ViewLBA\logs\stream.err.log" -Tail 10 | ForEach-Object { Write-Host "  $_" }
             }
             throw "Child processes not started — service host may be running but children are dead"
           }
