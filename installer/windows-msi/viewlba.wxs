@@ -18,7 +18,7 @@
                         Manufacturer="ViewLBA" />
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of ViewLBA Server is already installed."
-                  Schedule="afterInstallInitialize" />
+                  Schedule="afterInstallFinalize" />
 
     <Media Id="1" Cabinet="viewlba.cab" EmbedCab="yes" />
 
