@@ -933,12 +933,35 @@ jobs:
       - name: Verify child processes started (STRICT)
         shell: pwsh
         run: |
+          # Diagnostic: dump the ACL on app/server.js to verify LocalService RX
+          Write-Host "=== ACL on C:\Program Files\ViewLBA Server\app\server.js ==="
+          & icacls "C:\Program Files\ViewLBA Server\app\server.js" 2>&1 | ForEach-Object { Write-Host $_ }
+          Write-Host ""
+          Write-Host "=== ACL on C:\Program Files\ViewLBA Server\app (dir) ==="
+          & icacls "C:\Program Files\ViewLBA Server\app" 2>&1 | ForEach-Object { Write-Host $_ }
+          Write-Host ""
+          Write-Host "=== ACL on C:\Program Files\ViewLBA Server (root) ==="
+          & icacls "C:\Program Files\ViewLBA Server" 2>&1 | ForEach-Object { Write-Host $_ }
+          Write-Host ""
+          Write-Host "=== LocalService SID ==="
+          & icacls "C:\Program Files\ViewLBA Server\app\server.js" /findsid "NT AUTHORITY\LocalService" 2>&1 | ForEach-Object { Write-Host $_ }
+          Write-Host ""
+
           $procs = Get-Process -ErrorAction SilentlyContinue | Where-Object {
             $_.ProcessName -match "viewlba-service|bun"
           }
           if (-not $procs -or $procs.Count -lt 2) {
             Write-Host "::error::Expected viewlba-service.exe + at least one bun.exe child. Found: $($procs.Count)"
             $procs | ForEach-Object { Write-Host "  PID=$($_.Id) Name=$($_.ProcessName)" }
+            Write-Host ""
+            Write-Host "=== app.err.log (last 10 lines) ==="
+            if (Test-Path "C:\ProgramData\ViewLBA\logs\app.err.log") {
+              Get-Content "C:\ProgramData\ViewLBA\logs\app.err.log" -Tail 10 | ForEach-Object { Write-Host "  $_" }
+            }
+            Write-Host "=== realtime.err.log (last 10 lines) ==="
+            if (Test-Path "C:\ProgramData\ViewLBA\logs\realtime.err.log") {
+              Get-Content "C:\ProgramData\ViewLBA\logs\realtime.err.log" -Tail 10 | ForEach-Object { Write-Host "  $_" }
+            }
             throw "Child processes not started — service host may be running but children are dead"
           }
           Write-Host "OK: Found $($procs.Count) processes (service host + children)"
