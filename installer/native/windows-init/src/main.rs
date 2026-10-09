@@ -1,7 +1,7 @@
 //! viewlba-init.exe — deterministic first-boot initializer for ViewLBA Server.
 //!
 //! Runs as a WiX CustomAction (deferred, NoImpersonate → as LocalSystem) during
-//! MSI install. Performs two deterministic, idempotent operations:
+//! MSI install. Performs four deterministic, idempotent operations:
 //!
 //! 1. WRITES server.env (if missing) at %PROGRAMDATA%\ViewLBA\config\server.env
 //!    - Template source: %ProgramData%\ViewLBA\config\server.env.example
@@ -20,7 +20,7 @@
 //!      or PowerShell — honors the mission's "no NSSM, no PowerShell, no CMD"
 //!      rule for RUNTIME; the MSI installer CustomAction can use any Win32 API)
 //!    - Command: icacls "C:\Program Files\ViewLBA Server"
-//!                 /grant "NT AUTHORITY\LocalService:(OI)(CI)RX" /T
+//!                 /grant "*S-1-5-19:(OI)(CI)RX" /T /Q
 //!    - (OI)(CI) = Object Inherit + Container Inherit (propagates to all files+subdirs)
 //!    - This is REQUIRED because WiX v4's <Permission> element on <CreateFolder>
 //!      only applies to the directory's ACL — it does NOT propagate to files
@@ -28,13 +28,41 @@
 //!      mini-services/, etc. would otherwise get the DEFAULT ACL which excludes
 //!      LocalService → bun children fail with EPERM on read.
 //!
-//! 3. CONFIGURES SCM RECOVERY ACTIONS on the ViewLBA service:
+//! 3. GRANTS LocalService WA (FILE_WRITE_ATTRIBUTES) on the app/ and
+//!    mini-services/ subtrees ONLY (recursive, in addition to RX):
+//!    - Command: icacls "C:\Program Files\ViewLBA Server\app"
+//!                 /grant "*S-1-5-19:(OI)(CI)WA" /T /Q
+//!      (same for mini-services/)
+//!    - WA = Write Attributes (FILE_WRITE_ATTRIBUTES) — NOT Write Data, NOT
+//!      Modify, NOT Full Control. WA allows changing file metadata (timestamps,
+//!      attributes) but NOT file contents.
+//!    - This is REQUIRED for Bun's Windows module loader. Reference:
+//!      https://github.com/oven-sh/bun/issues/44626 (Oct 2026)
+//!      Bun's module loader on Windows opens files via CreateFileW with an
+//!      access mask that includes FILE_WRITE_ATTRIBUTES. When the calling
+//!      account has only RX (no WA), CreateFileW fails with ERROR_ACCESS_DENIED
+//!      (5), which Bun surfaces as the misleading "EPERM reading <path>"
+//!      error. readFileSync works (uses a different access mask), but
+//!      `import`/`require` of the SAME file fails — exactly matching the
+//!      ViewLBA symptom where bun --version works as runner user but
+//!      bun app/server.js fails with EPERM reading app/server.js.
+//!    - The fix is narrowly scoped: WA is granted ONLY on app/ and
+//!      mini-services/ (where Bun loads modules), NOT on the entire
+//!      ProgramFiles tree. RX is preserved everywhere. WA does NOT
+//!      grant Write Data, Modify, or Full Control.
+//!    - Idempotent: re-running on upgrade is a no-op (granting an ACE that
+//!      already exists is a no-op).
+//!
+//! 4. CONFIGURES SCM RECOVERY ACTIONS on the ViewLBA service:
 //!    - 1st failure: Restart service (delay 60s)
 //!    - 2nd failure: Restart service (delay 60s)
 //!    - Subsequent failures: Restart service (delay 60s)
 //!    - Reset failure counter after 86400s (24h)
 //!    - Uses ChangeServiceConfig2W directly — no sc.exe, no PowerShell,
 //!      no CMD. Mission: "no NSSM, no PowerShell, no CMD".
+//!    - FATAL if it fails when the service should already be registered
+//!      (the deferred CustomAction runs AFTER InstallServices, so the
+//!      ViewLBA service MUST exist by the time we call OpenServiceW).
 //!
 //! Exits 0 on success, non-zero on any failure. The MSI CustomAction has
 //! `Return="check"`, so any non-zero exit fails the install.
@@ -44,6 +72,8 @@
 //!   - No secrets printed. The .env contains them, but logs only say "created".
 //!   - Idempotent: re-running on upgrade leaves server.env untouched.
 //!   - icacls is idempotent (granting an ACE that already exists is a no-op).
+//!   - WA is granted ONLY on app/ and mini-services/ (Bun module trees).
+//!     Other ProgramFiles dirs (bin/, runtime/, themes/, public/) only get RX.
 
 use std::env;
 use std::fs;
@@ -280,6 +310,15 @@ fn write_server_env() -> Result<(), String> {
 }
 
 fn configure_recovery() -> Result<(), String> {
+    // The deferred CustomAction runs AFTER InstallServices, so the ViewLBA
+    // service MUST already be registered in SCM by the time we get here.
+    // If OpenServiceW fails, that's a sequencing bug in the MSI — we treat
+    // it as FATAL so the install fails and CI can detect it.
+    //
+    // Previous behavior (warn + continue) was a regression: it allowed the
+    // install to "succeed" without recovery actions configured, which then
+    // failed the smoke-test's "Verify recovery actions" check. The user
+    // explicitly required recovery to be blocking (mission §4).
     #[cfg(target_os = "windows")]
     {
         if let Err(e) = win32::set_service_recovery_actions("ViewLBA") {
@@ -290,46 +329,19 @@ fn configure_recovery() -> Result<(), String> {
     Ok(())
 }
 
-/// Grant LocalService RX on the entire ProgramFiles tree (recursive).
+/// Helper: run `icacls <path> /grant "<subject>" /T /Q` and return Ok on
+/// success, Err with detailed message on failure.
 ///
-/// The WiX <Permission> element on <CreateFolder> only applies to the directory
-/// itself — it does NOT propagate to files installed by <File> elements (this is
-/// a known WiX v4 behavior). As a result, files in app/, mini-services/, etc.
-/// get the DEFAULT ACL which doesn't include LocalService RX → bun children
-/// spawned by the service host fail with EPERM on read.
-///
-/// Fix: spawn `icacls` (a standard Windows binary, NOT cmd.exe or PowerShell —
-/// this honors the mission's "no CMD, no PowerShell" rule for RUNTIME; the MSI
-/// installer CustomAction can use any Win32 API) to recursively grant
-/// LocalService RX on the entire ProgramFiles tree.
-///
-/// Command:
-///   icacls "C:\Program Files\ViewLBA Server" /grant "NT AUTHORITY\LocalService:(OI)(CI)RX" /T
-///
-/// (OI)(CI) = Object Inherit + Container Inherit → applies to all subdirs and files
-/// /T = recursive
-fn grant_localservice_rx_program_files() -> Result<(), String> {
-    let pf = program_files().join("ViewLBA Server");
-
-    if !pf.exists() {
-        return Err(format!("ProgramFiles dir not found: {}", pf.display()));
-    }
-
-    // icacls is in System32 (part of Windows, not cmd.exe or PowerShell)
+/// `path`    — the target directory or file
+/// `subject` — the ACE spec, e.g., "*S-1-5-19:(OI)(CI)RX"
+/// `label`   — human-readable description for logging
+fn icacls_grant(path: &std::path::Path, subject: &str, label: &str) -> Result<(), String> {
     let icacls = std::env::var("SYSTEMROOT")
         .unwrap_or_else(|_| r"C:\Windows".to_string())
         + r"\System32\icacls.exe";
 
-    let path_str = pf.to_string_lossy();
-    // Use the SID S-1-5-19 directly (asterisk prefix tells icacls to treat
-    // the input as a SID, not a name). This avoids any name-resolution
-    // ambiguity between "NT AUTHORITY\LocalService" and "NT AUTHORITY\LOCAL SERVICE"
-    // — both resolve to S-1-5-19, but the SID is unambiguous.
-    // The grant uses (OI)(CI) so the ACL is inheritable by all subdirs and
-    // files recursively (combined with /T).
-    let subject = "*S-1-5-19:(OI)(CI)RX";
-
-    log(&format!("Running icacls to grant LocalService RX on {} (recursive)", path_str));
+    let path_str = path.to_string_lossy();
+    log(&format!("Running icacls: {} ({})", path_str, label));
 
     let output = std::process::Command::new(&icacls)
         .arg(path_str.as_ref())
@@ -347,14 +359,76 @@ fn grant_localservice_rx_program_files() -> Result<(), String> {
 
     if !output.status.success() {
         return Err(format!(
-            "icacls failed with exit code {:?} — stdout: {} — stderr: {}",
+            "icacls FAILED (exit {:?}) for {} — stdout: {} — stderr: {}",
             output.status.code(),
+            path_str,
             stdout.trim(),
             stderr.trim()
         ));
     }
 
-    log(&format!("icacls OK — LocalService (S-1-5-19) RX granted recursively on {}", path_str));
+    log(&format!("icacls OK: {} ({})", path_str, label));
+    Ok(())
+}
+
+/// Grant LocalService RX on the entire ProgramFiles tree (recursive).
+///
+/// The WiX <Permission> element on <CreateFolder> only applies to the directory
+/// itself — it does NOT propagate to files installed by <File> elements (this is
+/// a known WiX v4 behavior). As a result, files in app/, mini-services/, etc.
+/// get the DEFAULT ACL which doesn't include LocalService RX → bun children
+/// spawned by the service host fail with EPERM on read.
+///
+/// We use icacls.exe (a standard Windows binary in System32 — NOT cmd.exe or
+/// PowerShell; this honors the mission's "no NSSM, no PowerShell, no CMD" rule
+/// for RUNTIME; the MSI installer CustomAction can use any Win32 API).
+///
+/// Uses the SID S-1-5-19 directly (asterisk prefix) to avoid any name-resolution
+/// ambiguity.
+fn grant_localservice_rx_program_files() -> Result<(), String> {
+    let pf = program_files().join("ViewLBA Server");
+    if !pf.exists() {
+        return Err(format!("ProgramFiles dir not found: {}", pf.display()));
+    }
+    // (OI)(CI) = Object Inherit + Container Inherit → applies to all subdirs and
+    // files recursively (combined with /T).
+    icacls_grant(&pf, "*S-1-5-19:(OI)(CI)RX", "LocalService RX on ProgramFiles (recursive)")
+}
+
+/// Grant LocalService WA (FILE_WRITE_ATTRIBUTES) on app/ and mini-services/ ONLY.
+///
+/// Bun's Windows module loader opens files via CreateFileW with an access mask
+/// that includes FILE_WRITE_ATTRIBUTES (WA). When the calling account has only
+/// RX (no WA), CreateFileW fails with ERROR_ACCESS_DENIED, which Bun surfaces
+/// as the misleading "EPERM reading <path>" error.
+///
+/// Reference: https://github.com/oven-sh/bun/issues/44626 (Oct 2026)
+///
+/// The fix is narrowly scoped:
+///   - WA is granted ONLY on app/ and mini-services/ (Bun module trees)
+///   - RX is preserved everywhere (from grant_localservice_rx_program_files)
+///   - WA does NOT grant Write Data, Modify, or Full Control — only
+///     FILE_WRITE_ATTRIBUTES (changing file metadata like timestamps)
+///   - Other ProgramFiles dirs (bin/, runtime/, themes/, public/) only get RX
+///
+/// This is in addition to RX, not a replacement.
+fn grant_localservice_wa_app_dirs() -> Result<(), String> {
+    let pf = program_files().join("ViewLBA Server");
+    let app_dir = pf.join("app");
+    let mini_dir = pf.join("mini-services");
+
+    // app/ — Bun loads Next.js standalone server.js + .next/ + node_modules/ from here
+    if !app_dir.exists() {
+        return Err(format!("app/ dir not found: {}", app_dir.display()));
+    }
+    icacls_grant(&app_dir, "*S-1-5-19:(OI)(CI)WA", "LocalService WA on app/ (Bun module loader)")?;
+
+    // mini-services/ — Bun loads realtime-service/index.ts + stream-service/index.ts
+    if !mini_dir.exists() {
+        return Err(format!("mini-services/ dir not found: {}", mini_dir.display()));
+    }
+    icacls_grant(&mini_dir, "*S-1-5-19:(OI)(CI)WA", "LocalService WA on mini-services/ (Bun module loader)")?;
+
     Ok(())
 }
 
@@ -366,22 +440,31 @@ fn main() -> ExitCode {
         return ExitCode::from(1);
     }
 
-    // Grant LocalService RX on ProgramFiles (recursive). CRITICAL: without this,
-    // bun children spawned by the service host (running as LocalService) fail
-    // with EPERM reading files like app/server.js, mini-services/.../index.ts.
+    // 1. Grant LocalService RX on ProgramFiles (recursive). CRITICAL: without this,
+    // bun children spawned by the service host (running as LocalService) cannot
+    // read files like app/server.js, mini-services/.../index.ts.
     if let Err(e) = grant_localservice_rx_program_files() {
         log(&format!("FATAL: grant_localservice_rx_program_files: {}", e));
         return ExitCode::from(2);
     }
 
-    // Recovery: if the service hasn't been installed yet (race condition with
-    // ServiceInstall), this will fail. We log the error but do NOT abort the
-    // install — the recovery actions can be re-applied on next repair cycle
-    // by re-running viewlba-init.exe (idempotent). However, we DO log so the
-    // CI can detect mis-sequencing.
+    // 2. Grant LocalService WA on app/ + mini-services/ ONLY. CRITICAL: Bun's
+    // Windows module loader uses CreateFileW with FILE_WRITE_ATTRIBUTES in the
+    // access mask. Without WA, Bun fails with "EPERM reading <path>" even when
+    // RX is granted. Reference: https://github.com/oven-sh/bun/issues/44626
+    if let Err(e) = grant_localservice_wa_app_dirs() {
+        log(&format!("FATAL: grant_localservice_wa_app_dirs: {}", e));
+        return ExitCode::from(3);
+    }
+
+    // 3. Configure SCM recovery actions. FATAL if it fails — the deferred
+    // CustomAction runs AFTER InstallServices, so the ViewLBA service MUST
+    // already exist in SCM by the time we call OpenServiceW. Previous
+    // behavior (warn + continue) was a regression that allowed the install
+    // to succeed without recovery actions configured.
     if let Err(e) = configure_recovery() {
-        log(&format!("WARN: configure_recovery: {}", e));
-        // Non-fatal for first install. On repair (service exists), this is fatal.
+        log(&format!("FATAL: configure_recovery: {}", e));
+        return ExitCode::from(4);
     }
 
     log("viewlba-init complete");

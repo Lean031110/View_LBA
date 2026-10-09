@@ -929,63 +929,77 @@ jobs:
 
       # ================================================================
       # Verify child processes started (Bun + service host + at least one child)
+      # Dumps effective ACLs on the 4 entry files to verify RX + WA grants
+      # from viewlba-init.exe were applied by the MSI install (not by hand).
       # ================================================================
       - name: Verify child processes started (STRICT)
         shell: pwsh
         run: |
-          # Diagnostic: dump the ACL on app/server.js to verify LocalService RX
-          Write-Host "=== ACL on C:\Program Files\ViewLBA Server\app\server.js ==="
-          & icacls "C:\Program Files\ViewLBA Server\app\server.js" 2>&1 | ForEach-Object { Write-Host $_ }
-          Write-Host ""
-
-          # CRITICAL HYPOTHESIS: Windows Defender real-time AV may be holding
-          # the file open with non-share-read access. Disable Defender for the
-          # install path BEFORE the service starts the children.
-          # If this fixes it, the root cause is AV scanning.
-          Write-Host "=== Disabling Windows Defender real-time AV for ViewLBA path ==="
-          try {
-            Add-MpPreference -ExclusionPath "C:\Program Files\ViewLBA Server" -ErrorAction Stop
-            Add-MpPreference -ExclusionProcess "bun.exe" -ErrorAction Stop
-            Add-MpPreference -ExclusionProcess "viewlba-service.exe" -ErrorAction Stop
-            Write-Host "OK: Defender exclusions added"
-          } catch {
-            Write-Host "::warning::Could not add Defender exclusion: $_"
-          }
-          Write-Host ""
-
-          # CRITICAL: Stop the service and verify the file is no longer being held
-          Write-Host "=== Stopping ViewLBA service ==="
-          Stop-Service -Name "ViewLBA" -Force -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 5
-
-          # Wait 30s for any AV/MSI handles to release
-          Write-Host "=== Waiting 30s for any file handles to release ==="
-          Start-Sleep -Seconds 30
-
-          # Now check if file is readable by the runner user
-          Write-Host "=== Verifying file is readable after stop ==="
-          try {
-            $bytes = [System.IO.File]::ReadAllBytes("C:\Program Files\ViewLBA Server\app\server.js")
-            Write-Host "OK: file readable ($($bytes.Length) bytes)"
-          } catch {
-            Write-Host "::error::file NOT readable: $_"
+          $pf = "C:\Program Files\ViewLBA Server"
+          # 4 entry files we expect Bun to load (with RX + WA from viewlba-init.exe):
+          $aclTargets = @(
+            @{ path = "$pf\app\server.js";                                label = "app/server.js (Next.js standalone entry)" },
+            @{ path = "$pf\mini-services\realtime-service\index.ts";      label = "realtime-service/index.ts" },
+            @{ path = "$pf\mini-services\stream-service\index.ts";       label = "stream-service/index.ts" }
+          )
+          # Add a real JS module from app/node_modules (if any exists)
+          $nmJs = Get-ChildItem -Path "$pf\app\node_modules" -Recurse -File -Filter "*.js" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($nmJs) {
+            $aclTargets += @{ path = $nmJs.FullName; label = "app/node_modules/.../$($nmJs.Name) (real JS module)" }
+          } else {
+            Write-Host "::warning::No .js file found under app/node_modules — skipping that ACL dump"
           }
 
-          # Diagnostic: try reading the file as the runner user (should always work)
-          Write-Host "=== Reading app/server.js as runner user ==="
-          try {
-            $content = Get-Content "C:\Program Files\ViewLBA Server\app\server.js" -TotalCount 5
-            $content | ForEach-Object { Write-Host "  $_" }
-            Write-Host "OK: runner user can read app/server.js"
-          } catch {
-            Write-Host "::error::runner user CANNOT read app/server.js: $_"
+          # Dump effective ACL on each target. Each must show:
+          #   NT AUTHORITY\LOCAL SERVICE:(I)(RX)        ← from grant_localservice_rx_program_files
+          #   NT AUTHORITY\LOCAL SERVICE:(I)(WA)        ← from grant_localservice_wa_app_dirs
+          # (or a combined ACE like (RX,W,A) — the exact format depends on
+          # icacls rendering, but BOTH permissions must appear.)
+          $aclFailures = @()
+          foreach ($t in $aclTargets) {
+            Write-Host ""
+            Write-Host "=== ACL on $($t.label) ==="
+            Write-Host "Path: $($t.path)"
+            if (-not (Test-Path -LiteralPath $t.path)) {
+              Write-Host "::error::FILE MISSING: $($t.path)"
+              $aclFailures += $t.label
+              continue
+            }
+            $aclOutput = & icacls $t.path 2>&1
+            $aclOutput | ForEach-Object { Write-Host "  $_" }
+            $aclStr = $aclOutput | Out-String
+            # Check for LocalService presence (with or without spaces)
+            $hasLocalService = $aclStr -match "LOCAL\s*SERVICE" -or $aclStr -match "S-1-5-19"
+            # Look for RX and WA in the LocalService ACE
+            $lsLine = $aclOutput | Where-Object { $_ -match "LOCAL\s*SERVICE" -or $_ -match "S-1-5-19" } | Out-String
+            $hasRX = $lsLine -match "\(.*R" -or $lsLine -match "RX"
+            $hasWA = $lsLine -match "WA" -or $lsLine -match "W,A"
+            if (-not $hasLocalService) {
+              Write-Host "::error::LocalService NOT in ACL for $($t.label)"
+              $aclFailures += "$($t.label) (no LocalService)"
+            } elseif (-not $hasRX) {
+              Write-Host "::error::LocalService has RX MISSING for $($t.label)"
+              $aclFailures += "$($t.label) (no RX)"
+            } elseif (-not $hasWA) {
+              Write-Host "::error::LocalService has WA MISSING for $($t.label) — Bun module loader will fail with EPERM"
+              Write-Host "  (see https://github.com/oven-sh/bun/issues/44626 — Bun needs FILE_WRITE_ATTRIBUTES)"
+              $aclFailures += "$($t.label) (no WA)"
+            } else {
+              Write-Host "OK: LocalService has RX+WA on $($t.label)"
+            }
           }
-          Write-Host ""
 
-          # Restart service to clear backoff state (so children respawn immediately)
-          Write-Host "=== Restarting ViewLBA service ==="
-          Start-Service -Name "ViewLBA"
-          Start-Sleep -Seconds 15
+          Write-Host ""
+          if ($aclFailures.Count -gt 0) {
+            Write-Host "::error::ACL verification FAILED on $($aclFailures.Count) file(s):"
+            $aclFailures | ForEach-Object { Write-Host "  - $_" }
+            Write-Host ""
+            Write-Host "The MSI install's viewlba-init.exe CustomAction should have applied these"
+            Write-Host "via icacls. If they're missing, viewlba-init.exe failed OR the ACLs were"
+            Write-Host "reset after install. Check C:\ProgramData\ViewLBA\logs\init.log for errors."
+            throw "ACL verification failed — LocalService missing RX+WA on Bun entry files"
+          }
+          Write-Host "=== All ACLs verified: LocalService RX+WA on every Bun entry file ==="
 
           # Now check children
           $procs = Get-Process -ErrorAction SilentlyContinue | Where-Object {
@@ -995,6 +1009,14 @@ jobs:
             Write-Host "::error::Expected viewlba-service.exe + at least one bun.exe child. Found: $($procs.Count)"
             $procs | ForEach-Object { Write-Host "  PID=$($_.Id) Name=$($_.ProcessName)" }
             Write-Host ""
+            Write-Host "=== service-host.log (last 15 lines) ==="
+            if (Test-Path "C:\ProgramData\ViewLBA\logs\service-host.log") {
+              Get-Content "C:\ProgramData\ViewLBA\logs\service-host.log" -Tail 15 | ForEach-Object { Write-Host "  $_" }
+            }
+            Write-Host "=== init.log (full) ==="
+            if (Test-Path "C:\ProgramData\ViewLBA\logs\init.log") {
+              Get-Content "C:\ProgramData\ViewLBA\logs\init.log" | ForEach-Object { Write-Host "  $_" }
+            }
             Write-Host "=== app.err.log (last 10 lines) ==="
             if (Test-Path "C:\ProgramData\ViewLBA\logs\app.err.log") {
               Get-Content "C:\ProgramData\ViewLBA\logs\app.err.log" -Tail 10 | ForEach-Object { Write-Host "  $_" }

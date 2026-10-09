@@ -1073,3 +1073,129 @@ que pasan son bloqueantes y verifican requisitos reales.
 
 **No cerrar Fase 2** hasta que el issue EPERM se resuelva y el smoke test
 pase completamente (incluyendo health :3000/:3004, O/P/R/S, upgrade real).
+
+---
+
+## 14. Corrección — Bun EPERM es por falta de WA (no SHARING_VIOLATION)
+
+> **Fecha**: 2026-10-09 (posterior a §13)
+> **Commit**: TBD (este documento se actualiza antes del commit)
+> **Referencia**: https://github.com/oven-sh/bun/issues/44626 (Oct 2026)
+
+### 14.1 Retracción de la afirmación "EPERM = SHARING_VIOLATION"
+
+§13.2 afirmó: *"Bun's EPERM on Windows maps to ERROR_SHARING_VIOLATION
+(32), NOT ERROR_ACCESS_DENIED."*
+
+**Esa afirmación NO está demostrada.** No se capturó el código Win32
+real devuelto por `CreateFileW` en el proceso Bun. Mapear EPERM a
+ERROR_SHARING_VIOLATION fue una conjetura basada en suposiciones sobre
+el código fuente de Bun, no en evidencia empírica del fallo concreto.
+
+El error EPERM en Bun puede provenir tanto de ERROR_ACCESS_DENIED (5)
+como de ERROR_SHARING_VIOLATION (32) — ambos se mapean a
+`ErrorKind::PermissionDenied` en Rust, que Bun reporta como "EPERM".
+Sin un captura del código Win32 real, NO se puede afirmar cuál de los
+dos está sucediendo.
+
+### 14.2 Hipótesis confirmada por evidencia externa: Bun necesita WA
+
+El reporte https://github.com/oven-sh/bun/issues/44626 (publicado el
+6 de octubre de 2026) reproduce un fallo equivalente con Bun 1.3.14 en
+Windows: un programa puede leer el archivo mediante `readFileSync`,
+pero el cargador de módulos falla con `EPERM` si la cuenta solo tiene
+lectura y ejecución. El autor del reporte verificó que conceder
+`FILE_WRITE_ATTRIBUTES` (`WA`) al archivo afectado permite cargar el
+módulo.
+
+Esto encaja directamente con los síntomas de ViewLBA:
+- `bun --version` funciona como runner user (no carga módulos)
+- `bun app/server.js` falla con EPERM (carga el módulo via el cargador)
+- La ACL solo tenía `RX` (sin `WA`)
+- El archivo ES legible por `readFileSync` (verificado: 7319 bytes)
+
+La hipótesis es que Bun's module loader abre los archivos con una
+máscara de acceso que incluye `FILE_WRITE_ATTRIBUTES`, incluso para
+lectura. Cuando la ACL no incluye `WA`, `CreateFileW` devuelve
+`ERROR_ACCESS_DENIED` (5), que Bun reporta como "EPERM reading".
+
+### 14.3 Hipótesis retiradas (sin evidencia suficiente)
+
+Las siguientes hipótesis de §13.3 ya NO se consideran prioritarias:
+
+1. ❌ **Bun JIT requiere privilegio LocalService falta** — sin evidencia
+2. ❌ **Mandatory Integrity Control** — sin evidencia; el runner user
+   (también MEDIUM integrity) puede leer el archivo
+3. ❌ **Path with spaces** — sin evidencia; `bun --version` funciona
+4. ❌ **CreateProcess token filtering** — sin evidencia
+
+Estas hipótesis NO se descartan definitivamente, pero dejan de ser
+prioritarias. Si la concesión de `WA` no resuelve el problema, se
+construirá una reproducción mínima bajo LocalService y se capturará
+el código Win32 real devuelto por `CreateFileW` antes de proponer
+cualquier cambio de runtime.
+
+### 14.4 Corrección aplicada — viewlba-init.exe concede WA en app/ y mini-services/
+
+**Archivo modificado**: `installer/native/windows-init/src/main.rs`
+
+**Cambio**:
+- Nueva función `grant_localservice_wa_app_dirs()` que ejecuta:
+  ```
+  icacls "C:\Program Files\ViewLBA Server\app"
+         /grant "*S-1-5-19:(OI)(CI)WA" /T /Q
+  icacls "C:\Program Files\ViewLBA Server\mini-services"
+         /grant "*S-1-5-19:(OI)(CI)WA" /T /Q
+  ```
+- Conserva los permisos `RX` existentes en todo ProgramFiles
+  (no los reemplaza)
+- `WA` se aplica SOLO a `app/` y `mini-services/` (donde Bun carga
+  módulos), NO a `bin/`, `runtime/`, `themes/`, `public/`
+- `WA` = `FILE_WRITE_ATTRIBUTES` — NO es Write Data, NO es Modify,
+  NO es Full Control. Solo permite cambiar metadatos del archivo
+  (timestamps, atributos).
+- Usa el SID explícito `*S-1-5-19` (LocalService) — mismo SID que
+  la función existente
+- Falla el instalador MSI si `icacls` devuelve error
+- Idempotente: re-ejecutar en upgrade es no-op
+
+**Verificación en CI**: el smoke test ahora dumpea las ACL efectivas
+en:
+- `app/server.js`
+- `mini-services/realtime-service/index.ts`
+- `mini-services/stream-service/index.ts`
+- Un módulo `.js` real en `app/node_modules/...` (cuando exista)
+
+Cada dump debe mostrar `LOCAL SERVICE` con `RX` + `WA`. Si falta
+cualquiera, el step falla bloqueando el pipeline.
+
+### 14.5 Otras correcciones en este mismo commit
+
+1. **`configure_recovery()` ahora es FATAL** — previamente logueaba
+   `WARN` y permitía continuar, lo que violaba el requisito de
+   recuperación bloqueante (misión §4). Como el CustomAction deferred
+   corre DESPUÉS de `InstallServices`, el servicio `ViewLBA` DEBE
+   existir en SCM cuando llamamos `OpenServiceW`. Si falla, es un
+   bug de secuenciación del MSI — abortar.
+
+2. **Eliminadas las exclusiones amplias de Windows Defender** del
+   smoke test. Las exclusiones eran un diagnóstico de la hipótesis
+   AV (ahora retirada). NO se mantienen como solución.
+
+### 14.6 Criterio de aceptación (sin cambios)
+
+La Fase 2 NO se considera completa hasta que la cadena completa pase:
+```
+Build → MSI completo → instalación limpia → server.env válido →
+servicio LocalService Running → 3 procesos hijos activos →
+health OK (:3000 + :3004) → upgrade real → datos preservados →
+reinicio del servicio → reinstalación → prueba offline →
+desinstalación limpia
+```
+
+Si la concesión de `WA` no resuelve el problema, se construirá una
+reproducción mínima bajo LocalService con captura del código Win32
+real devuelto por `CreateFileW` (posiblemente usando Process Monitor
+si está disponible en el runner) ANTES de proponer cualquier cambio
+de runtime (Node.js LTS como fallback).
+
