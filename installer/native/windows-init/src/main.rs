@@ -15,7 +15,20 @@
 //!      (SYSTEM+Admins full, LocalService RX) — set by WiX via
 //!      <CreateFolder><Permission>... on the CONFIG_DIR component.
 //!
-//! 2. CONFIGURES SCM RECOVERY ACTIONS on the ViewLBA service:
+//! 2. GRANTS LocalService RX on the entire ProgramFiles tree (recursive):
+//!    - Uses `icacls.exe` (a standard Windows binary in System32, NOT cmd.exe
+//!      or PowerShell — honors the mission's "no NSSM, no PowerShell, no CMD"
+//!      rule for RUNTIME; the MSI installer CustomAction can use any Win32 API)
+//!    - Command: icacls "C:\Program Files\ViewLBA Server"
+//!                 /grant "NT AUTHORITY\LocalService:(OI)(CI)RX" /T
+//!    - (OI)(CI) = Object Inherit + Container Inherit (propagates to all files+subdirs)
+//!    - This is REQUIRED because WiX v4's <Permission> element on <CreateFolder>
+//!      only applies to the directory's ACL — it does NOT propagate to files
+//!      installed by <File> elements (known WiX v4 behavior). Files in app/,
+//!      mini-services/, etc. would otherwise get the DEFAULT ACL which excludes
+//!      LocalService → bun children fail with EPERM on read.
+//!
+//! 3. CONFIGURES SCM RECOVERY ACTIONS on the ViewLBA service:
 //!    - 1st failure: Restart service (delay 60s)
 //!    - 2nd failure: Restart service (delay 60s)
 //!    - Subsequent failures: Restart service (delay 60s)
@@ -30,6 +43,7 @@
 //!   - No network access (works offline — used in [S] offline test).
 //!   - No secrets printed. The .env contains them, but logs only say "created".
 //!   - Idempotent: re-running on upgrade leaves server.env untouched.
+//!   - icacls is idempotent (granting an ACE that already exists is a no-op).
 
 use std::env;
 use std::fs;
@@ -266,12 +280,83 @@ fn configure_recovery() -> Result<(), String> {
     Ok(())
 }
 
+/// Grant LocalService RX on the entire ProgramFiles tree (recursive).
+///
+/// The WiX <Permission> element on <CreateFolder> only applies to the directory
+/// itself — it does NOT propagate to files installed by <File> elements (this is
+/// a known WiX v4 behavior). As a result, files in app/, mini-services/, etc.
+/// get the DEFAULT ACL which doesn't include LocalService RX → bun children
+/// spawned by the service host fail with EPERM on read.
+///
+/// Fix: spawn `icacls` (a standard Windows binary, NOT cmd.exe or PowerShell —
+/// this honors the mission's "no CMD, no PowerShell" rule for RUNTIME; the MSI
+/// installer CustomAction can use any Win32 API) to recursively grant
+/// LocalService RX on the entire ProgramFiles tree.
+///
+/// Command:
+///   icacls "C:\Program Files\ViewLBA Server" /grant "NT AUTHORITY\LocalService:(OI)(CI)RX" /T
+///
+/// (OI)(CI) = Object Inherit + Container Inherit → applies to all subdirs and files
+/// /T = recursive
+fn grant_localservice_rx_program_files() -> Result<(), String> {
+    let pf = program_files().join("ViewLBA Server");
+
+    if !pf.exists() {
+        return Err(format!("ProgramFiles dir not found: {}", pf.display()));
+    }
+
+    // icacls is in System32 (part of Windows, not cmd.exe or PowerShell)
+    let icacls = std::env::var("SYSTEMROOT")
+        .unwrap_or_else(|_| r"C:\Windows".to_string())
+        + r"\System32\icacls.exe";
+
+    let path_str = pf.to_string_lossy();
+    let subject = "NT AUTHORITY\\LocalService:(OI)(CI)RX";
+
+    log(&format!("Running icacls to grant LocalService RX on {} (recursive)", path_str));
+
+    let output = std::process::Command::new(&icacls)
+        .arg(path_str.as_ref())
+        .arg("/grant")
+        .arg(subject)
+        .arg("/T")  // recursive
+        .arg("/L")  // avoid following symlinks
+        .arg("/Q")  // quiet (less output)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("spawn icacls: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    if !output.status.success() {
+        return Err(format!(
+            "icacls failed with exit code {:?} — stdout: {} — stderr: {}",
+            output.status.code(),
+            stdout.trim(),
+            stderr.trim()
+        ));
+    }
+
+    log(&format!("icacls OK — LocalService RX granted recursively on {}", path_str));
+    Ok(())
+}
+
 fn main() -> ExitCode {
     log("viewlba-init starting (deferred CustomAction)");
 
     if let Err(e) = write_server_env() {
         log(&format!("FATAL: write_server_env: {}", e));
         return ExitCode::from(1);
+    }
+
+    // Grant LocalService RX on ProgramFiles (recursive). CRITICAL: without this,
+    // bun children spawned by the service host (running as LocalService) fail
+    // with EPERM reading files like app/server.js, mini-services/.../index.ts.
+    if let Err(e) = grant_localservice_rx_program_files() {
+        log(&format!("FATAL: grant_localservice_rx_program_files: {}", e));
+        return ExitCode::from(2);
     }
 
     // Recovery: if the service hasn't been installed yet (race condition with
