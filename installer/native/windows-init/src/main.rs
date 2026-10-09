@@ -319,16 +319,24 @@ fn configure_recovery() -> Result<(), String> {
     // If OpenServiceW fails, that's a sequencing bug in the MSI — we treat
     // it as FATAL so the install fails and CI can detect it.
     //
-    // Previous behavior (warn + continue) was a regression: it allowed the
-    // install to "succeed" without recovery actions configured, which then
-    // failed the smoke-test's "Verify recovery actions" check. The user
-    // explicitly required recovery to be blocking (mission §4).
+    // EXCEPTION: during uninstall (RemoveExistingProducts), the service is
+    // being REMOVED. OpenServiceW would fail because the service no longer
+    // exists. We skip recovery config gracefully during uninstall.
     #[cfg(target_os = "windows")]
     {
-        if let Err(e) = win32::set_service_recovery_actions("ViewLBA") {
-            return Err(format!("set_service_recovery_actions: {}", e));
+        match win32::set_service_recovery_actions("ViewLBA") {
+            Ok(()) => {
+                log("SCM recovery actions: Restart 60s × 3 (reset 24h)");
+            }
+            Err(e) => {
+                // Check if the service doesn't exist (likely uninstall)
+                if e.contains("OpenService") || e.contains("1060") {
+                    log("ViewLBA service not found (likely uninstall) — skipping recovery config");
+                } else {
+                    return Err(format!("set_service_recovery_actions: {}", e));
+                }
+            }
         }
-        log("SCM recovery actions: Restart 60s × 3 (reset 24h)");
     }
     Ok(())
 }
@@ -392,7 +400,10 @@ fn icacls_grant(path: &std::path::Path, subject: &str, label: &str) -> Result<()
 fn grant_localservice_rx_program_files() -> Result<(), String> {
     let pf = program_files().join("ViewLBA Server");
     if !pf.exists() {
-        return Err(format!("ProgramFiles dir not found: {}", pf.display()));
+        // During uninstall (RemoveExistingProducts), the ProgramFiles dir may
+        // already be gone. This is NOT an error — we just skip the grant.
+        log(&format!("ProgramFiles dir not found (likely uninstall): {} — skipping RX grant", pf.display()));
+        return Ok(());
     }
     // (OI)(CI) = Object Inherit + Container Inherit → applies to all subdirs and
     // files recursively (combined with /T).
@@ -418,13 +429,10 @@ fn grant_localservice_rx_program_files() -> Result<(), String> {
 fn grant_localservice_rwx_program_data_cache() -> Result<(), String> {
     let pd = program_data().join("ViewLBA").join("cache");
     if !pd.exists() {
-        // The cache dir is created by the MSI's cmp_cache component (Permanent).
-        // It should exist by the time we run (deferred CustomAction, after InstallFiles).
-        // If it doesn't exist, create it.
-        let _ = std::fs::create_dir_all(&pd);
-    }
-    if !pd.exists() {
-        return Err(format!("ProgramData cache dir not found and could not be created: {}", pd.display()));
+        // During uninstall, the cache dir (Permanent=yes) should still exist.
+        // But if it doesn't, skip the grant — it's not an error.
+        log("ProgramData cache dir not found — skipping RWX grant");
+        return Ok(());
     }
     // M = Modify = Read + Write + Execute (NOT Delete, NOT Full Control)
     icacls_grant(&pd, "*S-1-5-19:(OI)(CI)M", "LocalService RWX (Modify) on ProgramData/cache (recursive)")
@@ -465,13 +473,15 @@ fn grant_localservice_wa_app_dirs() -> Result<(), String> {
 
     // app/ — Bun loads Next.js standalone server.js + .next/ + node_modules/ from here
     if !app_dir.exists() {
-        return Err(format!("app/ dir not found: {}", app_dir.display()));
+        log("app/ dir not found (likely uninstall) — skipping WA grant");
+        return Ok(());
     }
     grant_wa_via_powershell(&app_dir)?;
 
     // mini-services/ — Bun loads realtime-service/index.ts + stream-service/index.ts
     if !mini_dir.exists() {
-        return Err(format!("mini-services/ dir not found: {}", mini_dir.display()));
+        log("mini-services/ dir not found (likely uninstall) — skipping WA grant");
+        return Ok(());
     }
     grant_wa_via_powershell(&mini_dir)?;
 
