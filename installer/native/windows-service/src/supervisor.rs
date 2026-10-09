@@ -332,7 +332,8 @@ impl Supervisor {
             // LocalService can't access).
             let bun_cache = self.cfg.program_data.join("cache").join("bun");
             let _ = std::fs::create_dir_all(&bun_cache);
-            cmd.env("BUN_INSTALL", &bun_cache.to_string_lossy());
+            let bun_cache_path = bun_cache.to_string_lossy().to_string();
+            cmd.env("BUN_INSTALL", &bun_cache_path);
         }
 
         // 2. server.env vars — these override the essential ones if set.
