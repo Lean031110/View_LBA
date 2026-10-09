@@ -155,6 +155,16 @@ fn program_data() -> PathBuf {
     }
 }
 
+fn program_files() -> PathBuf {
+    if let Ok(v) = env::var("ProgramW6432") {
+        PathBuf::from(v)
+    } else if let Ok(v) = env::var("ProgramFiles") {
+        PathBuf::from(v)
+    } else {
+        PathBuf::from(r"C:\Program Files")
+    }
+}
+
 fn env_file_path() -> PathBuf {
     program_data().join("ViewLBA").join("config").join("server.env")
 }
