@@ -2,16 +2,23 @@
  * ViewLBA — WiX Fragment Generator (replaces wix heat)
  * ====================================================
  * Walks the staging directory and generates WiX v4 fragment files
- * that include ALL files. This ensures the MSI contains the complete payload.
+ * that include ALL files. Ensures the MSI contains the complete payload
+ * AND preserves the subdirectory structure (so files like
+ * mini-services/stream-service/index.ts install to the correct path).
  *
  * Output: installer/windows-msi/*-fragments.wxs
  *
  * Each fragment has:
  *   <Fragment>
  *     <DirectoryRef Id="DIR_ID">
- *       <Component Id="..." Guid="*">
- *         <File Id="..." Source="$(var.PAYLOAD_DIR)\..." KeyPath="yes" />
- *       </Component>
+ *       <Directory Id="..." Name="subdir">
+ *         <Directory Id="..." Name="subsubdir">
+ *           <Component Id="..." Guid="*">
+ *             <File Id="..." Source="$(var.PAYLOAD_DIR)\..." KeyPath="yes" />
+ *           </Component>
+ *         </Directory>
+ *         ...
+ *       </Directory>
  *       ...
  *     </DirectoryRef>
  *     <ComponentGroup Id="...">
@@ -19,6 +26,10 @@
  *       ...
  *     </ComponentGroup>
  *   </Fragment>
+ *
+ * The Directory element is REQUIRED for subdirectories — without it, WiX
+ * installs the file with the WRONG path (strips the subdirectory from the
+ * install path, causing filename conflicts and broken layout).
  */
 
 import { readdirSync, statSync, writeFileSync, mkdirSync } from "node:fs"
@@ -46,15 +57,14 @@ const CONFIGS: HarvestConfig[] = [
   { dirName: "config", dirRef: "CONFIG_DIR", componentGroup: "ConfigFiles", excludes: [".git"] },
 ]
 
-let componentCounter = 0
-
-function sanitizeId(s: string): string {
-  // WiX identifiers: A-Z, a-z, 0-9, underscore, period. Must start with letter/underscore.
-  return s.replace(/[^a-zA-Z0-9_]/g, "_").replace(/^(\d)/, "_$1")
+interface FileEntry {
+  relativePath: string  // path relative to sourceDir, with forward slashes
+  fullPath: string       // absolute path on disk
 }
 
-function walk(dir: string, basePath: string, excludes: string[] = []): Array<{ relativePath: string; fullPath: string }> {
-  const files: Array<{ relativePath: string; fullPath: string }> = []
+/** Walk a directory recursively, returning all files with their relative paths. */
+function walk(dir: string, basePath: string, excludes: string[] = []): FileEntry[] {
+  const files: FileEntry[] = []
   let entries
   try {
     entries = readdirSync(dir, { withFileTypes: true })
@@ -74,38 +84,122 @@ function walk(dir: string, basePath: string, excludes: string[] = []): Array<{ r
   return files
 }
 
+/** Sanitize a string for use as a WiX identifier (A-Z, a-z, 0-9, _, .). */
+function sanitizeId(s: string): string {
+  return s.replace(/[^a-zA-Z0-9_.]/g, "_").replace(/^(\d)/, "_$1")
+}
+
+/** Generate a deterministic GUID from a string input (SHA256-based). */
+function deterministicGuid(input: string): string {
+  const hash = createHash("sha256").update(input).digest("hex")
+  return `${hash.substring(0,8)}-${hash.substring(8,12)}-${hash.substring(12,16)}-${hash.substring(16,20)}-${hash.substring(20,32)}`.toUpperCase()
+}
+
+/**
+ * Build a tree from file paths and emit WiX XML with nested <Directory>
+ * elements containing <Component>/<File> elements at the leaves.
+ *
+ * Each subdir becomes a <Directory Id="..." Name="..."> element. IDs are
+ * generated using SEPARATE counters for directories and components (so a
+ * dir and a component can never share an ID). The Directory element is
+ * REQUIRED for subdirectories — without it, WiX strips the subdir from
+ * the install path, causing filename conflicts (e.g., two services each
+ * with index.ts would collide at mini-services/index.ts).
+ */
+function buildNestedXml(config: HarvestConfig, files: FileEntry[]): { dirXml: string; componentRefs: string[] } {
+  const safeDirName = sanitizeId(config.dirName)
+  const componentRefs: string[] = []
+  let dirCounter = 0
+  let compCounter = 0
+
+  interface TreeNode {
+    name: string
+    isDir: boolean
+    children: Map<string, TreeNode>
+    file?: FileEntry
+  }
+
+  const root: TreeNode = {
+    name: config.dirName,
+    isDir: true,
+    children: new Map(),
+  }
+
+  // Insert each file into the tree
+  for (const file of files) {
+    const parts = file.relativePath.split("/")
+    let current = root
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i]
+      if (i === parts.length - 1) {
+        // Leaf: file
+        current.children.set(part, {
+          name: part,
+          isDir: false,
+          children: new Map(),
+          file,
+        })
+      } else {
+        // Directory
+        if (!current.children.has(part)) {
+          current.children.set(part, {
+            name: part,
+            isDir: true,
+            children: new Map(),
+          })
+        }
+        current = current.children.get(part)!
+      }
+    }
+  }
+
+  // Recursively emit XML for the tree
+  function emit(node: TreeNode, depth: number): string {
+    const indent = "  ".repeat(depth)
+    if (!node.isDir) {
+      // Leaf: emit Component + File
+      const file = node.file!
+      const id = `f${safeDirName}_${compCounter++}`
+      const sourcePath = `$(var.PAYLOAD_DIR)\\${config.dirName}\\${file.relativePath.replace(/\//g, "\\")}`
+      const guid = deterministicGuid(`${config.dirName}\\${file.relativePath.replace(/\//g, "\\")}`)
+      componentRefs.push(`${indent}  <ComponentRef Id="${id}" />`)
+      return `${indent}<Component Id="${id}" Guid="${guid}">
+${indent}  <File Id="${id}" Source="${sourcePath}" KeyPath="yes" />
+${indent}</Component>`
+    }
+
+    // Directory: emit <Directory Id=... Name=...> children </Directory>
+    const childXml: string[] = []
+    for (const child of node.children.values()) {
+      childXml.push(emit(child, depth + 1))
+    }
+
+    if (node === root) {
+      // Root: just emit children (the DirectoryRef wraps them)
+      return childXml.join("\n")
+    }
+
+    const dirId = `dir_${safeDirName}_${dirCounter++}`
+    return `${indent}<Directory Id="${dirId}" Name="${node.name}">
+${childXml.join("\n")}
+${indent}</Directory>`
+  }
+
+  const dirXml = emit(root, 0)
+  return { dirXml, componentRefs }
+}
+
 function generateFragment(config: HarvestConfig, stagingDir: string): string {
   const sourceDir = join(stagingDir, config.dirName)
   const files = walk(sourceDir, "", config.excludes ?? [])
 
-  // Sanitize dirName for WiX identifiers (replace hyphens with underscores)
-  const safeDirName = sanitizeId(config.dirName)
-
-  componentCounter = 0
-  const components: string[] = []
-  const componentRefs: string[] = []
-
-  for (const file of files) {
-    const id = `f${safeDirName}_${componentCounter++}`
-    const sourcePath = `$(var.PAYLOAD_DIR)\\${config.dirName}\\${file.relativePath.replace(/\//g, "\\")}`
-    // Generate deterministic GUID from full file path (not just filename)
-    // This prevents WIX0369 duplicate GUID errors when files have same name
-    const guidInput = `${config.dirName}\\${file.relativePath.replace(/\//g, "\\")}`
-    const guidHash = createHash("sha256").update(guidInput).digest("hex")
-    // Format as GUID: first 32 hex chars → 8-4-4-4-12 format
-    const guid = `${guidHash.substring(0,8)}-${guidHash.substring(8,12)}-${guidHash.substring(12,16)}-${guidHash.substring(16,20)}-${guidHash.substring(20,32)}`.toUpperCase()
-
-    components.push(`      <Component Id="${id}" Guid="${guid}">`)
-    components.push(`        <File Id="${id}" Source="${sourcePath}" KeyPath="yes" />`)
-    components.push(`      </Component>`)
-    componentRefs.push(`      <ComponentRef Id="${id}" />`)
-  }
+  const { dirXml, componentRefs } = buildNestedXml(config, files)
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Include xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Fragment>
     <DirectoryRef Id="${config.dirRef}">
-${components.join("\n")}
+${dirXml}
     </DirectoryRef>
     <ComponentGroup Id="${config.componentGroup}">
 ${componentRefs.join("\n")}
@@ -127,8 +221,8 @@ for (const config of CONFIGS) {
   const outFile = join(OUT_DIR, `${config.dirName}-fragments.wxs`)
   writeFileSync(outFile, content)
 
-  // Count files in this fragment
-  const fileCount = (content.match(/<Component Id=/g) || []).length
+  // Count files in this fragment (number of <File> elements)
+  const fileCount = (content.match(/<File Id=/g) || []).length
   totalFiles += fileCount
   console.log(`[wix-fragments] ✓ ${config.dirName}-fragments.wxs (${fileCount} files)`)
 }
