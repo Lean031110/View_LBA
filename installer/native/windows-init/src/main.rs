@@ -31,11 +31,15 @@
 //! 3. GRANTS LocalService WA (FILE_WRITE_ATTRIBUTES) on the app/ and
 //!    mini-services/ subtrees ONLY (recursive, in addition to RX):
 //!    - Command: icacls "C:\Program Files\ViewLBA Server\app"
-//!                 /grant "*S-1-5-19:(OI)(CI)WA" /T /Q
+//!                 /grant "*S-1-5-19:(OI)(CI)0x100" /T /Q
 //!      (same for mini-services/)
-//!    - WA = Write Attributes (FILE_WRITE_ATTRIBUTES) — NOT Write Data, NOT
-//!      Modify, NOT Full Control. WA allows changing file metadata (timestamps,
-//!      attributes) but NOT file contents.
+//!    - 0x100 = FILE_WRITE_ATTRIBUTES (atomic Win32 permission, NOT Write Data,
+//!      NOT Modify, NOT Full Control). Allows changing file metadata
+//!      (timestamps, attributes) but NOT file contents.
+//!    - We use the hex mask 0x100 because icacls on Windows Server 2022 does
+//!      NOT accept `WA` as a /grant permission shorthand (returns "Invalid
+//!      parameter"). The hex mask is the documented way to specify atomic
+//!      access masks via icacls.
 //!    - This is REQUIRED for Bun's Windows module loader. Reference:
 //!      https://github.com/oven-sh/bun/issues/44626 (Oct 2026)
 //!      Bun's module loader on Windows opens files via CreateFileW with an
@@ -98,139 +102,12 @@ mod win32 {
         SC_ACTION_TYPE, SC_MANAGER_CONNECT, SERVICE_ALL_ACCESS, SERVICE_CONFIG_FAILURE_ACTIONS,
         SERVICE_FAILURE_ACTIONSW,
     };
-    use windows::Win32::Security::Authorization::{
-        SetEntriesInAclW, SetNamedSecurityInfoW, GetNamedSecurityInfoW,
-        EXPLICIT_ACCESS_W, TRUSTEE_W,
-        TRUSTEE_IS_SID, TRUSTEE_IS_WELL_KNOWN_GROUP,
-        GRANT_ACCESS, SUB_CONTAINERS_AND_OBJECTS_INHERIT,
-        SE_FILE_OBJECT,
-    };
-    use windows::Win32::Security::{
-        ConvertStringSidToSidW, ACL, DACL_SECURITY_INFORMATION,
-        PSECURITY_DESCRIPTOR, BOOL,
-    };
 
     /// Encode a Rust &str as UTF-16 with NUL terminator.
     pub fn wstr(s: &str) -> Vec<u16> {
         let mut v: Vec<u16> = s.encode_utf16().collect();
         v.push(0);
         v
-    }
-
-    /// Grant FILE_WRITE_ATTRIBUTES (0x100) to LocalService (S-1-5-19) on a
-    /// single file or directory, with inheritance (so children inherit the ACE).
-    ///
-    /// We use the Win32 API directly because `icacls` does NOT accept `WA`
-    /// (Write Attributes) as a /grant permission shorthand on the Windows
-    /// Server 2022 runner — it returns "Invalid parameter" (exit 87).
-    /// The Win32 API accepts the atomic access mask 0x100
-    /// (FILE_WRITE_ATTRIBUTES) directly.
-    ///
-    /// Permission mode is GRANT_ACCESS (additive) — does NOT remove existing
-    /// ACEs. The existing RX ACE (from the icacls RX grant) is preserved.
-    /// Inheritance is SUB_CONTAINERS_AND_OBJECTS_INHERIT so children files
-    /// and subdirs inherit the ACE.
-    ///
-    /// Steps:
-    /// 1. Get the existing DACL via GetNamedSecurityInfoW (so we can MERGE
-    ///    the new WA ACE with it, instead of replacing)
-    /// 2. Convert "S-1-5-19" to a SID pointer via ConvertStringSidToSidW
-    /// 3. Build TRUSTEE_W: TrusteeForm=TRUSTEE_IS_SID, TrusteeType=
-    ///    TRUSTEE_IS_WELL_KNOWN_GROUP (LocalService is a well-known group)
-    /// 4. Build EXPLICIT_ACCESS_W with FILE_WRITE_ATTRIBUTES (0x100),
-    ///    GRANT_ACCESS, SUB_CONTAINERS_AND_OBJECTS_INHERIT
-    /// 5. SetEntriesInAclW with the EXISTING DACL as old_acl → merged ACL
-    /// 6. SetNamedSecurityInfoW applies the merged DACL to the file/dir
-    pub fn grant_file_write_attributes(path: &std::path::Path) -> Result<(), String> {
-        unsafe {
-            let path_w = wstr(&path.to_string_lossy());
-            let pcpath = PCWSTR(path_w.as_ptr());
-
-            // 1. Get the existing DACL via GetNamedSecurityInfoW
-            //    We need the existing DACL so we can MERGE the new WA ACE
-            //    with it (preserving the existing RX ACE). If we just built
-            //    a fresh ACL with only the WA ACE and applied it via
-            //    SetNamedSecurityInfoW, the existing RX would be REPLACED.
-            let mut p_existing_sd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
-            let mut p_existing_dacl: *mut ACL = std::ptr::null_mut();
-            let mut p_owner: *mut c_void = std::ptr::null_mut();
-            let mut p_group: *mut c_void = std::ptr::null_mut();
-
-            let r = GetNamedSecurityInfoW(
-                pcpath,
-                SE_FILE_OBJECT,
-                DACL_SECURITY_INFORMATION,
-                Some(&mut p_owner),
-                Some(&mut p_group),
-                Some(&mut p_existing_dacl),
-                None,
-                &mut p_existing_sd,
-            );
-            if r.is_err() {
-                return Err(format!("GetNamedSecurityInfoW failed for {}: {:?}", path.display(), r));
-            }
-            // Determine if DACL was present (for passing to SetEntriesInAclW)
-            let has_existing_dacl = !p_existing_dacl.is_null();
-
-            // 2. Convert "S-1-5-19" to a SID pointer
-            let sid_w = wstr("S-1-5-19");
-            let mut p_sid: *mut c_void = std::ptr::null_mut();
-            let r = ConvertStringSidToSidW(PCWSTR(sid_w.as_ptr()), &mut p_sid);
-            if r.is_err() {
-                let _ = windows::Win32::Foundation::LocalFree(p_existing_sd as *const _ as *mut _);
-                return Err(format!("ConvertStringSidToSidW failed: {:?}", r));
-            }
-
-            // 3. Build TRUSTEE_W using the SID
-            let mut trustee: TRUSTEE_W = std::mem::zeroed();
-            trustee.TrusteeForm = TRUSTEE_IS_SID;
-            trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
-            trustee.ptstrName = windows::core::PWSTR(p_sid as *mut u16);
-
-            // 4. Build EXPLICIT_ACCESS_W with FILE_WRITE_ATTRIBUTES (0x100)
-            let mut ea: EXPLICIT_ACCESS_W = std::mem::zeroed();
-            ea.grfAccessPermissions = 0x100;  // FILE_WRITE_ATTRIBUTES
-            ea.grfAccessMode = GRANT_ACCESS;  // additive — preserves existing ACEs
-            ea.grfInheritance = SUB_CONTAINERS_AND_OBJECTS_INHERIT;
-            ea.Trustee = trustee;
-
-            // 5. Build the merged ACL via SetEntriesInAclW
-            //    If we have an existing DACL, pass it as old_acl so the new
-            //    ACE is MERGED with existing ACEs (not replacing them).
-            let mut p_acl: *mut ACL = std::ptr::null_mut();
-            let entries: [EXPLICIT_ACCESS_W; 1] = [ea];
-            let r = if has_existing_dacl {
-                SetEntriesInAclW(&entries, Some(p_existing_dacl), &mut p_acl)
-            } else {
-                SetEntriesInAclW(&entries, None, &mut p_acl)
-            };
-            if r.is_err() {
-                let _ = windows::Win32::Foundation::LocalFree(p_sid as *const _ as *mut _);
-                let _ = windows::Win32::Foundation::LocalFree(p_existing_sd as *const _ as *mut _);
-                return Err(format!("SetEntriesInAclW failed: {:?}", r));
-            }
-
-            // 6. Apply the merged DACL to the file/dir via SetNamedSecurityInfoW
-            let r = SetNamedSecurityInfoW(
-                pcpath,
-                SE_FILE_OBJECT,
-                DACL_SECURITY_INFORMATION,
-                None,
-                None,
-                Some(p_acl),
-                None,
-            );
-
-            // Free the SID, ACL, and existing SD (LocalFree)
-            let _ = windows::Win32::Foundation::LocalFree(p_sid as *const _ as *mut _);
-            let _ = windows::Win32::Foundation::LocalFree(p_acl as *const _ as *mut _);
-            let _ = windows::Win32::Foundation::LocalFree(p_existing_sd as *const _ as *mut _);
-
-            if r.is_err() {
-                return Err(format!("SetNamedSecurityInfoW failed for {}: {:?}", path.display(), r));
-            }
-            Ok(())
-        }
     }
 
     /// Configure recovery actions on the ViewLBA service via ChangeServiceConfig2W.
@@ -539,15 +416,15 @@ fn grant_localservice_rx_program_files() -> Result<(), String> {
 ///   - Other ProgramFiles dirs (bin/, runtime/, themes/, public/) only get RX
 ///
 /// Implementation: icacls does NOT accept `WA` as a /grant permission shorthand
-/// (returns "Invalid parameter" on Windows Server 2022 runner). We use the
-/// Win32 API directly: GetNamedSecurityInfoW + SetEntriesInAclW + 
-/// SetNamedSecurityInfoW with GRANT_ACCESS mode (additive — preserves existing
-/// RX ACEs) and SUB_CONTAINERS_AND_OBJECTS_INHERIT (inheritable by children).
+/// (returns "Invalid parameter" on Windows Server 2022 runner). However, icacls
+/// DOES accept a hex permission mask directly. FILE_WRITE_ATTRIBUTES = 0x100.
+/// So we use:
+///   icacls "<path>" /grant "*S-1-5-19:(OI)(CI)0x100" /T /Q
 ///
-/// The function applies the ACE to the directory AND walks the tree to apply
-/// it to all existing files (inheritance handles future files, but existing
-/// files need explicit application because inheritance only applies at create
-/// time on Windows for some scenarios).
+/// The `(OI)(CI)` makes the ACE inheritable, so future files installed into
+/// these dirs also get the WA permission. The `/T` makes it recursive for
+/// existing files. This is in addition to the existing RX grant (from
+/// grant_localservice_rx_program_files) — icacls /grant is additive.
 fn grant_localservice_wa_app_dirs() -> Result<(), String> {
     let pf = program_files().join("ViewLBA Server");
     let app_dir = pf.join("app");
@@ -557,88 +434,16 @@ fn grant_localservice_wa_app_dirs() -> Result<(), String> {
     if !app_dir.exists() {
         return Err(format!("app/ dir not found: {}", app_dir.display()));
     }
-    log(&format!("Granting LocalService WA on {} (recursive, via Win32 API)", app_dir.display()));
-    grant_wa_recursive(&app_dir)?;
+    // 0x100 = FILE_WRITE_ATTRIBUTES (atomic permission, NOT Write Data)
+    icacls_grant(&app_dir, "*S-1-5-19:(OI)(CI)0x100", "LocalService WA (0x100) on app/ (Bun module loader)")?;
 
     // mini-services/ — Bun loads realtime-service/index.ts + stream-service/index.ts
     if !mini_dir.exists() {
         return Err(format!("mini-services/ dir not found: {}", mini_dir.display()));
     }
-    log(&format!("Granting LocalService WA on {} (recursive, via Win32 API)", mini_dir.display()));
-    grant_wa_recursive(&mini_dir)?;
+    icacls_grant(&mini_dir, "*S-1-5-19:(OI)(CI)0x100", "LocalService WA (0x100) on mini-services/ (Bun module loader)")?;
 
     Ok(())
-}
-
-/// Recursively grant FILE_WRITE_ATTRIBUTES to LocalService on a directory tree.
-/// Applies the ACE to the directory itself (with inheritance) AND walks all
-/// files/subdirs to explicitly apply the ACE (for existing files that might
-/// not pick up inheritance).
-#[cfg(target_os = "windows")]
-fn grant_wa_recursive(root: &std::path::Path) -> Result<(), String> {
-    // Apply to the root directory itself (with inheritance so children inherit)
-    win32::grant_file_write_attributes(root)
-        .map_err(|e| format!("WA grant on root {} failed: {}", root.display(), e))?;
-
-    // Walk the tree and apply to every file (dirs inherit from root, but
-    // explicit application is safer for existing files).
-    let mut stack: Vec<std::path::PathBuf> = vec![root.to_path_buf()];
-    let mut visited = 0usize;
-    let mut errors = Vec::new();
-
-    while let Some(dir) = stack.pop() {
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(e) => e,
-            Err(e) => {
-                errors.push(format!("read_dir {}: {}", dir.display(), e));
-                continue;
-            }
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let file_type = match entry.file_type() {
-                Ok(t) => t,
-                Err(_) => continue,
-            };
-            if file_type.is_dir() {
-                // Apply WA to the subdir (with inheritance)
-                if let Err(e) = win32::grant_file_write_attributes(&path) {
-                    errors.push(format!("WA grant on dir {} failed: {}", path.display(), e));
-                }
-                stack.push(path);
-                visited += 1;
-            } else if file_type.is_file() {
-                // Apply WA to the file (no inheritance needed for files)
-                if let Err(e) = win32::grant_file_write_attributes(&path) {
-                    errors.push(format!("WA grant on file {} failed: {}", path.display(), e));
-                }
-                visited += 1;
-            }
-            // Log progress every 1000 entries
-            if visited % 1000 == 0 && visited > 0 {
-                log(&format!("  ... {} entries processed", visited));
-            }
-        }
-    }
-
-    log(&format!("  WA applied to {} entries under {}", visited, root.display()));
-
-    if !errors.is_empty() {
-        // Log the first 10 errors, fail if more than 1% of files failed
-        log(&format!("  {} errors during recursive WA grant", errors.len()));
-        for e in errors.iter().take(10) {
-            log(&format!("  - {}", e));
-        }
-        if errors.len() > (visited / 100).max(1) {
-            return Err(format!("Too many WA grant failures: {} out of {}", errors.len(), visited));
-        }
-    }
-    Ok(())
-}
-
-#[cfg(not(target_os = "windows"))]
-fn grant_wa_recursive(_root: &std::path::Path) -> Result<(), String> {
-    Err("Win32 API only available on Windows".into())
 }
 
 fn main() -> ExitCode {
