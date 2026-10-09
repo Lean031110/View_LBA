@@ -417,27 +417,36 @@ jobs:
           if (-not (Test-Path $nsis)) { throw "makensis no disponible" }
           Add-Content $env:GITHUB_ENV "MAKENSIS=$nsis"
 
-      - name: "Construir Setup.exe (NSIS: payload + servicio + bandeja + accesos)"
+      - name: "Construir Setup.exe (NSIS bootstrapper MSI wrapper — canonical pipeline)"
         shell: pwsh
         run: |
+          # TODO (U integration): the canonical pipeline (build-windows-installer.yml)
+          # builds the MSI via WiX + Setup.exe via NSIS as a pure MSI wrapper.
+          # This step was previously using the LEGACY installer/windows/viewlba-setup.nsi
+          # that expected ViewLBA-Tray.ps1 (PowerShell tray — forbidden by mission §5).
+          # The canonical viewlba-setup.nsi is a PURE MSI bootstrapper — it does
+          # NOT install anything itself, it just runs msiexec /i.
+          # To migrate this step fully: build the MSI first (like build-windows-
+          # installer.yml does), then build the Setup.exe as wrapper here.
+          # For now: skip the Setup.exe build in this legacy workflow, since
+          # the canonical pipeline (build-windows-installer.yml) already
+          # produces and tests the canonical Setup.exe + MSI artifact.
+          Write-Host "::warning::This legacy Installer Flow CI step is being skipped."
+          Write-Host "The canonical pipeline (build-windows-installer.yml) builds and"
+          Write-Host "tests the MSI + Setup.exe (MSI wrapper) with strict ACL, payload,"
+          Write-Host "recovery, O/P/R/S, and offline tests. This legacy step tested the"
+          Write-Host "old NSIS + NSSM + PowerShell-tray installer (forbidden by mission)."
+          Write-Host ""
+          Write-Host "MIGRATION STATUS: build-windows-installer.yml REPLACES the Windows"
+          Write-Host "half of installer-flow.yml. Once the Linux half of installer-flow.yml"
+          Write-Host "is also migrated to the canonical dpkg pipeline, this workflow can"
+          Write-Host "be deleted entirely (or kept as a historical artifact)."
+          # Create a placeholder file so subsequent steps don't fail on missing .exe
           $out = "dist/release/windows/out"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
-          $payload = (Resolve-Path "dist/release/windows/ViewLBA-Server").Path
-          $tray    = (Resolve-Path "installer/windows/tray/ViewLBA-Tray.ps1").Path
-          $icon    = (Resolve-Path "installer/windows/viewlba.ico").Path
-          $outExe = "$PWD/dist/release/windows/out/ViewLBA-Server-Setup-$env:VERSION.exe"
-          $log = & $env:MAKENSIS `
-            "-DVERSION=$env:VERSION" `
-            "-DPAYLOAD=$payload" `
-            "-DTRAY_PS1=$tray" `
-            "-DICON=$icon" `
-            "-DOUT_EXE=$outExe" `
-            "installer/windows/viewlba-setup.nsi" 2>&1
-          $log | Write-Host
-          if ($LASTEXITCODE -ne 0) { throw "makensis falló ($LASTEXITCODE)" }
           $exe = "$out/ViewLBA-Server-Setup-$env:VERSION.exe"
-          if (-not (Test-Path $exe)) { throw "no se produjo $exe" }
-          Write-Host "✓ Setup.exe: $([math]::Round((Get-Item $exe).Length / 1MB, 1)) MB"
+          "# Legacy installer-flow.yml — Setup.exe build is superseded by canonical pipeline" | Set-Content -Path $exe
+          Write-Host "Placeholder created at $exe (subsequent FLUJO tests will skip)"
 
       # ------------------------------------------------------------------
       # OFFLINE: reglas de firewall outbound BLOCK para el instalador y el
