@@ -938,21 +938,24 @@ jobs:
           & icacls "C:\Program Files\ViewLBA Server\app\server.js" 2>&1 | ForEach-Object { Write-Host $_ }
           Write-Host ""
 
-          # CRITICAL DIAGNOSTIC: check if anyone has the file OPEN
-          # (EPERM in Bun maps to SHARING_VIOLATION, not ACCESS_DENIED)
-          # If a process has the file open with non-share-read, Bun can't read it
-          Write-Host "=== Checking who has app/server.js open (handle.exe) ==="
-          $handleExe = "C:\Sysinternals\handle.exe"
-          $handle64Exe = "C:\Sysinternals\handle64.exe"
-          $handlePath = $null
-          if (Test-Path $handle64Exe) { $handlePath = $handle64Exe }
-          elseif (Test-Path $handleExe) { $handlePath = $handleExe }
-          if ($handlePath) {
-            & $handlePath -accepteula -nobanner "C:\Program Files\ViewLBA Server\app\server.js" 2>&1 | ForEach-Object { Write-Host "  $_" }
-          } else {
-            Write-Host "  handle.exe not available — using openfiles instead"
-            & openfiles /query /v 2>&1 | Select-String "server.js" | ForEach-Object { Write-Host "  $_" }
-          }
+          # CRITICAL DIAGNOSTIC: try running bun.exe AS THE RUNNER USER
+          # (admin) — if this works but the service can't run it, then
+          # the issue is LocalService-specific (Bun's permission model)
+          Write-Host "=== Running bun.exe --version as runner user ==="
+          & "C:\Program Files\ViewLBA Server\runtime\bun.exe" --version 2>&1 | ForEach-Object { Write-Host "  $_" }
+          Write-Host ""
+
+          # Diagnostic: try running server.js as runner user (1s timeout)
+          Write-Host "=== Running bun.exe app/server.js as runner user (5s timeout) ==="
+          $p = Start-Process -FilePath "C:\Program Files\ViewLBA Server\runtime\bun.exe" `
+              -ArgumentList "C:\Program Files\ViewLBA Server\app\server.js" `
+              -PassThru -WindowStyle Hidden `
+              -RedirectStandardOutput "C:\temp\bun-runner-stdout.log" `
+              -RedirectStandardError "C:\temp\bun-runner-stderr.log"
+          if (-not $p.WaitForExit(5000)) { $p.Kill(); Write-Host "  (killed after 5s)" }
+          Write-Host "  ExitCode: $($p.ExitCode)"
+          Write-Host "  stdout:" ; Get-Content "C:\temp\bun-runner-stdout.log" -ErrorAction SilentlyContinue | Select-Object -First 5 | ForEach-Object { Write-Host "    $_" }
+          Write-Host "  stderr:" ; Get-Content "C:\temp\bun-runner-stderr.log" -ErrorAction SilentlyContinue | Select-Object -First 5 | ForEach-Object { Write-Host "    $_" }
           Write-Host ""
 
           # Diagnostic: try reading the file as the runner user (should always work)
