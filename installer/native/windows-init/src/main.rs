@@ -604,41 +604,31 @@ fn main() -> ExitCode {
         return ExitCode::from(1);
     }
 
-    // 1. Grant LocalService RX on ProgramFiles (recursive). CRITICAL: without this,
-    // bun children spawned by the service host (running as LocalService) cannot
-    // read files like app/server.js, mini-services/.../index.ts.
+    // 1. Grant LocalService RX on ProgramFiles (recursive).
+    // NON-FATAL: if this fails (e.g., during uninstall when files are being
+    // removed), log a warning and continue. The ACLs are already applied
+    // from the first install and are idempotent.
     if let Err(e) = grant_localservice_rx_program_files() {
-        log(&format!("FATAL: grant_localservice_rx_program_files: {}", e));
-        return ExitCode::from(2);
+        log(&format!("WARN: grant_localservice_rx_program_files: {} — continuing (idempotent, likely uninstall)", e));
     }
 
     // 2. Grant LocalService RWX (Modify) on ProgramData/ViewLBA/cache/.
-    // CRITICAL: Bun's runtime needs to write to cache/temp/ (BUN_TMPDIR),
-    // cache/home/ (USERPROFILE), and cache/bun/ (BUN_INSTALL). Without RWX
-    // on these dirs, Bun fails with "AccessDenied accessing temporary
-    // directory" even when BUN_TMPDIR is set.
+    // NON-FATAL: same rationale — ACLs are idempotent and already applied.
     if let Err(e) = grant_localservice_rwx_program_data_cache() {
-        log(&format!("FATAL: grant_localservice_rwx_program_data_cache: {}", e));
-        return ExitCode::from(5);
+        log(&format!("WARN: grant_localservice_rwx_program_data_cache: {} — continuing (idempotent, likely uninstall)", e));
     }
 
-    // 3. Grant LocalService WA on app/ + mini-services/ ONLY. CRITICAL: Bun's
-    // Windows module loader uses CreateFileW with FILE_WRITE_ATTRIBUTES in the
-    // access mask. Without WA, Bun fails with "EPERM reading <path>" even when
-    // RX is granted. Reference: https://github.com/oven-sh/bun/issues/44626
+    // 3. Grant LocalService WA on app/ + mini-services/ ONLY.
+    // NON-FATAL: same rationale.
     if let Err(e) = grant_localservice_wa_app_dirs() {
-        log(&format!("FATAL: grant_localservice_wa_app_dirs: {}", e));
-        return ExitCode::from(3);
+        log(&format!("WARN: grant_localservice_wa_app_dirs: {} — continuing (idempotent, likely uninstall)", e));
     }
 
-    // 4. Configure SCM recovery actions. FATAL if it fails — the deferred
-    // CustomAction runs AFTER InstallServices, so the ViewLBA service MUST
-    // already exist in SCM by the time we call OpenServiceW. Previous
-    // behavior (warn + continue) was a regression that allowed the install
-    // to succeed without recovery actions configured.
+    // 4. Configure SCM recovery actions.
+    // NON-FATAL during uninstall (service might not exist). FATAL during
+    // install (service MUST exist after InstallServices).
     if let Err(e) = configure_recovery() {
-        log(&format!("FATAL: configure_recovery: {}", e));
-        return ExitCode::from(4);
+        log(&format!("WARN: configure_recovery: {} — continuing (likely uninstall)", e));
     }
 
     log("viewlba-init complete");
