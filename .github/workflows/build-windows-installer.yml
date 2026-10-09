@@ -938,25 +938,38 @@ jobs:
           & icacls "C:\Program Files\ViewLBA Server\app\server.js" 2>&1 | ForEach-Object { Write-Host $_ }
           Write-Host ""
 
-          # CRITICAL DIAGNOSTIC: try running bun.exe AS THE RUNNER USER
-          # (admin) — if this works but the service can't run it, then
-          # the issue is LocalService-specific (Bun's permission model)
-          Write-Host "=== Running bun.exe --version as runner user ==="
-          & "C:\Program Files\ViewLBA Server\runtime\bun.exe" --version 2>&1 | ForEach-Object { Write-Host "  $_" }
+          # CRITICAL HYPOTHESIS: Windows Defender real-time AV may be holding
+          # the file open with non-share-read access. Disable Defender for the
+          # install path BEFORE the service starts the children.
+          # If this fixes it, the root cause is AV scanning.
+          Write-Host "=== Disabling Windows Defender real-time AV for ViewLBA path ==="
+          try {
+            Add-MpPreference -ExclusionPath "C:\Program Files\ViewLBA Server" -ErrorAction Stop
+            Add-MpPreference -ExclusionProcess "bun.exe" -ErrorAction Stop
+            Add-MpPreference -ExclusionProcess "viewlba-service.exe" -ErrorAction Stop
+            Write-Host "OK: Defender exclusions added"
+          } catch {
+            Write-Host "::warning::Could not add Defender exclusion: $_"
+          }
           Write-Host ""
 
-          # Diagnostic: try running server.js as runner user (1s timeout)
-          Write-Host "=== Running bun.exe app/server.js as runner user (5s timeout) ==="
-          $p = Start-Process -FilePath "C:\Program Files\ViewLBA Server\runtime\bun.exe" `
-              -ArgumentList "C:\Program Files\ViewLBA Server\app\server.js" `
-              -PassThru -WindowStyle Hidden `
-              -RedirectStandardOutput "C:\temp\bun-runner-stdout.log" `
-              -RedirectStandardError "C:\temp\bun-runner-stderr.log"
-          if (-not $p.WaitForExit(5000)) { $p.Kill(); Write-Host "  (killed after 5s)" }
-          Write-Host "  ExitCode: $($p.ExitCode)"
-          Write-Host "  stdout:" ; Get-Content "C:\temp\bun-runner-stdout.log" -ErrorAction SilentlyContinue | Select-Object -First 5 | ForEach-Object { Write-Host "    $_" }
-          Write-Host "  stderr:" ; Get-Content "C:\temp\bun-runner-stderr.log" -ErrorAction SilentlyContinue | Select-Object -First 5 | ForEach-Object { Write-Host "    $_" }
-          Write-Host ""
+          # CRITICAL: Stop the service and verify the file is no longer being held
+          Write-Host "=== Stopping ViewLBA service ==="
+          Stop-Service -Name "ViewLBA" -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 5
+
+          # Wait 30s for any AV/MSI handles to release
+          Write-Host "=== Waiting 30s for any file handles to release ==="
+          Start-Sleep -Seconds 30
+
+          # Now check if file is readable by the runner user
+          Write-Host "=== Verifying file is readable after stop ==="
+          try {
+            $bytes = [System.IO.File]::ReadAllBytes("C:\Program Files\ViewLBA Server\app\server.js")
+            Write-Host "OK: file readable ($($bytes.Length) bytes)"
+          } catch {
+            Write-Host "::error::file NOT readable: $_"
+          }
 
           # Diagnostic: try reading the file as the runner user (should always work)
           Write-Host "=== Reading app/server.js as runner user ==="
@@ -968,30 +981,6 @@ jobs:
             Write-Host "::error::runner user CANNOT read app/server.js: $_"
           }
           Write-Host ""
-
-          # Diagnostic: ALSO grant Everyone RX (test if LocalService grant
-          # isn't enough for some reason)
-          Write-Host "=== Granting Everyone RX on ProgramFiles (diagnostic) ==="
-          & icacls "C:\Program Files\ViewLBA Server" /grant "Everyone:(OI)(CI)RX" /T /Q 2>&1 | ForEach-Object { Write-Host $_ }
-          Write-Host ""
-
-          # CRITICAL: Wait for any handles to be released (anti-virus, MSI, etc.)
-          Write-Host "=== Waiting 30s for any file handles to release ==="
-          Start-Sleep -Seconds 30
-
-          # CRITICAL: stop the service and verify the file is no longer being held
-          Write-Host "=== Stopping ViewLBA service to release any handles ==="
-          Stop-Service -Name "ViewLBA" -Force -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 5
-
-          # Now check if file is readable without any process holding it
-          Write-Host "=== Verifying file is readable after stop ==="
-          try {
-            $bytes = [System.IO.File]::ReadAllBytes("C:\Program Files\ViewLBA Server\app\server.js")
-            Write-Host "OK: file readable ($($bytes.Length) bytes)"
-          } catch {
-            Write-Host "::error::file NOT readable: $_"
-          }
 
           # Restart service to clear backoff state (so children respawn immediately)
           Write-Host "=== Restarting ViewLBA service ==="
