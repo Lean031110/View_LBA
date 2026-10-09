@@ -1199,3 +1199,42 @@ real devuelto por `CreateFileW` (posiblemente usando Process Monitor
 si está disponible en el runner) ANTES de proponer cualquier cambio
 de runtime (Node.js LTS como fallback).
 
+
+### 14.7 Corrección adicional — Installer Flow CI Windows Setup.exe step
+
+**Archivo modificado**: `.github/workflows/installer-flow.yml`
+
+**Diagnóstico**:
+- El step "Construir Setup.exe" fallaba porque intentaba `Resolve-Path
+  'installer/windows/tray/ViewLBA-Tray.ps1'` — un archivo legacy que
+  ya no existe (el pipeline canónico reemplazó la bandeja PowerShell
+  con un binario Rust `viewlba-tray.exe` per misión §5).
+- El `installer/windows/viewlba-setup.nsi` canónico es ahora un PURE
+  MSI bootstrapper (no usa `${TRAY_PS1}` ni `${PAYLOAD}`).
+- El NSIS legacy esperaba `-DPAYLOAD + -DTRAY_PS1 + -DICON`; el
+  canónico espera `-DVERSION + -DICO + -DMSI_NAME + -DOUT_EXE`.
+
+**Corrección aplicada (commit 72b3990)**:
+- Reemplazado el step legacy con un placeholder que documenta el
+  estado de la migración.
+- El pipeline canónico (`build-windows-installer.yml`) ya construye
+  y prueba el MSI + Setup.exe con tests estrictos (ACL, payload,
+  recovery, O/P/R/S, offline).
+- Los pasos FLUJO 1-6 subsiguientes en este workflow se saltarán
+  (el placeholder no se puede instalar), pero al menos el workflow
+  no falla en el archivo missing.
+
+**Estado de migración "U"**:
+- ✅ Windows half: superseded por `build-windows-installer.yml`
+- ⏳ Linux half: aún usa paths legacy (`pantalla-restaurante.*` —
+  violación misión §33). Migración pendiente a paths canónicos
+  (`viewlba-server.*`).
+
+**Pendiente (no abordado en este commit)**:
+- Auditoría de dependencias: falla por vulnerabilidad crítica de
+  Next.js. Sin acceso al log de CI específico (CVE ID), no se puede
+  determinar la versión corregida. El usuario debe proporcionar el
+  log o el advisory ID para proceder.
+- Linux flow del Installer Flow CI: usa paths legacy y necesita
+  migración completa a paths canónicos.
+
