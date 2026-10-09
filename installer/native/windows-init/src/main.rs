@@ -415,16 +415,18 @@ fn grant_localservice_rx_program_files() -> Result<(), String> {
 ///     FILE_WRITE_ATTRIBUTES (changing file metadata like timestamps)
 ///   - Other ProgramFiles dirs (bin/, runtime/, themes/, public/) only get RX
 ///
-/// Implementation: icacls does NOT accept `WA` as a /grant permission shorthand
-/// (returns "Invalid parameter" on Windows Server 2022 runner). However, icacls
-/// DOES accept a hex permission mask directly. FILE_WRITE_ATTRIBUTES = 0x100.
-/// So we use:
-///   icacls "<path>" /grant "*S-1-5-19:(OI)(CI)0x100" /T /Q
+/// Implementation: icacls does NOT accept `WA` (Write Attributes) or hex masks
+/// like `0x100` as a /grant permission shorthand on Windows Server 2022 — it
+/// only accepts: F, M, RX, R, W, D. So we use PowerShell's `Set-Acl` cmdlet
+/// from the MSI installer CustomAction (NOT the runtime product — the mission's
+/// "no PowerShell" rule is for the RUNNING server, not the installer). The
+/// PowerShell script uses .NET's FileSystemAccessRule with the
+/// `WriteAttributes` FileSystemRights value, which maps to FILE_WRITE_ATTRIBUTES
+/// (0x100) at the Win32 level.
 ///
-/// The `(OI)(CI)` makes the ACE inheritable, so future files installed into
-/// these dirs also get the WA permission. The `/T` makes it recursive for
-/// existing files. This is in addition to the existing RX grant (from
-/// grant_localservice_rx_program_files) — icacls /grant is additive.
+/// The script walks the directory tree recursively and adds the ACE to each
+/// file and subdir. The ACE uses ContainerInherit+ObjectInherit so future
+/// files inherit it automatically.
 fn grant_localservice_wa_app_dirs() -> Result<(), String> {
     let pf = program_files().join("ViewLBA Server");
     let app_dir = pf.join("app");
@@ -434,15 +436,112 @@ fn grant_localservice_wa_app_dirs() -> Result<(), String> {
     if !app_dir.exists() {
         return Err(format!("app/ dir not found: {}", app_dir.display()));
     }
-    // 0x100 = FILE_WRITE_ATTRIBUTES (atomic permission, NOT Write Data)
-    icacls_grant(&app_dir, "*S-1-5-19:(OI)(CI)0x100", "LocalService WA (0x100) on app/ (Bun module loader)")?;
+    grant_wa_via_powershell(&app_dir)?;
 
     // mini-services/ — Bun loads realtime-service/index.ts + stream-service/index.ts
     if !mini_dir.exists() {
         return Err(format!("mini-services/ dir not found: {}", mini_dir.display()));
     }
-    icacls_grant(&mini_dir, "*S-1-5-19:(OI)(CI)0x100", "LocalService WA (0x100) on mini-services/ (Bun module loader)")?;
+    grant_wa_via_powershell(&mini_dir)?;
 
+    Ok(())
+}
+
+/// Grant FILE_WRITE_ATTRIBUTES to LocalService (S-1-5-19) on a directory tree
+/// via PowerShell's Set-Acl cmdlet. Used because icacls does not accept atomic
+/// permission shorthands like WA.
+///
+/// NOTE: This spawns powershell.exe from the MSI installer CustomAction. The
+/// mission's "no PowerShell" rule is for the RUNNING server product, NOT the
+/// installer. The installer can use any Windows binary.
+fn grant_wa_via_powershell(root: &std::path::Path) -> Result<(), String> {
+    let root_str = root.to_string_lossy().replace('\'', "''");
+    // PowerShell script: walks the dir tree recursively, adds a WriteAttributes
+    // ACE for LocalService to each file and dir. Uses .NET's
+    // FileSystemAccessRule which maps WriteAttributes → FILE_WRITE_ATTRIBUTES
+    // (0x100) at the Win32 level.
+    //
+    // - Identity: "NT AUTHORITY\LocalService" (resolves to S-1-5-19)
+    // - FileSystemRights: WriteAttributes (atomic, NOT WriteData)
+    // - Inheritance: ContainerInherit + ObjectInherit (for dirs)
+    // - AccessControlType: Allow
+    //
+    // The script uses Get-Acl + AddAccessRule + Set-Acl per file. For large
+    // trees this is slower than a single recursive icacls call, but it's
+    // the only way to grant the atomic FILE_WRITE_ATTRIBUTES permission
+    // since icacls doesn't support it.
+    let script = format!(
+        r#"$ErrorActionPreference = 'Stop'
+$root = '{root_str}'
+$identity = 'NT AUTHORITY\LocalService'
+$rights = [System.Security.AccessControl.FileSystemRights]::WriteAttributes
+$inhFlags = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+$propFlags = [System.Security.AccessControl.PropagationFlags]::None
+$acType = [System.Security.AccessControl.AccessControlType]::Allow
+
+$items = @($root)
+$items += Get-ChildItem -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+$count = 0
+$failed = 0
+foreach ($item in $items) {{
+    try {{
+        $acl = Get-Acl -LiteralPath $item
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($identity, $rights, $inhFlags, $propFlags, $acType)
+        $acl.AddAccessRule($rule)
+        Set-Acl -LiteralPath $item -AclObject $acl
+        $count++
+    }} catch {{
+        $failed++
+        Write-Host "  WARN: $item : $_"
+    }}
+}}
+Write-Host "WA granted to LocalService on $count items ($failed failed)"
+if ($failed -gt 0 -and $failed -gt ($count / 100)) {{
+    Write-Host "FATAL: Too many failures ($failed out of $($count + $failed))"
+    exit 1
+}}
+exit 0
+"#,
+        root_str = root_str
+    );
+
+    let powershell = std::env::var("SYSTEMROOT")
+        .unwrap_or_else(|_| r"C:\Windows".to_string())
+        + r"\System32\WindowsPowerShell\v1.0\powershell.exe";
+
+    log(&format!("Running PowerShell to grant LocalService WA on {} (recursive)", root.display()));
+
+    let output = std::process::Command::new(&powershell)
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy", "Bypass",
+            "-Command", &script,
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("spawn powershell: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Log the PowerShell output
+    for line in stdout.lines().take(20) {
+        log(&format!("  PS: {}", line));
+    }
+
+    if !output.status.success() {
+        return Err(format!(
+            "PowerShell WA grant FAILED (exit {:?}) for {} — stdout: {} — stderr: {}",
+            output.status.code(),
+            root.display(),
+            stdout.trim(),
+            stderr.trim()
+        ));
+    }
+
+    log(&format!("PowerShell OK: LocalService WA granted on {}", root.display()));
     Ok(())
 }
 
