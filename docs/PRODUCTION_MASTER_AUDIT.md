@@ -975,3 +975,101 @@ destruir lo existente.
 
 **Fin del audit.** Próximo paso: commit de este documento al repo en
 branch `feature/production-master-audit` + push + PR para revisión.
+
+---
+
+## 13. Estado actual — Fase 2 (feature/production-master-audit)
+
+> **Fecha**: 2026-10-09
+> **Branch**: `feature/production-master-audit`
+> **Último commit**: `8bd5c6b` (test Bun 1.2.5 — same EPERM issue)
+> **Workflow URL**: https://github.com/Lean031110/View_LBA/actions/runs/37881903722
+> **Conclusión**: BUILD GREEN, SMOKE TEST BLOCKED en "Verify child processes started"
+
+### 13.1 Lo que SÍ funciona (evidencia CI commit 8bd5c6b)
+
+Build-installer job — **28/28 pasos en success**:
+- ✅ Rust binaries (viewlba-service.exe + viewlba-tray.exe + viewlba-init.exe) construidos
+- ✅ Bun runtime + Next.js standalone + Prisma client en staging
+- ✅ Staging-manifest determinista (relpath+size+SHA256, 2293 entradas)
+- ✅ Strict staging verification (8 mandatory files, blocking)
+- ✅ WiX v4 MSI construido (current + previous version para upgrade test)
+- ✅ NSIS Setup.exe bootstrapper (mandatory, no continue-on-error)
+- ✅ PE icon embedding verificado (ExtractAssociatedIcon en service/tray/init.exe)
+- ✅ Artifact upload: MSI + EXE + manifest + SHA256SUMS + staging-manifest.json
+
+Smoke-test-msi job — **8 verificaciones STRICT en success**:
+- ✅ Install PREVIOUS-VERSION MSI (cmd + ERRORLEVEL check)
+- ✅ Verify service Running + LocalService + Auto start (STRICT — no accepted Stopped)
+- ✅ Verify server.env created with 6 required keys (PORT, TIMEZONE, NODE_ENV,
+  DATABASE_URL, AUTH_SECRET, REALTIME_TOKEN — placeholders absent)
+- ✅ Verify ARP entry + DisplayIcon → viewlba.ico (file exists + SHA256 matches
+  staging-manifest)
+- ✅ Verify Program Files x64 (NOT installed in x86)
+- ✅ Verify ProgramData 9 dirs (config, data/db, data/media, data/backups,
+  data/store, logs, credentials, run, cache)
+- ✅ Verify recovery actions (3× RESTART 60s, 24h reset — verified via sc qfailure)
+- ✅ Verify installed payload matches staging-manifest (STRICT on mandatory binaries
+  bin/* + runtime/bun.exe; lenient on Next.js standalone text files)
+
+### 13.2 Lo que NO funciona — BLOCKER crítico
+
+**Paso: "Verify child processes started (STRICT)" — FAIL**
+
+Symptom: Bun children spawn but immediately crash with `error: EPERM reading
+"C:\Program Files\ViewLBA Server\app\server.js"` (also realtime-service/index.ts
+and stream-service/index.ts).
+
+Diagnostic findings (commits 75d3db0 → 42e8be6):
+- ✅ ACL grant IS applied: `icacls` dump shows `NT AUTHORITY\LOCAL SERVICE:(I)(OI)(CI)(RX)`
+  on app/server.js
+- ✅ Windows Defender exclusions added (ExclusionPath + ExclusionProcess)
+- ✅ File is readable by runner user (admin): 7319 bytes verified
+- ✅ `bun.exe --version` works as runner user (confirms Bun can run)
+- ✅ Stopped service, waited 30s, verified file readable, restarted service →
+  children STILL crash with EPERM
+- ✅ Bun version doesn't matter: 1.3.14 AND 1.2.5 BOTH fail with same EPERM
+
+Bun's EPERM on Windows maps to ERROR_SHARING_VIOLATION (32), NOT
+ERROR_ACCESS_DENIED. Despite the ACL granting LocalService RX, Bun-as-LocalService
+cannot read the file. The runner user (admin) can read the same file. This is a
+Bun-on-Windows-as-LocalService-specific issue, not a generic ACL issue.
+
+### 13.3 Hipótesis restantes (no verificadas)
+
+1. **Bun JIT compilation requires privilege LocalService lacks** — Bun uses
+   WebKit's Balloc + JIT, which may need `SeCreateGlobalPrivilege` or similar
+2. **Mandatory Integrity Control** — Files in `C:\Program Files\` have HIGH
+   integrity; LocalService runs at MEDIUM. Read should work, but Bun's specific
+   API usage (e.g., memory-mapped files with copy-on-write) may need higher
+   integrity.
+3. **Path with spaces** — `C:\Program Files\ViewLBA Server\app\server.js`
+   contains spaces. Bun's path handling may have a LocalService-specific bug.
+4. **CreateProcess token inheritance** — LocalService's token may be "filtered"
+   by Windows UAC in a way that breaks Bun's runtime initialization.
+
+### 13.4 Próximos pasos recomendados (no implemented)
+
+1. Try install path WITHOUT spaces (`C:\ViewLBA-Server\`) — see if Bun's
+   path-with-spaces handling is the issue
+2. Try spawning children with `CreateProcessAsUserW` using a non-filtered
+   LocalService token (requires SeAssignPrimaryTokenPrivilege)
+3. Investigate Bun's source for how it opens entry files (CreateFileW flags)
+4. As last resort: switch to Node.js for the spawned children (Node.js has
+   no known LocalService issues). Bun is faster, but Node.js is more
+   compatible with Windows service accounts.
+5. **Do NOT relax the "child processes started" check** — it's the
+   fundamental indicator that the product actually runs. Without it,
+   the install is just "files copied, service registered" — the
+   product is NOT functional.
+
+### 13.5 Veredicto honesto
+
+**Estado**: PARTIAL — el 90% del pipeline CI está GREEN y estricto.
+El 10% restante (children spawned + health checks + O/P/R/S) está bloqueado
+por un issue profundo de Bun-as-LocalService que requiere investigación
+adicional. NO se han relajado tests para aparentar verde — los 8 checks
+que pasan son bloqueantes y verifican requisitos reales.
+
+**No cerrar Fase 2** hasta que el issue EPERM se resuelva y el smoke test
+pase completamente (incluyendo health :3000/:3004, O/P/R/S, upgrade real).
