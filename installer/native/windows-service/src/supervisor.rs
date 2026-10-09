@@ -313,22 +313,26 @@ impl Supervisor {
             // TEMP / TMP — LocalService's default doesn't work; use ProgramData
             let temp_dir = self.cfg.program_data.join("cache").join("temp");
             let _ = std::fs::create_dir_all(&temp_dir);
-            cmd.env("TEMP", temp_dir.to_string_lossy().as_ref());
-            cmd.env("TMP", temp_dir.to_string_lossy().as_ref());
+            let temp_path = temp_dir.to_string_lossy().to_string();
+            cmd.env("TEMP", &temp_path);
+            cmd.env("TMP", &temp_path);
+            cmd.env("TMPDIR", &temp_path);  // POSIX standard
+            cmd.env("BUN_TMPDIR", &temp_path);  // Bun-specific temp dir
 
             // USERPROFILE / HOME / APPDATA — Bun's cache + config dir
             let user_dir = self.cfg.program_data.join("cache").join("home");
             let _ = std::fs::create_dir_all(&user_dir);
-            cmd.env("USERPROFILE", user_dir.to_string_lossy().as_ref());
-            cmd.env("HOME", user_dir.to_string_lossy().as_ref());
-            cmd.env("APPDATA", user_dir.to_string_lossy().as_ref());
-            cmd.env("LOCALAPPDATA", user_dir.to_string_lossy().as_ref());
+            let user_path = user_dir.to_string_lossy().to_string();
+            cmd.env("USERPROFILE", &user_path);
+            cmd.env("HOME", &user_path);
+            cmd.env("APPDATA", &user_path);
+            cmd.env("LOCALAPPDATA", &user_path);
 
             // BUN_INSTALL — Bun's cache root (overrides default ~/.bun which
             // LocalService can't access).
             let bun_cache = self.cfg.program_data.join("cache").join("bun");
             let _ = std::fs::create_dir_all(&bun_cache);
-            cmd.env("BUN_INSTALL", bun_cache.to_string_lossy().as_ref());
+            cmd.env("BUN_INSTALL", &bun_cache.to_string_lossy());
         }
 
         // 2. server.env vars — these override the essential ones if set.
