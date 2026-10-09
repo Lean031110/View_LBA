@@ -40,10 +40,16 @@
     </StandardDirectory>
 
     <!-- ProgramFiles ACL: LocalService needs RX on ALL ProgramFiles dirs
-         (app/, mini-services/, runtime/, themes/, public/) because the
+         (bin/, runtime/, app/, mini-services/, themes/, public/) because the
          service host runs as LocalService and spawns bun.exe children
          that READ files from these dirs. Without this, children fail
-         with EPERM on file read. -->
+         with EPERM on file read.
+
+         We set explicit ACLs on EACH subdir (not just the root) because
+         WiX's implicit dir creation (when File installs target a subdir)
+         does NOT apply the parent's Permission element to the subdir.
+         Each subdir must have its own <CreateFolder> with <Permission>.
+         Files installed into these subdirs inherit the LocalService RX. -->
     <DirectoryRef Id="VIEWLBA_PF">
       <Component Id="cmp_pf_root" Guid="*">
         <CreateFolder>
@@ -53,6 +59,78 @@
           <Permission User="Users" GenericRead="yes" GenericExecute="yes" />
         </CreateFolder>
         <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="PF_Root" Value="1" Type="string" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="BIN_DIR">
+      <Component Id="cmp_pf_bin" Guid="*">
+        <CreateFolder>
+          <Permission User="SYSTEM" GenericAll="yes" />
+          <Permission User="Administrators" GenericAll="yes" />
+          <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericExecute="yes" />
+          <Permission User="Users" GenericRead="yes" GenericExecute="yes" />
+        </CreateFolder>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="PF_Bin" Value="1" Type="string" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="RUNTIME_DIR">
+      <Component Id="cmp_pf_runtime" Guid="*">
+        <CreateFolder>
+          <Permission User="SYSTEM" GenericAll="yes" />
+          <Permission User="Administrators" GenericAll="yes" />
+          <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericExecute="yes" />
+          <Permission User="Users" GenericRead="yes" GenericExecute="yes" />
+        </CreateFolder>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="PF_Runtime" Value="1" Type="string" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="APP_DIR">
+      <Component Id="cmp_pf_app" Guid="*">
+        <CreateFolder>
+          <Permission User="SYSTEM" GenericAll="yes" />
+          <Permission User="Administrators" GenericAll="yes" />
+          <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericExecute="yes" />
+          <Permission User="Users" GenericRead="yes" GenericExecute="yes" />
+        </CreateFolder>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="PF_App" Value="1" Type="string" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="MINI_SERVICES_DIR">
+      <Component Id="cmp_pf_mini" Guid="*">
+        <CreateFolder>
+          <Permission User="SYSTEM" GenericAll="yes" />
+          <Permission User="Administrators" GenericAll="yes" />
+          <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericExecute="yes" />
+          <Permission User="Users" GenericRead="yes" GenericExecute="yes" />
+        </CreateFolder>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="PF_Mini" Value="1" Type="string" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="THEMES_PF_DIR">
+      <Component Id="cmp_pf_themes" Guid="*">
+        <CreateFolder>
+          <Permission User="SYSTEM" GenericAll="yes" />
+          <Permission User="Administrators" GenericAll="yes" />
+          <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericExecute="yes" />
+          <Permission User="Users" GenericRead="yes" GenericExecute="yes" />
+        </CreateFolder>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="PF_Themes" Value="1" Type="string" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="PUBLIC_DIR">
+      <Component Id="cmp_pf_public" Guid="*">
+        <CreateFolder>
+          <Permission User="SYSTEM" GenericAll="yes" />
+          <Permission User="Administrators" GenericAll="yes" />
+          <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericExecute="yes" />
+          <Permission User="Users" GenericRead="yes" GenericExecute="yes" />
+        </CreateFolder>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="PF_Public" Value="1" Type="string" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
@@ -279,6 +357,12 @@
 
     <Feature Id="ProductFeature" Title="ViewLBA Server" Level="1">
       <ComponentRef Id="cmp_pf_root" />
+      <ComponentRef Id="cmp_pf_bin" />
+      <ComponentRef Id="cmp_pf_runtime" />
+      <ComponentRef Id="cmp_pf_app" />
+      <ComponentRef Id="cmp_pf_mini" />
+      <ComponentRef Id="cmp_pf_themes" />
+      <ComponentRef Id="cmp_pf_public" />
       <ComponentRef Id="cmp_service" />
       <ComponentRef Id="cmp_tray" />
       <ComponentRef Id="cmp_installer" />
