@@ -39,6 +39,23 @@
       </Directory>
     </StandardDirectory>
 
+    <!-- ProgramFiles ACL: LocalService needs RX on ALL ProgramFiles dirs
+         (app/, mini-services/, runtime/, themes/, public/) because the
+         service host runs as LocalService and spawns bun.exe children
+         that READ files from these dirs. Without this, children fail
+         with EPERM on file read. -->
+    <DirectoryRef Id="VIEWLBA_PF">
+      <Component Id="cmp_pf_root" Guid="*">
+        <CreateFolder>
+          <Permission User="SYSTEM" GenericAll="yes" />
+          <Permission User="Administrators" GenericAll="yes" />
+          <Permission User="NT AUTHORITY\LocalService" GenericRead="yes" GenericExecute="yes" />
+          <Permission User="Users" GenericRead="yes" GenericExecute="yes" />
+        </CreateFolder>
+        <RegistryValue Root="HKLM" Key="SOFTWARE\ViewLBA\Folders" Name="PF_Root" Value="1" Type="string" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
     <StandardDirectory Id="CommonAppDataFolder">
       <Directory Id="VIEWLBA_PD" Name="ViewLBA">
         <Directory Id="CONFIG_DIR" Name="config" />
@@ -261,6 +278,7 @@
     </DirectoryRef>
 
     <Feature Id="ProductFeature" Title="ViewLBA Server" Level="1">
+      <ComponentRef Id="cmp_pf_root" />
       <ComponentRef Id="cmp_service" />
       <ComponentRef Id="cmp_tray" />
       <ComponentRef Id="cmp_installer" />
