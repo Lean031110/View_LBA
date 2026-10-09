@@ -399,6 +399,37 @@ fn grant_localservice_rx_program_files() -> Result<(), String> {
     icacls_grant(&pf, "*S-1-5-19:(OI)(CI)RX", "LocalService RX on ProgramFiles (recursive)")
 }
 
+/// Grant LocalService RWX (Read+Write+Execute) on ProgramData/ViewLBA/cache/.
+///
+/// The cache/ dir is where the supervisor creates temp/ and home/ subdirs for
+/// Bun's runtime. Bun needs to:
+///   - Write to cache/temp/ (BUN_TMPDIR, TEMP, TMP)
+///   - Write to cache/home/ (USERPROFILE, HOME, APPDATA)
+///   - Write to cache/bun/ (BUN_INSTALL)
+///
+/// The WiX <Permission> element on the cache/ <CreateFolder> only applies to
+/// the directory itself — it does NOT propagate to subdirs created at runtime
+/// by the supervisor (same WiX v4 behavior as ProgramFiles). So we grant
+/// RWX recursively on cache/ via icacls.
+///
+/// RWX = (OI)(CI)M — Modify permission includes Read+Write+Execute but NOT
+/// Delete or Full Control. This is appropriate for the cache dir (Bun needs
+/// to create+modify+traverse but not delete the dir itself).
+fn grant_localservice_rwx_program_data_cache() -> Result<(), String> {
+    let pd = program_data().join("ViewLBA").join("cache");
+    if !pd.exists() {
+        // The cache dir is created by the MSI's cmp_cache component (Permanent).
+        // It should exist by the time we run (deferred CustomAction, after InstallFiles).
+        // If it doesn't exist, create it.
+        let _ = std::fs::create_dir_all(&pd);
+    }
+    if !pd.exists() {
+        return Err(format!("ProgramData cache dir not found and could not be created: {}", pd.display()));
+    }
+    // M = Modify = Read + Write + Execute (NOT Delete, NOT Full Control)
+    icacls_grant(&pd, "*S-1-5-19:(OI)(CI)M", "LocalService RWX (Modify) on ProgramData/cache (recursive)")
+}
+
 /// Grant LocalService WA (FILE_WRITE_ATTRIBUTES) on app/ and mini-services/ ONLY.
 ///
 /// Bun's Windows module loader opens files via CreateFileW with an access mask
@@ -571,7 +602,17 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     }
 
-    // 2. Grant LocalService WA on app/ + mini-services/ ONLY. CRITICAL: Bun's
+    // 2. Grant LocalService RWX (Modify) on ProgramData/ViewLBA/cache/.
+    // CRITICAL: Bun's runtime needs to write to cache/temp/ (BUN_TMPDIR),
+    // cache/home/ (USERPROFILE), and cache/bun/ (BUN_INSTALL). Without RWX
+    // on these dirs, Bun fails with "AccessDenied accessing temporary
+    // directory" even when BUN_TMPDIR is set.
+    if let Err(e) = grant_localservice_rwx_program_data_cache() {
+        log(&format!("FATAL: grant_localservice_rwx_program_data_cache: {}", e));
+        return ExitCode::from(5);
+    }
+
+    // 3. Grant LocalService WA on app/ + mini-services/ ONLY. CRITICAL: Bun's
     // Windows module loader uses CreateFileW with FILE_WRITE_ATTRIBUTES in the
     // access mask. Without WA, Bun fails with "EPERM reading <path>" even when
     // RX is granted. Reference: https://github.com/oven-sh/bun/issues/44626
@@ -580,7 +621,7 @@ fn main() -> ExitCode {
         return ExitCode::from(3);
     }
 
-    // 3. Configure SCM recovery actions. FATAL if it fails — the deferred
+    // 4. Configure SCM recovery actions. FATAL if it fails — the deferred
     // CustomAction runs AFTER InstallServices, so the ViewLBA service MUST
     // already exist in SCM by the time we call OpenServiceW. Previous
     // behavior (warn + continue) was a regression that allowed the install
