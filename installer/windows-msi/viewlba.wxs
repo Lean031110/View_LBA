@@ -197,8 +197,16 @@
          WIX1149). Instead, viewlba-init.exe calls ChangeServiceConfig2W
          with SERVICE_CONFIG_FAILURE_ACTIONS directly — pure Rust, no
          sc.exe, no PowerShell, no CMD (mission). -->
+    <!-- Use BinaryRef instead of FileRef for the CustomAction.
+         BinaryRef embeds the EXE in the MSI's Binary table and extracts
+         it to a temp directory when the CustomAction runs. This avoids
+         issues during upgrades where the File element's state might be
+         transitional (the file is "Won't Overwrite" because hash matches,
+         but the MSI might not be able to launch it via FileRef during
+         the deferred phase of an upgrade). -->
+    <Binary Id="bin_init" SourceFile="$(var.BUILD_DIR)\viewlba-init.exe" />
     <CustomAction Id="RunViewLBAInit"
-                  FileRef="file_init"
+                  BinaryRef="bin_init"
                   ExeCommand=""
                   Execute="deferred"
                   Impersonate="no"
