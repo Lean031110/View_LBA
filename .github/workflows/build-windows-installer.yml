@@ -938,6 +938,23 @@ jobs:
           & icacls "C:\Program Files\ViewLBA Server\app\server.js" 2>&1 | ForEach-Object { Write-Host $_ }
           Write-Host ""
 
+          # CRITICAL DIAGNOSTIC: check if anyone has the file OPEN
+          # (EPERM in Bun maps to SHARING_VIOLATION, not ACCESS_DENIED)
+          # If a process has the file open with non-share-read, Bun can't read it
+          Write-Host "=== Checking who has app/server.js open (handle.exe) ==="
+          $handleExe = "C:\Sysinternals\handle.exe"
+          $handle64Exe = "C:\Sysinternals\handle64.exe"
+          $handlePath = $null
+          if (Test-Path $handle64Exe) { $handlePath = $handle64Exe }
+          elseif (Test-Path $handleExe) { $handlePath = $handleExe }
+          if ($handlePath) {
+            & $handlePath -accepteula -nobanner "C:\Program Files\ViewLBA Server\app\server.js" 2>&1 | ForEach-Object { Write-Host "  $_" }
+          } else {
+            Write-Host "  handle.exe not available — using openfiles instead"
+            & openfiles /query /v 2>&1 | Select-String "server.js" | ForEach-Object { Write-Host "  $_" }
+          }
+          Write-Host ""
+
           # Diagnostic: try reading the file as the runner user (should always work)
           Write-Host "=== Reading app/server.js as runner user ==="
           try {
@@ -955,9 +972,27 @@ jobs:
           & icacls "C:\Program Files\ViewLBA Server" /grant "Everyone:(OI)(CI)RX" /T /Q 2>&1 | ForEach-Object { Write-Host $_ }
           Write-Host ""
 
+          # CRITICAL: Wait for any handles to be released (anti-virus, MSI, etc.)
+          Write-Host "=== Waiting 30s for any file handles to release ==="
+          Start-Sleep -Seconds 30
+
+          # CRITICAL: stop the service and verify the file is no longer being held
+          Write-Host "=== Stopping ViewLBA service to release any handles ==="
+          Stop-Service -Name "ViewLBA" -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 5
+
+          # Now check if file is readable without any process holding it
+          Write-Host "=== Verifying file is readable after stop ==="
+          try {
+            $bytes = [System.IO.File]::ReadAllBytes("C:\Program Files\ViewLBA Server\app\server.js")
+            Write-Host "OK: file readable ($($bytes.Length) bytes)"
+          } catch {
+            Write-Host "::error::file NOT readable: $_"
+          }
+
           # Restart service to clear backoff state (so children respawn immediately)
-          Write-Host "=== Restarting ViewLBA service (to clear backoff) ==="
-          Restart-Service -Name "ViewLBA" -Force -ErrorAction SilentlyContinue
+          Write-Host "=== Restarting ViewLBA service ==="
+          Start-Service -Name "ViewLBA"
           Start-Sleep -Seconds 15
 
           # Now check children
