@@ -498,7 +498,10 @@ jobs:
               @{ name = "ViewLBA-Server-Setup-$version.msi"; sha256 = $msiHash; size_bytes = (Get-Item "dist\release\windows\out\ViewLBA-Server-Setup-$version.msi").Length; role = "canonical MSI installer" }
               @{ name = "ViewLBA-Server-Setup-$version.exe"; sha256 = $exeHash; size_bytes = $exeSize; role = "bootstrapper (wraps MSI)" }
             )
-            dependencies_excluded = @("NSSM", "PowerShell", "CMD", "sc.exe", "find.exe")
+            dependencies_excluded = @("NSSM", "CMD", "sc.exe", "find.exe")
+            installer_dependencies = @(
+              @{ name = "PowerShell"; required_at = "install-time"; reason = "viewlba-init.exe spawns powershell.exe to call Set-Acl with FILE_WRITE_ATTRIBUTES (0x100) for Bun module loader (https://github.com/oven-sh/bun/issues/44626). PowerShell is NOT a runtime dependency — the running server does not use it." }
+            )
             branding = @{
               icon_source = "public/logo-mark.svg"
               icon_sha256 = (Get-FileHash $ico -Algorithm SHA256).Hash.ToLower()
