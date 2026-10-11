@@ -110,26 +110,6 @@ mod win32 {
         v
     }
 
-    /// Check if a Windows service exists in SCM.
-    /// Returns true if the service is registered (regardless of running state).
-    /// Used to distinguish install/upgrade context from uninstall context.
-    pub fn is_service_installed(service_name: &str) -> bool {
-        unsafe {
-            let scm = match OpenSCManagerW(None, None, SC_MANAGER_CONNECT) {
-                Ok(h) => h,
-                Err(_) => return false,
-            };
-            let name_w = wstr(service_name);
-            let result = OpenServiceW(
-                scm,
-                PCWSTR(name_w.as_ptr()),
-                windows::Win32::System::Services::SERVICE_QUERY_STATUS,
-            );
-            let _ = CloseServiceHandle(scm);
-            result.is_ok()
-        }
-    }
-
     /// Configure recovery actions on the ViewLBA service via ChangeServiceConfig2W.
     ///
     /// - 1st failure: Restart (60s delay)
@@ -192,9 +172,6 @@ mod win32 {
         let mut v: Vec<u16> = s.encode_utf16().collect();
         v.push(0);
         v
-    }
-    pub fn is_service_installed(_name: &str) -> bool {
-        false
     }
     pub fn set_service_recovery_actions(_n: &str) -> Result<(), String> {
         Err("SCM only supported on Windows".into())
@@ -337,27 +314,17 @@ fn write_server_env() -> Result<(), String> {
 }
 
 fn configure_recovery() -> Result<(), String> {
-    // During install/upgrade: FATAL if the service can't be configured.
-    // During uninstall: the service is being removed — OpenServiceW fails
-    // with ERROR_SERVICE_DOES_NOT_EXIST (1060). We detect this and skip.
-    // This is necessary because WiX v4 WIX0400 rejects conditions in
-    // <Custom> inner text, so we can't suppress the CustomAction during
-    // uninstall via WiX. Instead, the Rust binary detects the context.
+    // FATAL during install/upgrade. The WiX Condition attribute
+    // (NOT (REMOVE="ALL") AND NOT UPGRADINGPRODUCTCODE) ensures this
+    // CustomAction does NOT run during uninstall, so there is no
+    // "service doesn't exist" scenario to be lenient about.
+    // If OpenServiceW or OpenSCManagerW fails, it's a real error.
     #[cfg(target_os = "windows")]
     {
-        match win32::set_service_recovery_actions("ViewLBA") {
-            Ok(()) => {
-                log("SCM recovery actions: Restart 60s × 3 (reset 24h)");
-            }
-            Err(e) => {
-                // Check if the service doesn't exist (uninstall context)
-                if e.contains("OpenService") || e.contains("1060") || e.contains("does not exist") {
-                    log("ViewLBA service not found (uninstall context) — skipping recovery config");
-                } else {
-                    return Err(format!("set_service_recovery_actions: {}", e));
-                }
-            }
+        if let Err(e) = win32::set_service_recovery_actions("ViewLBA") {
+            return Err(format!("set_service_recovery_actions: {}", e));
         }
+        log("SCM recovery actions: Restart 60s × 3 (reset 24h)");
     }
     Ok(())
 }
@@ -421,10 +388,11 @@ fn icacls_grant(path: &std::path::Path, subject: &str, label: &str) -> Result<()
 fn grant_localservice_rx_program_files() -> Result<(), String> {
     let pf = program_files().join("ViewLBA Server");
     if !pf.exists() {
-        // During uninstall (RemoveExistingProducts), the ProgramFiles dir may
-        // already be gone. This is NOT an error — we just skip the grant.
-        log(&format!("ProgramFiles dir not found (likely uninstall): {} — skipping RX grant", pf.display()));
-        return Ok(());
+        // The WiX Condition='NOT (REMOVE="ALL") AND NOT UPGRADINGPRODUCTCODE'
+        // ensures this code only runs during install/upgrade. If the dir
+        // doesn't exist at this point, it's a real install error (files
+        // were not installed by InstallFiles).
+        return Err(format!("ProgramFiles dir not found: {} — InstallFiles should have created it", pf.display()));
     }
     // (OI)(CI) = Object Inherit + Container Inherit → applies to all subdirs and
     // files recursively (combined with /T).
@@ -442,21 +410,64 @@ fn grant_localservice_rx_program_files() -> Result<(), String> {
 /// The WiX <Permission> element on the cache/ <CreateFolder> only applies to
 /// the directory itself — it does NOT propagate to subdirs created at runtime
 /// by the supervisor (same WiX v4 behavior as ProgramFiles). So we grant
-/// RWX recursively on cache/ via icacls.
+/// RWX on cache/ via icacls.
 ///
-/// RWX = (OI)(CI)M — Modify permission includes Read+Write+Execute but NOT
-/// Delete or Full Control. This is appropriate for the cache dir (Bun needs
-/// to create+modify+traverse but not delete the dir itself).
+/// IMPORTANT: We grant on the ROOT cache/ dir ONLY (not recursive /T).
+/// During upgrades, old version's bun.exe children may still have files
+/// locked in cache/temp/. A recursive /T would fail on those locked files.
+/// By granting on the root dir with (OI)(CI) inheritance, NEW files created
+/// after the grant will inherit the ACL. Existing files (from the first
+/// install) already have the ACL applied. This avoids touching locked files.
+///
+/// Permission: M = Modify.
+/// Modify includes: Read (FILE_READ_DATA, FILE_READ_ATTRIBUTES, FILE_READ_EA),
+/// Write (FILE_WRITE_DATA, FILE_APPEND_DATA, FILE_WRITE_EA, FILE_WRITE_ATTRIBUTES),
+/// Execute (FILE_EXECUTE), and Delete (DELETE).
+/// Modify does NOT include: Write DACL (WRITE_DAC), Write Owner (WRITE_OWNER),
+/// or Full Control (GENERIC_ALL).
+/// This is appropriate for the cache dir — Bun needs to create, write, read,
+/// and delete temp files, but should not be able to change the ACL or take
+/// ownership of the directory.
 fn grant_localservice_rwx_program_data_cache() -> Result<(), String> {
     let pd = program_data().join("ViewLBA").join("cache");
     if !pd.exists() {
-        // During uninstall, the cache dir (Permanent=yes) should still exist.
-        // But if it doesn't, skip the grant — it's not an error.
-        log("ProgramData cache dir not found — skipping RWX grant");
-        return Ok(());
+        // The cache dir is created by the MSI's cmp_cache component (Permanent=yes).
+        // If it doesn't exist during install, that's an install error.
+        return Err(format!("ProgramData cache dir not found: {} — cmp_cache should have created it", pd.display()));
     }
-    // M = Modify = Read + Write + Execute (NOT Delete, NOT Full Control)
-    icacls_grant(&pd, "*S-1-5-19:(OI)(CI)M", "LocalService RWX (Modify) on ProgramData/cache (recursive)")
+    // Grant on the ROOT dir only (no /T). (OI)(CI) makes it inheritable:
+    // new files/subdirs created after this grant will inherit the ACL.
+    // Existing files already have the ACL from the first install (idempotent).
+    // This avoids touching files that may be locked by dying bun.exe children
+    // during upgrades.
+    let icacls = std::env::var("SYSTEMROOT")
+        .unwrap_or_else(|_| r"C:\Windows".to_string())
+        + r"\System32\icacls.exe";
+    let path_str = pd.to_string_lossy();
+    log(&format!("Running icacls: {} (cache root only, inheritance)", path_str));
+    let output = std::process::Command::new(&icacls)
+        .arg(path_str.as_ref())
+        .arg("/grant")
+        .arg("*S-1-5-19:(OI)(CI)M")
+        // NO /T — we only set the ACL on the root dir + make it inheritable
+        .arg("/Q")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("spawn icacls: {}", e))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success() {
+        return Err(format!(
+            "icacls FAILED (exit {:?}) for {} — stdout: {} — stderr: {}",
+            output.status.code(),
+            path_str,
+            stdout.trim(),
+            stderr.trim()
+        ));
+    }
+    log(&format!("icacls OK: {} (cache root, inheritance (OI)(CI)M)", path_str));
+    Ok(())
 }
 
 /// Grant LocalService WA (FILE_WRITE_ATTRIBUTES) on app/ and mini-services/ ONLY.
@@ -511,15 +522,13 @@ fn grant_localservice_wa_app_dirs() -> Result<(), String> {
 
     // app/ — Bun loads Next.js standalone server.js + .next/ + node_modules/ from here
     if !app_dir.exists() {
-        log("app/ dir not found (likely uninstall) — skipping WA grant");
-        return Ok(());
+        return Err(format!("app/ dir not found: {} — InstallFiles should have created it", app_dir.display()));
     }
     grant_wa_via_powershell(&app_dir)?;
 
     // mini-services/ — Bun loads realtime-service/index.ts + stream-service/index.ts
     if !mini_dir.exists() {
-        log("mini-services/ dir not found (likely uninstall) — skipping WA grant");
-        return Ok(());
+        return Err(format!("mini-services/ dir not found: {} — InstallFiles should have created it", mini_dir.display()));
     }
     grant_wa_via_powershell(&mini_dir)?;
 
@@ -644,31 +653,24 @@ exit 0
 fn main() -> ExitCode {
     log("viewlba-init starting (deferred CustomAction)");
 
-    // WiX v4 WIX0400 rejects conditions in <Custom> inner text, so this
-    // CustomAction runs during install, upgrade, AND uninstall. We detect
-    // the context by checking if the ViewLBA service exists in SCM:
-    //   - Service EXISTS → install/upgrade/repair → FATAL grants
-    //   - Service MISSING → uninstall/RemoveExistingProducts → skip grants
+    // The WiX Condition attribute on <Custom>:
+    //   Condition='NOT (REMOVE="ALL") AND NOT UPGRADINGPRODUCTCODE'
+    // ensures this CustomAction ONLY runs during:
+    //   - Fresh install
+    //   - Upgrade (new version installing over old)
+    //   - Repair
+    // It does NOT run during:
+    //   - Uninstall (REMOVE="ALL")
+    //   - RemoveExistingProducts (UPGRADINGPRODUCTCODE set)
+    //
+    // Therefore, ALL operations below are FATAL — if any fails, the install
+    // must abort. There is no uninstall scenario to be lenient about.
 
+    // 0. Write server.env (if missing). FATAL.
     if let Err(e) = write_server_env() {
         log(&format!("FATAL: write_server_env: {}", e));
         return ExitCode::from(1);
     }
-
-    // Check if the ViewLBA service exists — this tells us if we're in
-    // an install/upgrade context (service registered by InstallServices)
-    // or an uninstall context (service being removed by ServiceControl).
-    let is_install_context = is_service_installed("ViewLBA");
-
-    if !is_install_context {
-        log("ViewLBA service not found — uninstall/RemoveExistingProducts context");
-        log("Skipping all ACL grants + recovery config (idempotent, already applied)");
-        log("viewlba-init complete (uninstall context)");
-        return ExitCode::SUCCESS;
-    }
-
-    // INSTALL/UPGRADE CONTEXT: all grants are FATAL.
-    // If any grant fails, the install must abort.
 
     // 1. Grant LocalService RX on ProgramFiles (recursive). FATAL.
     if let Err(e) = grant_localservice_rx_program_files() {
@@ -676,16 +678,14 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     }
 
-    // 2. Grant LocalService RWX (Modify) on ProgramData/ViewLBA/cache/.
-    // NON-FATAL: during upgrades, old version's bun.exe children may still
-    // have files locked in cache/temp/ (they're dying but not yet fully
-    // terminated). The icacls on cache/ fails with Access Denied.
-    // The RWX grant is IDEMPOTENT — it was already applied during the first
-    // install. A failure to RE-apply it is not critical: the ACLs are still
-    // in place from the first install.
-    // RX, WA, and recovery remain FATAL (those dirs don't have locked files).
+    // 2. Grant LocalService M (Modify) on ProgramData/cache/ root. FATAL.
+    // Grant on root only (no /T) with (OI)(CI) inheritance. This avoids
+    // touching files that may be locked by dying bun.exe children during
+    // upgrades. New files will inherit the ACL; existing files already
+    // have it from the first install.
     if let Err(e) = grant_localservice_rwx_program_data_cache() {
-        log(&format!("WARN: grant_localservice_rwx_program_data_cache: {} — continuing (idempotent, may be locked by dying children)", e));
+        log(&format!("FATAL: grant_localservice_rwx_program_data_cache: {}", e));
+        return ExitCode::from(5);
     }
 
     // 3. Grant LocalService WA on app/ + mini-services/ ONLY. FATAL.
