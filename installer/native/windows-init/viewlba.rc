@@ -1,0 +1,3 @@
+// Windows PE resource — embeds viewlba.ico into the executable
+// Same source as the other ViewLBA binaries (official logo-mark.svg).
+1 ICON "../../branding/generated/windows/viewlba.ico"

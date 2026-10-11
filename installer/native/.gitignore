@@ -1,0 +1,7 @@
+# Rust target directory — never commit compiled binaries
+target/
+**/*.rs.bk
+*.pdb
+
+# Cargo lock is committed for binaries, not for libraries
+# (we're building binaries, so Cargo.lock IS committed)

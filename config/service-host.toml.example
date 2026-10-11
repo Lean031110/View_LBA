@@ -1,0 +1,81 @@
+# ViewLBA Server — Service Host Configuration Template
+# =====================================================
+#
+# Copy this file to: C:\ProgramData\ViewLBA\config\service-host.toml
+#
+# The service host (viewlba-service.exe) reads this file on startup to determine:
+#   - which child processes to spawn (app, realtime, stream)
+#   - their working directories
+#   - their entry point scripts
+#   - health check intervals
+#   - backoff parameters
+#   - stop timeout
+#
+# Environment variables (VIEWLBA_PROGRAM_FILES, VIEWLBA_PROGRAM_DATA) override
+# the default paths for development/testing.
+#
+# SECRETS are NOT stored here. Use config/server.env for secret values
+# (AUTH_SECRET, REALTIME_TOKEN, DATABASE_URL). This file is non-secret config only.
+
+[paths]
+# Binary locations (read-only by the service)
+program_files = "C:\\Program Files\\ViewLBA Server"
+program_data = "C:\\ProgramData\\ViewLBA"
+
+# Service host binary
+service_host_exe = "C:\\Program Files\\ViewLBA Server\\bin\\viewlba-service.exe"
+
+# Tray binary
+tray_exe = "C:\\Program Files\\ViewLBA Server\\bin\\viewlba-tray.exe"
+
+# Bun runtime (included in the package for offline operation)
+bun_exe = "C:\\Program Files\\ViewLBA Server\\runtime\\bun.exe"
+
+# Children configuration
+[children.app]
+entry = "C:\\Program Files\\ViewLBA Server\\app\\scripts\\start.ts"
+cwd = "C:\\Program Files\\ViewLBA Server\\app"
+log = "C:\\ProgramData\\ViewLBA\\logs\\app.log"
+err_log = "C:\\ProgramData\\ViewLBA\\logs\\app.err.log"
+
+[children.realtime]
+entry = "C:\\Program Files\\ViewLBA Server\\mini-services\\realtime-service\\index.ts"
+cwd = "C:\\Program Files\\ViewLBA Server\\mini-services\\realtime-service"
+log = "C:\\ProgramData\\ViewLBA\\logs\\realtime.log"
+err_log = "C:\\ProgramData\\ViewLBA\\logs\\realtime.err.log"
+
+[children.stream]
+entry = "C:\\Program Files\\ViewLBA Server\\mini-services\\stream-service\\index.ts"
+cwd = "C:\\ProgramData\\ViewLBA\\data"
+log = "C:\\ProgramData\\ViewLBA\\logs\\stream.log"
+err_log = "C:\\ProgramData\\ViewLBA\\logs\\stream.err.log"
+
+# Health checks (misión §0.10)
+[health]
+check_interval_secs = 5
+timeout_ms = 2000
+
+# app health endpoint
+app_url = "http://127.0.0.1:3000/api/health"
+# realtime internal API (NOT socket.io port 3003 — that's the public port)
+realtime_url = "http://127.0.0.1:3004/health"
+# stream control API
+stream_url = "http://127.0.0.1:8100/health"
+
+# Watchdog backoff (misión §4)
+[backoff]
+initial_ms = 5000       # 5 seconds (first crash)
+second_ms = 30000       # 30 seconds (second crash)
+max_ms = 300000         # 5 minutes (third+ crash)
+max_attempts = 10       # after 10 consecutive failures, mark as "failed"
+
+# Service lifecycle (misión §9)
+[lifecycle]
+stop_timeout_ms = 30000  # 30 seconds to graceful-shutdown children before force kill
+
+# IPC (misión §6)
+[ipc]
+pipe_name = "\\\\.\\pipe\\viewlba-service"
+max_instances = 4
+connect_timeout_ms = 5000
+request_timeout_ms = 10000
