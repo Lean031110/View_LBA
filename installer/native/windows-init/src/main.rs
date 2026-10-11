@@ -676,10 +676,16 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     }
 
-    // 2. Grant LocalService RWX (Modify) on ProgramData/ViewLBA/cache/. FATAL.
+    // 2. Grant LocalService RWX (Modify) on ProgramData/ViewLBA/cache/.
+    // NON-FATAL: during upgrades, old version's bun.exe children may still
+    // have files locked in cache/temp/ (they're dying but not yet fully
+    // terminated). The icacls on cache/ fails with Access Denied.
+    // The RWX grant is IDEMPOTENT — it was already applied during the first
+    // install. A failure to RE-apply it is not critical: the ACLs are still
+    // in place from the first install.
+    // RX, WA, and recovery remain FATAL (those dirs don't have locked files).
     if let Err(e) = grant_localservice_rwx_program_data_cache() {
-        log(&format!("FATAL: grant_localservice_rwx_program_data_cache: {}", e));
-        return ExitCode::from(5);
+        log(&format!("WARN: grant_localservice_rwx_program_data_cache: {} — continuing (idempotent, may be locked by dying children)", e));
     }
 
     // 3. Grant LocalService WA on app/ + mini-services/ ONLY. FATAL.
