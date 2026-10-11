@@ -307,7 +307,7 @@ reconectar — sin tocar nada.
 bun run lint        # ESLint — 0 errores · 0 warnings
 bun run typecheck   # TypeScript estricto (src/)
 bun run typecheck:installer  # TypeScript estricto del instalador y la bandeja (installer/ + scripts/)
-bun test            # 776 tests: unit + realtime + pairing + recovery + installer (CLI,
+bun test            # 885 tests: unit + realtime + pairing + recovery + installer (CLI,
                     # adaptadores, bandeja D-Bus con dbus-daemon real) + pipeline de
                     # streaming con ffmpeg publicando por RTMP + temas (parser ZIP/
                     # validator/importer 21 pasos/store/backup con DB real) + gating HTTP

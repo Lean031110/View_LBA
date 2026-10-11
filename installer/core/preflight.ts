@@ -2,7 +2,7 @@
  * Preflight completo: sistema + dependencias + puertos.
  *
  * REUTILIZA la lógica de scripts/install.ts (preflight) extraída aquí, más
- * las nuevas exigencias de la misión (ffmpeg, systemd/NSSM, curl-equivalente,
+ * las nuevas exigencias de la misión (ffmpeg, systemd/service-host-Rust, curl-equivalente,
  * puertos). El resultado son checks PASS/WARNING/FAIL; cualquier FAIL crítico
  * aborta ANTES de modificar el sistema.
  */
@@ -17,7 +17,7 @@ import { commandExists, type CmdRunner } from "./runner"
 export interface PreflightDeps {
   runner: CmdRunner
   platform: Platform
-  /** Checks extra del SO (systemd en linux, NSSM en windows). */
+  /** Checks extra del SO (systemd en linux, service host Rust en windows). */
   platformChecks: CheckResult[]
   /** Puertos ocupados por servicios PROPIOS (update/repair) — no bloquean. */
   ownBusyPorts?: Set<number>
