@@ -213,14 +213,14 @@
                   Return="check" />
 
     <InstallExecuteSequence>
-      <!-- Run RunViewLBAInit ONLY during install/upgrade, NOT during uninstall.
-           REMOVE is set during uninstall (REMOVE="ALL") and during
-           RemoveExistingProducts (old version uninstall during upgrade).
-           NOT REMOVE = TRUE when REMOVE is not set (install/upgrade new ver)
-           NOT REMOVE = FALSE when REMOVE is set (uninstall / old version removal)
-           This avoids needing quotes in the WiX condition inner text
-           (WiX v4 WIX0400 rejects double quotes in Custom inner text). -->
-      <Custom Action="RunViewLBAInit" Before="StartServices">NOT REMOVE</Custom>
+      <!-- RunViewLBAInit runs during install, upgrade, AND uninstall.
+           The Rust binary (viewlba-init.exe) detects the context:
+           - If ProgramFiles dir exists → install/upgrade → FATAL grants
+           - If dir doesn't exist → uninstall → skip gracefully (Ok)
+           - If service doesn't exist → uninstall → skip recovery config
+           WiX v4 WIX0400 rejects conditions in <Custom> inner text,
+           so the context detection is handled in Rust, not WiX. -->
+      <Custom Action="RunViewLBAInit" Before="StartServices" />
     </InstallExecuteSequence>
 
     <DirectoryRef Id="RUNTIME_DIR">

@@ -314,16 +314,27 @@ fn write_server_env() -> Result<(), String> {
 }
 
 fn configure_recovery() -> Result<(), String> {
-    // FATAL during install/upgrade. The WiX condition
-    // (NOT REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE) ensures this
-    // CustomAction does NOT run during uninstall, so there is no
-    // "service doesn't exist" scenario to be lenient about.
+    // During install/upgrade: FATAL if the service can't be configured.
+    // During uninstall: the service is being removed — OpenServiceW fails
+    // with ERROR_SERVICE_DOES_NOT_EXIST (1060). We detect this and skip.
+    // This is necessary because WiX v4 WIX0400 rejects conditions in
+    // <Custom> inner text, so we can't suppress the CustomAction during
+    // uninstall via WiX. Instead, the Rust binary detects the context.
     #[cfg(target_os = "windows")]
     {
-        if let Err(e) = win32::set_service_recovery_actions("ViewLBA") {
-            return Err(format!("set_service_recovery_actions: {}", e));
+        match win32::set_service_recovery_actions("ViewLBA") {
+            Ok(()) => {
+                log("SCM recovery actions: Restart 60s × 3 (reset 24h)");
+            }
+            Err(e) => {
+                // Check if the service doesn't exist (uninstall context)
+                if e.contains("OpenService") || e.contains("1060") || e.contains("does not exist") {
+                    log("ViewLBA service not found (uninstall context) — skipping recovery config");
+                } else {
+                    return Err(format!("set_service_recovery_actions: {}", e));
+                }
+            }
         }
-        log("SCM recovery actions: Restart 60s × 3 (reset 24h)");
     }
     Ok(())
 }
