@@ -92,7 +92,7 @@ function buildIco(pngs: Map<number, Buffer>): Buffer {
   return Buffer.concat([header, ...dirEntries, ...pngDatas])
 }
 
-function main() {
+async function main() {
   console.log("[branding] Generating Windows icons from official logo-mark.svg")
 
   // Verify sources exist
@@ -131,7 +131,7 @@ function main() {
   console.log(`[branding] ✓ viewlba.ico (${ico.length} bytes, ${ICO_SIZES.length} sizes)`)
 
   // Compute SHA256 of source and generated assets
-  const { createHash } = require("node:crypto")
+  const { createHash } = await import("node:crypto")
   const logoMarkHash = createHash("sha256").update(readFileSync(LOGO_MARK_SVG)).digest("hex")
   const icoHash = createHash("sha256").update(ico).digest("hex")
 

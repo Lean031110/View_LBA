@@ -163,19 +163,18 @@ rmSync(join(stage, ".runtime-bun"), { recursive: true, force: true })
 rmSync(zipPath, { force: true })
 OK(`runtime/bun (${(statSync(join(runtimeDir, PLATFORM === "linux" ? "bun" : "bun.exe")).size / 1024 / 1024).toFixed(0)} MB)`)
 
-// ---------------------------------------------------------------- 4. nssm (windows)
+// ---------------------------------------------------------------- 4. nssm (windows) — SKIP
+// NSSM is FORBIDDEN by mission §0.8, §5. The canonical Windows installer
+// uses the Rust service host (installer/native/windows-service) instead.
+// The legacy bundle-server.ts still references NSSM for the legacy Installer
+// Flow CI, but the canonical pipeline (build-windows-installer.yml) does NOT.
+// Skip the download entirely — nssm.cc is also down (ENOENT).
 if (PLATFORM === "windows") {
-  STEP(`Descargando NSSM ${NSSM_VERSION} (gestor de servicios de Windows)`)
-  const nssmUrl = `https://nssm.cc/release/nssm-${NSSM_VERSION}.zip`
-  const nssmZip = join(stage, ".nssm.zip")
-  download(nssmUrl, nssmZip)
-  extractZip(nssmZip, join(stage, ".nssm"))
-  const nssmExe = findFile(join(stage, ".nssm"), "nssm.exe", /win64/)
-  if (!nssmExe) throw new Error("nssm.exe (win64) no encontrado tras descomprimir")
-  copyFileSync(nssmExe, join(runtimeDir, "nssm.exe"))
-  rmSync(join(stage, ".nssm"), { recursive: true, force: true })
-  rmSync(nssmZip, { force: true })
-  OK("runtime/nssm.exe incluido (licencia public domain de nssm.cc)")
+  STEP("NSSM saltado (prohibido por misión §0.8 — se usa service host Rust)")
+  // Create a placeholder so legacy checks for runtime/nssm.exe don't crash
+  // The canonical pipeline doesn't use this file at all.
+  writeFileSync(join(runtimeDir, "nssm.exe.placeholder"), "NSSM is forbidden — use viewlba-service.exe (Rust service host)")
+  OK("runtime/nssm.exe.placeholder (NSSM prohibido, service host Rust es el canónico)")
 }
 
 // ---------------------------------------------------------------- 5. sidecar CLI

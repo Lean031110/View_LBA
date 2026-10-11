@@ -7,7 +7,7 @@
  * aborta ANTES de modificar el sistema.
  */
 import { spawnSync } from "node:child_process"
-import { existsSync, writeFileSync, rmSync } from "node:fs"
+import { existsSync, writeFileSync, rmSync, readdirSync, readFileSync } from "node:fs"
 import type { CheckResult, InstallConfig, Layout, Platform } from "./types"
 import { systemChecks, collectSystemInfo } from "./sysinfo"
 import { checkPorts, requiredPorts } from "./ports"
@@ -238,7 +238,7 @@ export function scanForNssm(payloadDir: string): ScanResult {
   function walk(dir: string) {
     let entries: import("node:fs").Dirent[]
     try {
-      entries = require("node:fs").readdirSync(dir, { withFileTypes: true })
+      entries = readdirSync(dir, { withFileTypes: true })
     } catch {
       return
     }
@@ -256,7 +256,7 @@ export function scanForNssm(payloadDir: string): ScanResult {
         // Scan text files for "nssm" string
         if (/\.(nsi|ps1|ts|sh|json|xml|md|yml|yaml|toml|wxs)$/i.test(e.name)) {
           try {
-            const content = require("node:fs").readFileSync(full, "utf8")
+            const content = readFileSync(full, "utf8")
             if (/\bnssm\b/i.test(content)) {
               // Exclude comments that explicitly say NSSM is forbidden/excluded
               // (we want to allow docs that say "no NSSM" but flag actual usage)
@@ -298,7 +298,7 @@ export function scanForPowerShellSecrets(payloadDir: string): ScanResult {
   function walk(dir: string) {
     let entries: import("node:fs").Dirent[]
     try {
-      entries = require("node:fs").readdirSync(dir, { withFileTypes: true })
+      entries = readdirSync(dir, { withFileTypes: true })
     } catch {
       return
     }
@@ -309,7 +309,7 @@ export function scanForPowerShellSecrets(payloadDir: string): ScanResult {
         walk(full)
       } else if (e.isFile() && /\.(nsi|ps1|ts|sh|json|xml|wxs|bat|cmd)$/i.test(e.name)) {
         try {
-          const content = require("node:fs").readFileSync(full, "utf8")
+          const content = readFileSync(full, "utf8")
           if (/powershell\.exe[^\n]*-Command[^\n]*\$\$?p\s*=/.test(content)) {
             matches.push(`PowerShell pipe pwd: ${full}`)
           }

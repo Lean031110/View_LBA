@@ -43,7 +43,7 @@
  *   - If any file is missing, FAIL with clear message
  */
 
-import { existsSync, mkdirSync, copyFileSync, writeFileSync, readdirSync, statSync } from "node:fs"
+import { existsSync, mkdirSync, copyFileSync, writeFileSync, readdirSync, statSync, readFileSync, rmSync } from "node:fs"
 import { join, resolve, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -64,7 +64,7 @@ const STAGE_DIR = resolve(outArg)
 
 // --- helpers ---
 function readVersionFile(): string {
-  return require("node:fs").readFileSync(join(REPO_ROOT, "VERSION"), "utf8").trim()
+  return readFileSync(join(REPO_ROOT, "VERSION"), "utf8").trim()
 }
 
 function ensureDir(path: string) {
@@ -120,7 +120,7 @@ function main() {
 
   // Clean and recreate stage dir
   if (existsSync(STAGE_DIR)) {
-    require("node:fs").rmSync(STAGE_DIR, { recursive: true, force: true })
+    rmSync(STAGE_DIR, { recursive: true, force: true })
   }
   ensureDir(STAGE_DIR)
 

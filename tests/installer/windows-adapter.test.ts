@@ -15,7 +15,7 @@
  * sobre el artefacto REAL descargado (misión §10).
  */
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs"
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { WindowsServiceAdapter, SERVICE_NAMES, resolveServiceHost } from "../../installer/windows/adapter"
@@ -66,7 +66,7 @@ describe("WindowsServiceAdapter (Fase 2 — post-NSSM)", () => {
 
   test("el adapter NO invoca nssm.exe en ninguna operación", () => {
     // El source del adapter no debe contener invocaciones a nssm.exe
-    const adapterSource = require("node:fs").readFileSync(
+    const adapterSource = readFileSync(
       join(process.cwd(), "installer/windows/adapter.ts"),
       "utf8"
     )
@@ -79,7 +79,7 @@ describe("WindowsServiceAdapter (Fase 2 — post-NSSM)", () => {
   })
 
   test("el adapter invoca viewlba-service.exe para todas las operaciones de servicio", () => {
-    const adapterSource = require("node:fs").readFileSync(
+    const adapterSource = readFileSync(
       join(process.cwd(), "installer/windows/adapter.ts"),
       "utf8"
     )
