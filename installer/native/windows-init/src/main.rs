@@ -110,6 +110,26 @@ mod win32 {
         v
     }
 
+    /// Check if a Windows service exists in SCM.
+    /// Returns true if the service is registered (regardless of running state).
+    /// Used to distinguish install/upgrade context from uninstall context.
+    pub fn is_service_installed(service_name: &str) -> bool {
+        unsafe {
+            let scm = match OpenSCManagerW(None, None, SC_MANAGER_CONNECT) {
+                Ok(h) => h,
+                Err(_) => return false,
+            };
+            let name_w = wstr(service_name);
+            let result = OpenServiceW(
+                scm,
+                PCWSTR(name_w.as_ptr()),
+                windows::Win32::System::Services::SERVICE_QUERY_STATUS,
+            );
+            let _ = CloseServiceHandle(scm);
+            result.is_ok()
+        }
+    }
+
     /// Configure recovery actions on the ViewLBA service via ChangeServiceConfig2W.
     ///
     /// - 1st failure: Restart (60s delay)
@@ -172,6 +192,9 @@ mod win32 {
         let mut v: Vec<u16> = s.encode_utf16().collect();
         v.push(0);
         v
+    }
+    pub fn is_service_installed(_name: &str) -> bool {
+        false
     }
     pub fn set_service_recovery_actions(_n: &str) -> Result<(), String> {
         Err("SCM only supported on Windows".into())
@@ -621,22 +644,31 @@ exit 0
 fn main() -> ExitCode {
     log("viewlba-init starting (deferred CustomAction)");
 
-    // The WiX InstallExecuteSequence condition:
-    //   NOT REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE
-    // ensures this CustomAction ONLY runs during:
-    //   - Fresh install
-    //   - Upgrade (new version installing over old)
-    //   - Repair
-    // It does NOT run during:
-    //   - Uninstall (REMOVE="ALL")
-    //   - RemoveExistingProducts (UPGRADINGPRODUCTCODE is set)
-    // Therefore, ALL operations below are FATAL — if they fail, the install
-    // must abort. There is no "uninstall scenario" to be lenient about.
+    // WiX v4 WIX0400 rejects conditions in <Custom> inner text, so this
+    // CustomAction runs during install, upgrade, AND uninstall. We detect
+    // the context by checking if the ViewLBA service exists in SCM:
+    //   - Service EXISTS → install/upgrade/repair → FATAL grants
+    //   - Service MISSING → uninstall/RemoveExistingProducts → skip grants
 
     if let Err(e) = write_server_env() {
         log(&format!("FATAL: write_server_env: {}", e));
         return ExitCode::from(1);
     }
+
+    // Check if the ViewLBA service exists — this tells us if we're in
+    // an install/upgrade context (service registered by InstallServices)
+    // or an uninstall context (service being removed by ServiceControl).
+    let is_install_context = is_service_installed("ViewLBA");
+
+    if !is_install_context {
+        log("ViewLBA service not found — uninstall/RemoveExistingProducts context");
+        log("Skipping all ACL grants + recovery config (idempotent, already applied)");
+        log("viewlba-init complete (uninstall context)");
+        return ExitCode::SUCCESS;
+    }
+
+    // INSTALL/UPGRADE CONTEXT: all grants are FATAL.
+    // If any grant fails, the install must abort.
 
     // 1. Grant LocalService RX on ProgramFiles (recursive). FATAL.
     if let Err(e) = grant_localservice_rx_program_files() {
