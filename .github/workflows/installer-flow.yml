@@ -394,11 +394,12 @@ jobs:
           SRV="$STAGE/resources/server"
           test -f "$SRV/.next/standalone/server.js"      || { echo "✗ falta server.js"; exit 1; }
           test -x "$STAGE/runtime/bun.exe"               || { echo "✗ falta runtime/bun.exe"; exit 1; }
-          test -f "$STAGE/runtime/nssm.exe"              || { echo "✗ falta runtime/nssm.exe"; exit 1; }
+          # NSSM is forbidden (mission §0.8). The canonical pipeline uses
+          # the Rust service host. Don't check for nssm.exe.
           test -x "$STAGE/viewlba-installer.exe"         || { echo "✗ falta el sidecar"; exit 1; }
           LINKS=$(find "$SRV" -type l | wc -l)
           [[ "$LINKS" -eq 0 ]] || { echo "✗ $LINKS symlink(s) en el payload"; exit 1; }
-          echo "✓ contrato Windows OK"
+          echo "✓ contrato Windows OK (sin NSSM — service host Rust canónico)"
 
       - name: "Localizar makensis (NSIS 3 — preinstalado en el runner)"
         shell: pwsh
