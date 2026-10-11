@@ -1238,3 +1238,113 @@ de runtime (Node.js LTS como fallback).
 - Linux flow del Installer Flow CI: usa paths legacy y necesita
   migración completa a paths canónicos.
 
+
+---
+
+## 15. Estado verificado — commit 5d12baa (2026-10-11)
+
+### 15.1 CI Results (verificados en GitHub Actions)
+
+| Workflow | Run ID | Conclusion | URL |
+|---|---|---|---|
+| Build Windows Installer | 38157081644 | ✅ SUCCESS | https://github.com/Lean031110/View_LBA/actions/runs/38157081644 |
+| CI | 38157081616 | ✅ SUCCESS | https://github.com/Lean031110/View_LBA/actions/runs/38157081616 |
+| Build Windows Native Binaries | 38157081672 | ✅ SUCCESS | — |
+| Installer Flow CI | 38157081645 | ❌ FAILURE (Windows Setup.exe placeholder) | — |
+
+### 15.2 Build Windows Installer — cadena completa PASS
+
+**Build MSI job** (28/28 pasos):
+- ✅ Rust binaries (service + tray + init)
+- ✅ Next.js standalone + staging + staging-manifest
+- ✅ WiX MSI (current + previous version)
+- ✅ NSIS Setup.exe (mandatory, no continue-on-error)
+- ✅ PE icon embedding verificado
+- ✅ Artifact upload (MSI + EXE + manifest + SHA256SUMS + staging-manifest)
+
+**Smoke test MSI job** (21/21 pasos):
+- ✅ Install previous-version MSI
+- ✅ Service Running + LocalService + Auto (STRICT)
+- ✅ server.env (6 required keys, no placeholders)
+- ✅ ARP DisplayIcon → viewlba.ico (file exists + SHA256 match)
+- ✅ Program Files x64 (NOT x86)
+- ✅ ProgramData 9 dirs
+- ✅ Recovery actions (3× RESTART 60s, 24h reset — via sc qfailure)
+- ✅ Payload manifest (mandatory binaries match)
+- ✅ Child processes started (3 Bun children active)
+- ✅ Health endpoints (:3000 + :3004 both 200)
+- ✅ [O] REAL UPGRADE (v3.2.2→v3.2.3, SHA256 preserved, ARP version updated)
+- ✅ [P] Service restart (Stop→Stopped→Start→Running+health)
+- ✅ [R] Reinstall (uninstall→SHA256→install→Running+health)
+- ✅ [S] Offline (block outbound→install→Running+health→cleanup firewall)
+- ✅ Final uninstall (ProgramData preserved)
+
+### 15.3 CI workflow — PASS
+
+- ✅ Calidad (lint · tipos · 925 tests · build)
+- ✅ Seguridad (bun audit critical = 0)
+- ✅ E2E (Playwright 52 tests / 22 escenarios)
+- ✅ Integración (API contra servidor real)
+
+### 15.4 P0 Correcciones aplicadas
+
+1. **WiX Condition attribute** (not inner text):
+   `Condition='NOT (REMOVE="ALL") AND NOT UPGRADINGPRODUCTCODE'`
+   - Suppresses RunViewLBAInit during uninstall and RemoveExistingProducts
+   - Previous WIX0400 errors were caused by using inner text instead of the Condition attribute
+
+2. **ALL grants FATAL** during install/upgrade:
+   - RX on ProgramFiles (exit 2 if fails)
+   - Cache RWX (exit 5 if fails — root-only with (OI)(CI) inheritance, no /T)
+   - WA on app/ + mini-services/ (exit 3 if fails — PowerShell Set-Acl)
+   - Recovery actions (exit 4 if fails)
+   - write_server_env (exit 1 if fails)
+
+3. **Removed is_service_installed() heuristic** — the WiX Condition
+   handles install vs uninstall detection at the MSI level. The Rust
+   binary doesn't need to guess the context.
+
+4. **configure_recovery() FATAL** — no string-matching for "OpenService"
+   or "1060". Any OpenServiceW/OpenSCManagerW failure is a real error.
+
+5. **Cache grant: root-only with inheritance** (no /T):
+   - Avoids touching files locked by dying bun.exe children during upgrades
+   - (OI)(CI)M = Modify on root → new files inherit ACL
+   - Existing files already have the ACL from the first install
+
+6. **(OI)(CI)M documented correctly**: Modify includes Read, Write,
+   Execute, AND Delete — but NOT Write DACL or Write Owner.
+
+### 15.5 P1 Correcciones aplicadas
+
+- ✅ NSSM removed from scripts/start.ts (Linux .deb preflight)
+- ✅ bundle-server.ts skips NSSM download (nssm.cc down + forbidden)
+- ✅ installer-flow.yml smoke test: removed nssm.exe check
+- ✅ Test count 776→885 in README
+- ✅ Next.js 16.3.6 hotfix on main (Dependabot alert #1 resolved)
+- ✅ 9 @typescript-eslint/no-require-imports lint errors fixed
+- ✅ Prisma/SQLite themes test: __setThemeDbForTests(db) override
+- ✅ CI: mkdir -p db + prisma migrate deploy for ci-quality.db
+
+### 15.6 P2 Correcciones aplicadas
+
+- ✅ Manifest: PowerShell documented as install-time dependency
+  (installer_dependencies field, not in dependencies_excluded)
+- ✅ Git remote URL: token removed, credential helper configured
+
+### 15.7 Pendientes (no resueltos en este commit)
+
+1. **Installer Flow CI Windows** (P1-8): the Setup.exe placeholder
+   needs to be replaced with the real Setup.exe from build-windows-
+   installer.yml. This requires cross-workflow artifact download.
+2. **Upgrade with real published MSI** (P1-9): the current upgrade
+   test uses a synthetic previous-version MSI built from the same
+   code. A real published MSI from a previous release should be used.
+3. **Strict payload manifest** (P1-10): the manifest verification
+   skips non-mandatory files silently. A closed exclusion list is needed.
+4. **Individual child process verification** (P1-11): the smoke test
+   checks process count >= 2, not individual app/realtime/stream processes.
+5. **Expanded offline test** (P1-12): only HTTP/HTTPS ports 80/443 are
+   blocked. DNS and other protocols should be documented/blocked.
+6. **Authenticode signing** (P2-18): no certificate available yet.
+   This should be declared as a distribution limitation.
