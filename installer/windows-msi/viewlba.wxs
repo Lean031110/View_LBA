@@ -214,13 +214,13 @@
 
     <InstallExecuteSequence>
       <!-- Run RunViewLBAInit ONLY during install/upgrade, NOT during uninstall.
-           REMOVE="ALL" is true when the product is being fully uninstalled.
-           UPGRADINGPRODUCTCODE is set when this is the OLD product being
-           removed during a MajorUpgrade (RemoveExistingProducts).
-           In both cases we skip the CustomAction — ACLs are idempotent and
-           already applied; the service is being removed so recovery config
-           is meaningless. -->
-      <Custom Action="RunViewLBAInit" Before="StartServices"><![CDATA[NOT (REMOVE="ALL") AND NOT UPGRADINGPRODUCTCODE]]></Custom>
+           REMOVE is set during uninstall (REMOVE="ALL") and during
+           RemoveExistingProducts (old version uninstall during upgrade).
+           NOT REMOVE = TRUE when REMOVE is not set (install/upgrade new ver)
+           NOT REMOVE = FALSE when REMOVE is set (uninstall / old version removal)
+           This avoids needing quotes in the WiX condition inner text
+           (WiX v4 WIX0400 rejects double quotes in Custom inner text). -->
+      <Custom Action="RunViewLBAInit" Before="StartServices">NOT REMOVE</Custom>
     </InstallExecuteSequence>
 
     <DirectoryRef Id="RUNTIME_DIR">
