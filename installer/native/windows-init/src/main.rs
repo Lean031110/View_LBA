@@ -314,29 +314,16 @@ fn write_server_env() -> Result<(), String> {
 }
 
 fn configure_recovery() -> Result<(), String> {
-    // The deferred CustomAction runs AFTER InstallServices, so the ViewLBA
-    // service MUST already be registered in SCM by the time we get here.
-    // If OpenServiceW fails, that's a sequencing bug in the MSI — we treat
-    // it as FATAL so the install fails and CI can detect it.
-    //
-    // EXCEPTION: during uninstall (RemoveExistingProducts), the service is
-    // being REMOVED. OpenServiceW would fail because the service no longer
-    // exists. We skip recovery config gracefully during uninstall.
+    // FATAL during install/upgrade. The WiX condition
+    // (NOT REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE) ensures this
+    // CustomAction does NOT run during uninstall, so there is no
+    // "service doesn't exist" scenario to be lenient about.
     #[cfg(target_os = "windows")]
     {
-        match win32::set_service_recovery_actions("ViewLBA") {
-            Ok(()) => {
-                log("SCM recovery actions: Restart 60s × 3 (reset 24h)");
-            }
-            Err(e) => {
-                // Check if the service doesn't exist (likely uninstall)
-                if e.contains("OpenService") || e.contains("1060") {
-                    log("ViewLBA service not found (likely uninstall) — skipping recovery config");
-                } else {
-                    return Err(format!("set_service_recovery_actions: {}", e));
-                }
-            }
+        if let Err(e) = win32::set_service_recovery_actions("ViewLBA") {
+            return Err(format!("set_service_recovery_actions: {}", e));
         }
+        log("SCM recovery actions: Restart 60s × 3 (reset 24h)");
     }
     Ok(())
 }
@@ -457,11 +444,28 @@ fn grant_localservice_rwx_program_data_cache() -> Result<(), String> {
 /// Implementation: icacls does NOT accept `WA` (Write Attributes) or hex masks
 /// like `0x100` as a /grant permission shorthand on Windows Server 2022 — it
 /// only accepts: F, M, RX, R, W, D. So we use PowerShell's `Set-Acl` cmdlet
-/// from the MSI installer CustomAction (NOT the runtime product — the mission's
-/// "no PowerShell" rule is for the RUNNING server, not the installer). The
-/// PowerShell script uses .NET's FileSystemAccessRule with the
-/// `WriteAttributes` FileSystemRights value, which maps to FILE_WRITE_ATTRIBUTES
-/// (0x100) at the Win32 level.
+/// from the MSI installer CustomAction.
+///
+/// ARCHITECTURE DECISION: PowerShell in the installer.
+/// The mission's "no PowerShell" rule prohibits PowerShell as a RUNTIME
+/// dependency of the running server product. `viewlba-init.exe` is an
+/// INSTALLER CustomAction, not a runtime component. It spawns
+/// `powershell.exe` during MSI install to call `Set-Acl` with the
+/// `WriteAttributes` FileSystemRights value (which maps to
+/// FILE_WRITE_ATTRIBUTES = 0x100 at the Win32 level).
+///
+/// This is a deliberate, documented exception — NOT a claim that the
+/// product doesn't depend on PowerShell. The installer DOES depend on
+/// PowerShell being present on the target Windows machine (which is
+/// always true on Windows Server 2019+ and Windows 10+).
+///
+/// Alternative considered: calling the Win32 Security APIs directly
+/// (GetNamedSecurityInfoW + SetEntriesInAclW + SetNamedSecurityInfoW)
+/// from Rust. This was attempted but abandoned due to API surface
+/// complexity in windows-rs 0.61 (PSECURITY_DESCRIPTOR tuple struct,
+/// PSID vs *mut c_void type mismatches, Option<HLOCAL> for LocalFree).
+/// If PowerShell availability becomes a concern, the Win32 API approach
+/// should be revisited with the correct types.
 ///
 /// The script walks the directory tree recursively and adds the ACE to each
 /// file and subdir. The ACE uses ContainerInherit+ObjectInherit so future
@@ -529,13 +533,10 @@ foreach ($child in $childItems) {{
 
 $count = 0
 $failed = 0
+$criticalFailures = @()
 foreach ($item in $items) {{
     try {{
         $acl = Get-Acl -LiteralPath $item.path
-        # Use different inheritance flags for files vs directories.
-        # Files CANNOT have inheritance flags (they have no children).
-        # .NET throws "No flags can be set" if you pass inheritance flags
-        # to a file's FileSystemAccessRule.
         $inhFlags = if ($item.isDir) {{ $dirInh }} else {{ $fileInh }}
         $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($identity, $rights, $inhFlags, $propFlags, $acType)
         $acl.AddAccessRule($rule)
@@ -544,9 +545,19 @@ foreach ($item in $items) {{
     }} catch {{
         $failed++
         if ($failed -le 10) {{ Write-Host "  WARN: $($item.path) : $_" }}
+        # ANY failure on a .ts or .js entry file is critical — Bun must
+        # be able to load these. No tolerance for entry file failures.
+        if ($item.path -match '\.(ts|js|tsx|jsx|mjs|cjs)$') {{
+            $criticalFailures += $item.path
+        }}
     }}
 }}
 Write-Host "WA granted to LocalService on $count items ($failed failed)"
+if ($criticalFailures.Count -gt 0) {{
+    Write-Host "FATAL: Critical entry file failures ($($criticalFailures.Count)):"
+    $criticalFailures | ForEach-Object {{ Write-Host "  $_" }}
+    exit 1
+}}
 if ($failed -gt 0 -and $failed -gt ($count / 100)) {{
     Write-Host "FATAL: Too many failures ($failed out of $($count + $failed))"
     exit 1
@@ -599,36 +610,45 @@ exit 0
 fn main() -> ExitCode {
     log("viewlba-init starting (deferred CustomAction)");
 
+    // The WiX InstallExecuteSequence condition:
+    //   NOT REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE
+    // ensures this CustomAction ONLY runs during:
+    //   - Fresh install
+    //   - Upgrade (new version installing over old)
+    //   - Repair
+    // It does NOT run during:
+    //   - Uninstall (REMOVE="ALL")
+    //   - RemoveExistingProducts (UPGRADINGPRODUCTCODE is set)
+    // Therefore, ALL operations below are FATAL — if they fail, the install
+    // must abort. There is no "uninstall scenario" to be lenient about.
+
     if let Err(e) = write_server_env() {
         log(&format!("FATAL: write_server_env: {}", e));
         return ExitCode::from(1);
     }
 
-    // 1. Grant LocalService RX on ProgramFiles (recursive).
-    // NON-FATAL: if this fails (e.g., during uninstall when files are being
-    // removed), log a warning and continue. The ACLs are already applied
-    // from the first install and are idempotent.
+    // 1. Grant LocalService RX on ProgramFiles (recursive). FATAL.
     if let Err(e) = grant_localservice_rx_program_files() {
-        log(&format!("WARN: grant_localservice_rx_program_files: {} — continuing (idempotent, likely uninstall)", e));
+        log(&format!("FATAL: grant_localservice_rx_program_files: {}", e));
+        return ExitCode::from(2);
     }
 
-    // 2. Grant LocalService RWX (Modify) on ProgramData/ViewLBA/cache/.
-    // NON-FATAL: same rationale — ACLs are idempotent and already applied.
+    // 2. Grant LocalService RWX (Modify) on ProgramData/ViewLBA/cache/. FATAL.
     if let Err(e) = grant_localservice_rwx_program_data_cache() {
-        log(&format!("WARN: grant_localservice_rwx_program_data_cache: {} — continuing (idempotent, likely uninstall)", e));
+        log(&format!("FATAL: grant_localservice_rwx_program_data_cache: {}", e));
+        return ExitCode::from(5);
     }
 
-    // 3. Grant LocalService WA on app/ + mini-services/ ONLY.
-    // NON-FATAL: same rationale.
+    // 3. Grant LocalService WA on app/ + mini-services/ ONLY. FATAL.
     if let Err(e) = grant_localservice_wa_app_dirs() {
-        log(&format!("WARN: grant_localservice_wa_app_dirs: {} — continuing (idempotent, likely uninstall)", e));
+        log(&format!("FATAL: grant_localservice_wa_app_dirs: {}", e));
+        return ExitCode::from(3);
     }
 
-    // 4. Configure SCM recovery actions.
-    // NON-FATAL during uninstall (service might not exist). FATAL during
-    // install (service MUST exist after InstallServices).
+    // 4. Configure SCM recovery actions. FATAL.
     if let Err(e) = configure_recovery() {
-        log(&format!("WARN: configure_recovery: {} — continuing (likely uninstall)", e));
+        log(&format!("FATAL: configure_recovery: {}", e));
+        return ExitCode::from(4);
     }
 
     log("viewlba-init complete");
