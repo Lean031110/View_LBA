@@ -214,15 +214,13 @@
 
     <InstallExecuteSequence>
       <!-- Run RunViewLBAInit ONLY during install/upgrade, NOT during uninstall.
-           REMOVE~="ALL" is true when the product is being fully uninstalled.
+           REMOVE="ALL" is true when the product is being fully uninstalled.
            UPGRADINGPRODUCTCODE is set when this is the OLD product being
            removed during a MajorUpgrade (RemoveExistingProducts).
            In both cases we skip the CustomAction — ACLs are idempotent and
            already applied; the service is being removed so recovery config
            is meaningless. -->
-      <Custom Action="RunViewLBAInit" Before="StartServices">
-        NOT REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE
-      </Custom>
+      <Custom Action="RunViewLBAInit" Before="StartServices">NOT (REMOVE="ALL") AND NOT UPGRADINGPRODUCTCODE</Custom>
     </InstallExecuteSequence>
 
     <DirectoryRef Id="RUNTIME_DIR">
