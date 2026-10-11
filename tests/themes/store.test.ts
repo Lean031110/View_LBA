@@ -36,9 +36,17 @@ beforeAll(async () => {
   db = new PrismaClient({ datasources: { db: { url: dbUrl } } })
   // Settings "main" (la app la crea en init/seed; aquí directamente)
   await db.settings.upsert({ where: { id: "main" }, update: {}, create: { id: "main" } })
+
+  // Override the store's default db client with our test-specific client
+  // (the global PrismaClient from src/lib/db.ts uses the CI's DATABASE_URL,
+  // not our temp db — store.test.ts must use the temp db instead)
+  const storeMod = await import("@/lib/themes/store")
+  storeMod.__setThemeDbForTests(db)
 })
 
 afterAll(async () => {
+  const storeMod = await import("@/lib/themes/store")
+  storeMod.__setThemeDbForTests(null)
   await db?.$disconnect().catch(() => {})
   if (tmpDir) rmSync(tmpDir, { recursive: true, force: true })
 })
