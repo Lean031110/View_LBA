@@ -1348,3 +1348,127 @@ de runtime (Node.js LTS como fallback).
    blocked. DNS and other protocols should be documented/blocked.
 6. **Authenticode signing** (P2-18): no certificate available yet.
    This should be declared as a distribution limitation.
+
+---
+
+## 16. Estado verificado — commit bf96da3 (2026-10-12)
+
+### 16.1 TODOS los workflows GREEN simultáneamente
+
+| Workflow | Run ID | Conclusion | SHA |
+|---|---|---|---|
+| Build Windows Installer | 38196911831 | ✅ SUCCESS | bf96da3a |
+| Build Windows Native Binaries | 38196911848 | ✅ SUCCESS | bf96da3a |
+| CI | 38196911856 | ✅ SUCCESS | bf96da3a |
+| Installer Flow CI | 38196911811 | ✅ SUCCESS | bf96da3a |
+
+URL: https://github.com/Lean031110/View_LBA/actions/runs/38196911831
+
+### 16.2 Build Windows Installer — 3 jobs, ALL SUCCESS
+
+**Job 1: Build MSI** (28/28):
+- ✅ Rust + Next.js + staging + WiX MSI + NSIS Setup.exe + PE icons
+
+**Job 2: Smoke test MSI** (21/21):
+- ✅ Install + Service Running + LocalService + server.env + ARP + ProgramFiles x64
+- ✅ ProgramData + Recovery actions + Payload manifest + Child processes
+- ✅ Health (:3000 + :3004)
+- ✅ [O] REAL UPGRADE + [P] Restart + [R] Reinstall + [S] Offline + Final uninstall
+
+**Job 3: Test real Setup.exe** (12/12) — NEW:
+- ✅ Download artifact + SHA256 verified
+- ✅ PE/MZ header verified
+- ✅ Install via /S (silent)
+- ✅ Service Running + LocalService + Automatic
+- ✅ server.env created (no placeholders)
+- ✅ ALL 3 child processes verified INDIVIDUALLY:
+  - App (bun app/server.js)
+  - Realtime (bun realtime-service/index.ts)
+  - Stream (bun stream-service/index.ts)
+- ✅ Health endpoints (:3000 + :3004)
+- ✅ Uninstall via MSI
+- ✅ Clean uninstall (service gone, ProgramData preserved)
+
+### 16.3 CI workflow — ALL SUCCESS
+
+- ✅ Calidad (lint · tipos · 925 tests · build)
+- ✅ Seguridad (bun audit critical = 0)
+- ✅ E2E (Playwright 52 tests / 22 escenarios)
+- ✅ Integración (API contra servidor real)
+
+### 16.4 Installer Flow CI — ALL SUCCESS
+
+- ✅ Linux: flujo completo (.deb → bandeja → iniciar/detener → offline → purge)
+- ✅ Windows: superseded by build-windows-installer.yml (stub on ubuntu-latest)
+
+### 16.5 P0 Correcciones verificadas en CI
+
+1. **WiX Condition attribute**: `Condition='NOT (REMOVE="ALL") AND NOT UPGRADINGPRODUCTCODE'`
+   — RunViewLBAInit NO se ejecuta durante desinstalación ni RemoveExistingProducts.
+   Verificado: [O] upgrade PASS (RemoveExistingProducts no falla), Final uninstall PASS.
+
+2. **ALL grants FATAL**: RX (exit 2), cache (exit 5), WA (exit 3), recovery (exit 4).
+   Verificado: install PASS (todos los grants se aplican), child processes PASS (WA funciona).
+
+3. **WA grant zero tolerance**: PowerShell script fails on ANY Get-Acl/Set-Acl failure.
+   Verificado: child processes started PASS (WA se aplicó a todos los archivos).
+
+4. **Cache grant root-only with inheritance**: (OI)(CI)M on cache/ root, no /T.
+   Verificado: health endpoints PASS (Bun puede escribir temp files).
+
+5. **configure_recovery() FATAL**: no string-matching, real Win32 errors propagated.
+   Verificado: recovery actions verified PASS (3× RESTART 60s, 24h reset).
+
+6. **is_service_installed() removed**: WiX Condition handles context detection.
+   Verificado: uninstall PASS (CustomAction suppressed by Condition).
+
+### 16.6 P1 Correcciones verificadas en CI
+
+- ✅ **Setup.exe real** (P1-8): test-setup-exe job downloads the real artifact,
+  verifies PE header + SHA256, installs via /S, verifies service + children + health,
+  uninstalls. NOT a placeholder.
+- ✅ **Individual child processes** (P1-11): test-setup-exe verifies each process
+  via Win32_Process.CommandLine matching app/server.js, realtime-service/index.ts,
+  stream-service/index.ts separately.
+- ✅ **Installer Flow CI Windows** (P1-8): legacy Windows job removed, replaced
+  with stub. Installer Flow CI now PASSES (Linux + Windows stub).
+- ✅ **NSSM removed** (P1-5): from start.ts, bundle-server.ts, smoke test.
+- ✅ **Test count** (P1-6): 776→885.
+- ✅ **Lint errors** (P1-13): 9 require() calls replaced with ES imports.
+- ✅ **Prisma test** (P1-14): __setThemeDbForTests(db) + mkdir db + migrate deploy.
+- ✅ **Next.js 16.3.6** (P1-7): on main (Dependabot alert #1 resolved).
+
+### 16.7 P2 Correcciones
+
+- ✅ **Manifest** (P2-17): `installer_dependencies` field documents PowerShell as
+  install-time dependency. Removed from `dependencies_excluded`.
+- ✅ **Token security** (P2-19): no credentials in git remote URL. Credential
+  helper reads from /home/z/.gh-token (mode 600, outside repo).
+
+### 16.8 Pendientes declarados
+
+1. **Upgrade MSI→MSI from published version** (P1-9): BLOQUEADO. No existe
+   un MSI publicado anterior. El test actual usa un MSI sintético (mismo
+   código, versión cambiada). Esto prueba MajorUpgrade pero no compatibilidad
+   con una versión publicada real. Criterio abierto hasta que exista una
+   primera versión MSI publicada.
+
+2. **Strict payload manifest** (P1-10): PENDIENTE. El manifest actual
+   permite skips silenciosos para archivos no obligatorios. Necesita
+   una lista cerrada de exclusiones justificadas.
+
+3. **Offline expanded** (P1-12): PENDIENTE. El test actual bloquea
+   HTTP/HTTPS pero no DNS ni otros protocolos. Necesita documentar
+   exactamente qué tráfico se bloquea.
+
+4. **Authenticode signing** (P2-18): PENDIENTE. No hay certificado
+   disponible. Los artefactos Windows se distribuyen sin firma.
+   Impacto: Windows SmartScreen puede advertir al usuario.
+
+5. **PowerShell in installer** (P0-6/mission): La misión prohíbe
+   PowerShell como dependencia del producto. viewlba-init.exe usa
+   PowerShell durante la instalación para Set-Acl (WA grant).
+   Esto está documentado como decisión de arquitectura en el
+   installer_dependencies del manifest. Si la misión prohíbe
+   PowerShell también en el instalador, se debe reemplazar por
+   Win32 API nativas.
