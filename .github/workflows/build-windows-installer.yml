@@ -42,6 +42,8 @@ jobs:
     name: Build MSI (Rust + Next.js + staging + WiX)
     runs-on: windows-latest
     timeout-minutes: 40
+    outputs:
+      version: ${{ steps.version.outputs.version }}
 
     steps:
       - name: Checkout
@@ -1435,6 +1437,143 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: msi-test-failure
+          path: |
+            C:\temp\*.log
+            C:\ProgramData\ViewLBA\logs\*.log
+            C:\ProgramData\ViewLBA\logs\*.err.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ================================================================
+  # Job 3: Test the REAL Setup.exe (the wrapper users receive)
+  # The MSI smoke test (job 2) proves the MSI works. This job proves
+  # the Setup.exe bootstrapper (NSIS wrapper) also works — it's a
+  # DIFFERENT executable and must be tested independently.
+  # ================================================================
+  test-setup-exe:
+    name: Test real Setup.exe (install + Running + health + uninstall)
+    needs: build-installer
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+
+    steps:
+      - name: Download installer artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: viewlba-windows-installer
+          path: ${{ runner.temp }}/downloaded
+
+      - name: List downloaded artifact
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse ${{ runner.temp }}/downloaded | Format-Table Name, Length
+
+      - name: Verify SHA256 of Setup.exe
+        shell: pwsh
+        run: |
+          $shaFile = "${{ runner.temp }}/downloaded/SHA256SUMS.txt"
+          $setupExe = "${{ runner.temp }}/downloaded/ViewLBA-Server-Setup-${{ needs.build-installer.outputs.version }}.exe"
+          if (-not (Test-Path $setupExe)) { throw "Setup.exe not found in artifact" }
+          $actualHash = (Get-FileHash $setupExe -Algorithm SHA256).Hash.ToLower()
+          $expectedHash = (Get-Content $shaFile | Where-Object { $_ -match "Setup.*\.exe$" } | ForEach-Object { ($_ -split '\s+')[0] } | Select-Object -First 1).Trim().ToLower()
+          if ($actualHash -ne $expectedHash) { throw "Setup.exe SHA256 mismatch: expected $expectedHash, got $actualHash" }
+          Write-Host "OK: Setup.exe SHA256 verified ($actualHash)"
+
+      - name: Verify PE header (MZ)
+        shell: pwsh
+        run: |
+          $setupExe = "${{ runner.temp }}/downloaded/ViewLBA-Server-Setup-${{ needs.build-installer.outputs.version }}.exe"
+          $bytes = [System.IO.File]::ReadAllBytes($setupExe)[0..1]
+          if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw "Not a valid PE executable (no MZ header)" }
+          Write-Host "OK: Setup.exe has valid PE/MZ header"
+
+      - name: Install via Setup.exe /S (silent)
+        shell: cmd
+        run: |
+          set SETUP_EXE=${{ runner.temp }}\downloaded\ViewLBA-Server-Setup-${{ needs.build-installer.outputs.version }}.exe
+          "%SETUP_EXE%" /S
+          echo Setup ExitCode: %ERRORLEVEL%
+          if %ERRORLEVEL% NEQ 0 if %ERRORLEVEL% NEQ 3010 exit 1
+          ping 127.0.0.1 -n 21 > nul
+
+      - name: Verify service Running + LocalService + Auto
+        shell: pwsh
+        run: |
+          $svc = Get-Service -Name "ViewLBA" -ErrorAction SilentlyContinue
+          if (-not $svc) { throw "ViewLBA service not found after Setup.exe install" }
+          if ($svc.Status -ne "Running") { throw "Service is $($svc.Status) — MUST be Running" }
+          if ($svc.StartType -ne "Automatic") { throw "StartType is $($svc.StartType), expected Automatic" }
+          $wmi = Get-WmiObject Win32_Service -Filter "Name='ViewLBA'"
+          if ($wmi.StartName -notmatch "LocalService") { throw "Service account is $($wmi.StartName) — expected LocalService" }
+          Write-Host "OK: ViewLBA service Running, Automatic, LocalService"
+
+      - name: Verify server.env created
+        shell: pwsh
+        run: |
+          $envFile = "C:\ProgramData\ViewLBA\config\server.env"
+          if (-not (Test-Path $envFile)) { throw "server.env MISSING — viewlba-init.exe failed" }
+          $content = Get-Content $envFile -Raw
+          $required = @("PORT=", "AUTH_SECRET=", "REALTIME_TOKEN=", "DATABASE_URL=")
+          foreach ($k in $required) {
+            if ($content -notmatch $k) { throw "server.env missing key: $k" }
+          }
+          if ($content -match "GENERATED_BY_INSTALLER") { throw "server.env has placeholder text" }
+          Write-Host "OK: server.env has all required keys"
+
+      - name: Verify child processes (3 individual)
+        shell: pwsh
+        run: |
+          # Verify each child process individually — not just count >= 2
+          $procs = Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -match "bun\.exe$" }
+          $appProc = $procs | Where-Object { $_.CommandLine -match "app.*server\.js" }
+          $rtProc = $procs | Where-Object { $_.CommandLine -match "realtime-service.*index\.ts" }
+          $streamProc = $procs | Where-Object { $_.CommandLine -match "stream-service.*index\.ts" }
+          if (-not $appProc) { throw "App (bun app/server.js) process NOT found" }
+          if (-not $rtProc) { throw "Realtime (bun realtime-service/index.ts) process NOT found" }
+          if (-not $streamProc) { throw "Stream (bun stream-service/index.ts) process NOT found" }
+          Write-Host "OK: All 3 child processes found individually:"
+          Write-Host "  App PID=$($appProc.ProcessId)"
+          Write-Host "  Realtime PID=$($rtProc.ProcessId)"
+          Write-Host "  Stream PID=$($streamProc.ProcessId)"
+
+      - name: Verify health endpoints
+        shell: pwsh
+        run: |
+          $appOk = $false; $rtOk = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            try { $r = Invoke-WebRequest -Uri "http://127.0.0.1:3000/api/health" -TimeoutSec 3 -UseBasicParsing; if ($r.StatusCode -eq 200) { $appOk = $true } } catch {}
+            try { $r = Invoke-WebRequest -Uri "http://127.0.0.1:3004/health" -TimeoutSec 3 -UseBasicParsing; if ($r.StatusCode -eq 200) { $rtOk = $true } } catch {}
+            if ($appOk -and $rtOk) { break }
+            Start-Sleep -Seconds 2
+          }
+          if (-not $appOk) { throw "App health :3000/api/health did not respond 200" }
+          if (-not $rtOk) { throw "Realtime health :3004/health did not respond 200" }
+          Write-Host "OK: Both health endpoints responding 200"
+
+      - name: Uninstall via MSI
+        shell: cmd
+        run: |
+          msiexec /x "${{ runner.temp }}\downloaded\ViewLBA-Server-Setup-${{ needs.build-installer.outputs.version }}.msi" /qn
+          echo Uninstall ExitCode: %ERRORLEVEL%
+          if %ERRORLEVEL% NEQ 0 if %ERRORLEVEL% NEQ 3010 exit 1
+          ping 127.0.0.1 -n 6 > nul
+
+      - name: Verify clean uninstall
+        shell: pwsh
+        run: |
+          $svc = Get-Service -Name "ViewLBA" -ErrorAction SilentlyContinue
+          if ($svc) { throw "ViewLBA service should be gone after uninstall" }
+          if (-not (Test-Path "C:\ProgramData\ViewLBA\data\db")) { throw "ProgramData should be preserved" }
+          Write-Host "OK: Service removed, ProgramData preserved"
+
+      - name: Upload Setup.exe test failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: setup-exe-test-failure
           path: |
             C:\temp\*.log
             C:\ProgramData\ViewLBA\logs\*.log
