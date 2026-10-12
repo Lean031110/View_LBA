@@ -568,15 +568,25 @@ $fileInh = [System.Security.AccessControl.InheritanceFlags]::None
 $propFlags = [System.Security.AccessControl.PropagationFlags]::None
 $acType = [System.Security.AccessControl.AccessControlType]::Allow
 
+# Enumerate WITHOUT -ErrorAction SilentlyContinue. If enumeration fails,
+# that's a fatal error — we can't guarantee the ACL was applied to all files.
 $items = @(@{{ path = $root; isDir = $true }})
-$childItems = Get-ChildItem -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+try {{
+    $childItems = Get-ChildItem -LiteralPath $root -Recurse -Force
+}} catch {{
+    Write-Host "FATAL: Cannot enumerate $root : $_"
+    exit 1
+}}
 foreach ($child in $childItems) {{
     $items += @{{ path = $child.FullName; isDir = $child.PSIsContainer }}
 }}
 
+# Apply ACL to EVERY item. ANY failure is fatal — no tolerance, no
+# percentage threshold, no silent skip. If Get-Acl or Set-Acl fails on
+# ANY file, the install must abort.
 $count = 0
 $failed = 0
-$criticalFailures = @()
+$failures = @()
 foreach ($item in $items) {{
     try {{
         $acl = Get-Acl -LiteralPath $item.path
@@ -587,22 +597,14 @@ foreach ($item in $items) {{
         $count++
     }} catch {{
         $failed++
-        if ($failed -le 10) {{ Write-Host "  WARN: $($item.path) : $_" }}
-        # ANY failure on a .ts or .js entry file is critical — Bun must
-        # be able to load these. No tolerance for entry file failures.
-        if ($item.path -match '\.(ts|js|tsx|jsx|mjs|cjs)$') {{
-            $criticalFailures += $item.path
-        }}
+        $failures += "$($item.path): $_"
     }}
 }}
 Write-Host "WA granted to LocalService on $count items ($failed failed)"
-if ($criticalFailures.Count -gt 0) {{
-    Write-Host "FATAL: Critical entry file failures ($($criticalFailures.Count)):"
-    $criticalFailures | ForEach-Object {{ Write-Host "  $_" }}
-    exit 1
-}}
-if ($failed -gt 0 -and $failed -gt ($count / 100)) {{
-    Write-Host "FATAL: Too many failures ($failed out of $($count + $failed))"
+if ($failed -gt 0) {{
+    Write-Host "FATAL: $failed ACL grant failures (zero tolerance):"
+    $failures | Select-Object -First 20 | ForEach-Object {{ Write-Host "  $_" }}
+    if ($failures.Count -gt 20) {{ Write-Host "  ... and $($failures.Count - 20) more" }}
     exit 1
 }}
 exit 0
