@@ -1306,23 +1306,60 @@ jobs:
           Write-Host "=== Health checks PASS (app + realtime both responding 200) ==="
 
       # ================================================================
-      # O. REAL UPGRADE TEST — install previous, create data, upgrade to current
-      # The previous-version MSI is ALREADY installed (the install step above).
-      # Now create sentinel data, then upgrade to current.
+      # O. SYNTHETIC UPGRADE TEST — MajorUpgrade trigger + data preservation
+      # ----------------------------------------------------------------
+      # P1 — HONEST NAMING. This test uses a SYNTHETIC previous-version MSI
+      # built from the SAME source code as the current version, with the
+      # VERSION property decremented by one patch. It proves:
+      #   ✓ WiX MajorUpgrade element fires on version bump
+      #   ✓ RemoveExistingProducts does not crash viewlba-init.exe
+      #   ✓ Sentinel data (db/media/backups/sentinel.txt) is preserved across versions (SHA256)
+      #   ✓ Service is Running after upgrade
+      #   ✓ ARP DisplayVersion reflects the new (current) version
+      #   ✓ Health endpoints respond 200 after upgrade
+      #
+      # It does NOT prove:
+      #   ✗ Compatibility with a PUBLISHED previous release
+      #   ✗ Schema migration from a real prior Prisma version
+      #   ✗ Backward-compat of server.env keys across real versions
+      #
+      # PENDING (P1-9): When a real published MSI exists (e.g., v3.2.2 from
+      # a public GitHub Release), replace $prevMsi with that exact artifact
+      # and re-run this test. The real artifact test must additionally:
+      #   - Use the EXACT SHA256 from the published release (no rebuild)
+      #   - Verify config/server.env preservation (not just sentinel files)
+      #   - Verify the SQLite database opens with the current Prisma client
+      #   - Verify media folder (logos, dishes) is preserved with hashes
+      #   - Verify backups folder is preserved with hashes
+      #
+      # Until then, this synthetic test stays clearly labeled as such.
       # ================================================================
-      - name: "[O] REAL UPGRADE test — previous→current, verify data preserved + service Running"
+      - name: "[O] SYNTHETIC UPGRADE test — MajorUpgrade trigger + data preserved (NOT published-release compatibility)"
         shell: pwsh
         run: |
+          Write-Host "=============================================================="
+          Write-Host "P1 — SYNTHETIC test (MajorUpgrade trigger + data preservation)"
+          Write-Host "=============================================================="
+          Write-Host "The previous-version MSI used here is SYNTHETIC: same source code"
+          Write-Host "as the current version, with VERSION decremented by one patch."
+          Write-Host "It was NEVER published and is NOT a real prior release."
+          Write-Host ""
+          Write-Host "This test proves MajorUpgrade fires and data is preserved."
+          Write-Host "It does NOT prove compatibility with a published previous release."
+          Write-Host "PENDING (P1-9): replace with real published MSI when one exists."
+          Write-Host "=============================================================="
+          Write-Host ""
+
           $currentMsi = "C:\temp\ViewLBA-current.msi"
           $prevMsi = "C:\temp\ViewLBA-previous.msi"
           $pd = "C:\ProgramData\ViewLBA"
           $version = "${{ steps.msi_path.outputs.version }}"
           $prev = "${{ steps.msi_path.outputs.prev }}"
 
-          Write-Host "Previous version installed: $prev"
-          Write-Host "Upgrading to current version: $version"
+          Write-Host "Synthetic previous version: $prev (NEVER PUBLISHED — test only)"
+          Write-Host "Current version: $version"
 
-          # Create sentinel data with known SHA256
+          # Create sentinel data with known SHA256 (preservation proof by hash)
           Write-Host "=== [O] Creating sentinel data ==="
           $sentinelFile = "$pd\data\db\upgrade-sentinel.txt"
           $sentinelContent = "UPGRADE_SENTINEL_$(Get-Date -Format 'o')"
@@ -1345,35 +1382,81 @@ jobs:
           $backupHash = (Get-FileHash $backupSentinel -Algorithm SHA256).Hash
           Write-Host "Backup sentinel SHA256 before upgrade: $backupHash"
 
-          # UPGRADE: install current MSI over previous (MajorUpgrade triggers)
-          Write-Host "=== [O] Installing current version $version over previous $prev ==="
+          # Capture server.env hash too (config preservation proof)
+          $envFile = "$pd\config\server.env"
+          $envHashBefore = $null
+          if (Test-Path $envFile) {
+            $envHashBefore = (Get-FileHash $envFile -Algorithm SHA256).Hash
+            Write-Host "server.env SHA256 before upgrade: $envHashBefore"
+          } else {
+            Write-Host "::warning::server.env not found before upgrade — config preservation will not be hash-verified"
+          }
+
+          # UPGRADE: install current MSI over synthetic previous (MajorUpgrade triggers)
+          Write-Host "=== [O] Installing current version $version over synthetic previous $prev ==="
           $p = Start-Process msiexec.exe -ArgumentList "/i `"$currentMsi`" /qn /l*v `"C:\temp\msi-upgrade.log`"" -Wait -PassThru
           $ec = $p.ExitCode
           Write-Host "Upgrade ExitCode: $ec"
           if ($ec -notin @(0, 3010)) { throw "Upgrade msiexec failed with exit code $ec" }
           Start-Sleep -Seconds 10
 
-          # Verify data preserved with SHA256 comparison
-          Write-Host "=== [O] Verifying data preserved (SHA256) ==="
-          if (-not (Test-Path $sentinelFile)) { throw "sentinel.txt DELETED during upgrade" }
-          $afterHash = (Get-FileHash $sentinelFile -Algorithm SHA256).Hash
-          if ($afterHash -ne $sentinelHash) { throw "sentinel.txt SHA256 CHANGED: before=$sentinelHash after=$afterHash" }
-          Write-Host "OK: sentinel SHA256 matches"
+          # Verify data preserved with SHA256 comparison (preservation by hash, not just Test-Path)
+          Write-Host "=== [O] Verifying data preserved (SHA256 hash comparison) ==="
+          $preservationErrors = @()
 
-          if (-not (Test-Path $dbSentinel)) { throw "test-database.db DELETED during upgrade" }
-          $afterDbHash = (Get-FileHash $dbSentinel -Algorithm SHA256).Hash
-          if ($afterDbHash -ne $dbHash) { throw "test-database.db SHA256 CHANGED" }
-          Write-Host "OK: db sentinel SHA256 matches"
+          if (-not (Test-Path $sentinelFile)) {
+            $preservationErrors += "sentinel.txt DELETED during upgrade"
+          } else {
+            $afterHash = (Get-FileHash $sentinelFile -Algorithm SHA256).Hash
+            if ($afterHash -ne $sentinelHash) {
+              $preservationErrors += "sentinel.txt SHA256 CHANGED: before=$sentinelHash after=$afterHash"
+            } else { Write-Host "OK: sentinel SHA256 matches" }
+          }
 
-          if (-not (Test-Path $mediaSentinel)) { throw "test-image.bin DELETED during upgrade" }
-          $afterMediaHash = (Get-FileHash $mediaSentinel -Algorithm SHA256).Hash
-          if ($afterMediaHash -ne $mediaHash) { throw "test-image.bin SHA256 CHANGED" }
-          Write-Host "OK: media sentinel SHA256 matches"
+          if (-not (Test-Path $dbSentinel)) {
+            $preservationErrors += "test-database.db DELETED during upgrade"
+          } else {
+            $afterDbHash = (Get-FileHash $dbSentinel -Algorithm SHA256).Hash
+            if ($afterDbHash -ne $dbHash) {
+              $preservationErrors += "test-database.db SHA256 CHANGED: before=$dbHash after=$afterDbHash"
+            } else { Write-Host "OK: db sentinel SHA256 matches" }
+          }
 
-          if (-not (Test-Path $backupSentinel)) { throw "test-backup.dat DELETED during upgrade" }
-          $afterBackupHash = (Get-FileHash $backupSentinel -Algorithm SHA256).Hash
-          if ($afterBackupHash -ne $backupHash) { throw "test-backup.dat SHA256 CHANGED" }
-          Write-Host "OK: backup sentinel SHA256 matches"
+          if (-not (Test-Path $mediaSentinel)) {
+            $preservationErrors += "test-image.bin DELETED during upgrade"
+          } else {
+            $afterMediaHash = (Get-FileHash $mediaSentinel -Algorithm SHA256).Hash
+            if ($afterMediaHash -ne $mediaHash) {
+              $preservationErrors += "test-image.bin SHA256 CHANGED: before=$mediaHash after=$afterMediaHash"
+            } else { Write-Host "OK: media sentinel SHA256 matches" }
+          }
+
+          if (-not (Test-Path $backupSentinel)) {
+            $preservationErrors += "test-backup.dat DELETED during upgrade"
+          } else {
+            $afterBackupHash = (Get-FileHash $backupSentinel -Algorithm SHA256).Hash
+            if ($afterBackupHash -ne $backupHash) {
+              $preservationErrors += "test-backup.dat SHA256 CHANGED: before=$backupHash after=$afterBackupHash"
+            } else { Write-Host "OK: backup sentinel SHA256 matches" }
+          }
+
+          # Verify server.env preserved (config preservation by hash)
+          if ($envHashBefore) {
+            if (-not (Test-Path $envFile)) {
+              $preservationErrors += "server.env DELETED during upgrade (config lost!)"
+            } else {
+              $envHashAfter = (Get-FileHash $envFile -Algorithm SHA256).Hash
+              if ($envHashAfter -ne $envHashBefore) {
+                $preservationErrors += "server.env SHA256 CHANGED: before=$envHashBefore after=$envHashAfter"
+              } else { Write-Host "OK: server.env SHA256 matches (config preserved)" }
+            }
+          }
+
+          if ($preservationErrors.Count -gt 0) {
+            Write-Host "::error::Data preservation verification FAILED:"
+            foreach ($e in $preservationErrors) { Write-Host "  - $e" }
+            throw "Upgrade did not preserve user data — see errors above"
+          }
 
           # STRICT: Verify service Running after upgrade (NOT just registered)
           $svc = Get-Service -Name "ViewLBA" -ErrorAction SilentlyContinue
@@ -1384,6 +1467,26 @@ jobs:
           }
           Write-Host "OK: Service Running after upgrade"
 
+          # P1 — Verify health endpoints respond 200 after upgrade
+          # (The user explicitly asked: "además de comprobar servicio y health después de actualizar")
+          Write-Host "=== [O] Verifying health endpoints after upgrade ==="
+          $appOk = $false; $rtOk = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            try {
+              $r = Invoke-WebRequest -Uri "http://127.0.0.1:3000/api/health" -TimeoutSec 3 -UseBasicParsing
+              if ($r.StatusCode -eq 200) { $appOk = $true }
+            } catch {}
+            try {
+              $r = Invoke-WebRequest -Uri "http://127.0.0.1:3004/health" -TimeoutSec 3 -UseBasicParsing
+              if ($r.StatusCode -eq 200) { $rtOk = $true }
+            } catch {}
+            if ($appOk -and $rtOk) { break }
+            Start-Sleep -Seconds 2
+          }
+          if (-not $appOk) { throw "App health :3000/api/health did not respond 200 after upgrade" }
+          if (-not $rtOk) { throw "Realtime health :3004/health did not respond 200 after upgrade" }
+          Write-Host "OK: Both health endpoints responding 200 after upgrade"
+
           # STRICT: Verify ARP DisplayVersion = current (not previous)
           $arp = Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match "ViewLBA" }
           if ($arp.DisplayVersion -ne $version) {
@@ -1391,7 +1494,16 @@ jobs:
           }
           Write-Host "OK: ARP DisplayVersion = $version (upgrade verified)"
 
-          Write-Host "=== [O] REAL UPGRADE test PASS (data preserved + service Running + ARP updated) ==="
+          Write-Host ""
+          Write-Host "=== [O] SYNTHETIC UPGRADE test PASS ==="
+          Write-Host "  Data preserved (SHA256): sentinel + db + media + backup + server.env"
+          Write-Host "  Service: Running"
+          Write-Host "  Health: :3000 + :3004 both 200"
+          Write-Host "  ARP version: $version"
+          Write-Host "=============================================================="
+          Write-Host "NOTE: This is a SYNTHETIC test (same source, bumped version)."
+          Write-Host "NOTE: PENDING P1-9 — replace with real published MSI when one exists."
+          Write-Host "=============================================================="
 
       # ================================================================
       # P. SERVICE RESTART SIMULATION (not real reboot — name is honest)
@@ -1693,7 +1805,7 @@ jobs:
           | Child processes | viewlba-service.exe + bun children | ≥2 processes |
           | Health :3000 | http://127.0.0.1:3000/api/health | 200 OK |
           | Health :3004 | http://127.0.0.1:3004/health | 200 OK |
-          | Upgrade (O) | Real v_prev→v_current upgrade | SHA256 + Running + ARP version |
+          | Upgrade (O) SYNTHETIC | Same-source prev→current MajorUpgrade trigger | SHA256 + Running + health + ARP version |
           | Restart sim (P) | Stop→Stopped→Start→Running+health | BLOCKING (not a real reboot) |
           | Reinstall (R) | Uninstall→SHA256→install→Running+health | BLOCKING |
           | Offline (S) | Block outbound→install→Running+health+cleanup | BLOCKING |
