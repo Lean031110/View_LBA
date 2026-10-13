@@ -1407,7 +1407,7 @@ jobs:
       # ================================================================
       # Final uninstall + verify clean state
       # ================================================================
-      - name: Final uninstall + verify
+      - name: Final uninstall + verify (4 surfaces: service, ARP, Program Files, ProgramData)
         shell: pwsh
         run: |
           $msi = "C:\temp\ViewLBA-current.msi"
@@ -1418,14 +1418,68 @@ jobs:
           if ($ec -notin @(0, 3010)) { throw "Final uninstall failed with exit code $ec" }
           Start-Sleep -Seconds 3
 
-          # Service gone
-          $svc = Get-Service -Name "ViewLBA" -ErrorAction SilentlyContinue
-          if ($svc) { throw "Service should be gone after final uninstall" }
-          Write-Host "OK: Service removed"
+          $errors = @()
 
-          # ProgramData preserved (Permanent components)
-          if (-not (Test-Path "C:\ProgramData\ViewLBA\data\db")) { throw "ProgramData was DELETED!" }
-          Write-Host "OK: ProgramData preserved"
+          # ─── 1. Service GONE ──────────────────────────────────────────
+          $svc = Get-Service -Name "ViewLBA" -ErrorAction SilentlyContinue
+          if ($svc) { $errors += "Service: ViewLBA STILL EXISTS (Status=$($svc.Status))" }
+          else { Write-Host "OK (1/4): Service removed" }
+
+          # ─── 2. ARP entry GONE ─────────────────────────────────────────
+          $arpPaths = @(
+            "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+          )
+          $arpEntry = $null
+          foreach ($p in $arpPaths) {
+            $found = Get-ItemProperty $p -ErrorAction SilentlyContinue |
+              Where-Object { $_.DisplayName -match "ViewLBA" }
+            if ($found) { $arpEntry = $found; break }
+          }
+          if ($arpEntry) { $errors += "ARP: leftover entry DisplayName='$($arpEntry.DisplayName)'" }
+          else { Write-Host "OK (2/4): ARP entry removed" }
+
+          # ─── 3. Program Files binary dir GONE ─────────────────────────
+          $pf = "C:\Program Files\ViewLBA Server"
+          if (Test-Path $pf) {
+            $remaining = Get-ChildItem $pf -Recurse -ErrorAction SilentlyContinue
+            $errors += "Program Files: $pf still exists with $($remaining.Count) entries"
+          } else {
+            Write-Host "OK (3/4): Binary dir $pf removed"
+          }
+
+          # ─── 4. ProgramData data + config PRESERVED ───────────────────
+          $pd = "C:\ProgramData\ViewLBA"
+          $expectedPreserved = @(
+            "$pd\data\db",
+            "$pd\config\server.env",
+            "$pd\logs",
+            "$pd\backups",
+            "$pd\media"
+          )
+          $missing = @($expectedPreserved | Where-Object { -not (Test-Path $_) })
+          if ($missing.Count -gt 0) {
+            $errors += "ProgramData: missing preserved paths: $($missing -join ', ')"
+          } else {
+            Write-Host "OK (4/4): ProgramData preserved (db, server.env, logs, backups, media)"
+          }
+
+          # ─── Product processes TERMINATED (extra surface) ─────────────
+          $viewlbaSvc = Get-Process -Name "viewlba-service" -ErrorAction SilentlyContinue
+          $bunChildren = Get-CimInstance Win32_Process |
+            Where-Object { $_.ExecutablePath -match "ViewLBA Server" -and $_.ExecutablePath -match "bun\.exe$" }
+          if ($viewlbaSvc) { $errors += "Process: viewlba-service.exe PID=$($viewlbaSvc.Id) STILL RUNNING" }
+          if ($bunChildren) { $errors += "Process: $($bunChildren.Count) bun.exe children STILL RUNNING" }
+          if (-not $viewlbaSvc -and -not $bunChildren) {
+            Write-Host "OK: No viewlba-service.exe, no bun.exe children"
+          }
+
+          if ($errors.Count -gt 0) {
+            Write-Host "::error::Final uninstall verification FAILED:"
+            foreach ($e in $errors) { Write-Host "  - $e" }
+            throw "Final uninstall verification failed — see errors above"
+          }
+          Write-Host "PASS: Final uninstall — binaries removed AND persistent data preserved"
 
       # ================================================================
       # Test matrix summary (honest — based on step results)
@@ -1458,6 +1512,8 @@ jobs:
           | Offline (S) | Block outbound→install→Running+health+cleanup | BLOCKING |
           | Uninstall | msiexec /x with ExitCode check | BLOCKING |
           | Data preservation | SHA256 hash comparison (not just Test-Path) | BLOCKING |
+          | Clean uninstall (Setup.exe job) | ARP + Program Files + processes + ProgramData | 4 surfaces verified |
+          | MZ magic bytes (Setup.exe job) | First 2 bytes = "MZ" (DOS stub) | NOT full PE validation |
 
           Every msiexec call checks ExitCode (accepts 0 and 3010).
           No test accepts Stopped as a passing condition.
@@ -1518,13 +1574,21 @@ jobs:
           if ($actualHash -ne $expectedHash) { throw "Setup.exe SHA256 mismatch: expected $expectedHash, got $actualHash" }
           Write-Host "OK: Setup.exe SHA256 verified ($actualHash)"
 
-      - name: Verify PE header (MZ)
+      - name: Verify MZ magic bytes (DOS stub — NOT full PE)
         shell: pwsh
         run: |
+          # P1 — honest naming: this step checks ONLY the 2-byte DOS stub
+          # magic ("MZ"). It does NOT validate the full PE header structure
+          # (PE signature, COFF header, optional header, section table).
+          # The successful silent install in a later step is INDEPENDENT
+          # evidence that the executable is structurally valid on Windows.
           $setupExe = "${{ runner.temp }}/downloaded/ViewLBA-Server-Setup-${{ needs.build-installer.outputs.version }}.exe"
           $bytes = [System.IO.File]::ReadAllBytes($setupExe)[0..1]
-          if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw "Not a valid PE executable (no MZ header)" }
-          Write-Host "OK: Setup.exe has valid PE/MZ header"
+          if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw "Setup.exe does not start with MZ — not a Windows executable" }
+          Write-Host "OK: Setup.exe starts with MZ (DOS stub magic)"
+          Write-Host "NOTE: This step validates the DOS stub signature only."
+          Write-Host "NOTE: Full PE header validation is out of scope — the silent install"
+          Write-Host "NOTE: in the next step is the structural validity evidence."
 
       - name: Install via Setup.exe /S (silent)
         shell: cmd
@@ -1597,13 +1661,96 @@ jobs:
           if %ERRORLEVEL% NEQ 0 if %ERRORLEVEL% NEQ 3010 exit 1
           ping 127.0.0.1 -n 6 > nul
 
-      - name: Verify clean uninstall
+      - name: Verify clean uninstall (4 surfaces: ARP, Program Files, processes, ProgramData)
         shell: pwsh
         run: |
-          $svc = Get-Service -Name "ViewLBA" -ErrorAction SilentlyContinue
-          if ($svc) { throw "ViewLBA service should be gone after uninstall" }
-          if (-not (Test-Path "C:\ProgramData\ViewLBA\data\db")) { throw "ProgramData should be preserved" }
-          Write-Host "OK: Service removed, ProgramData preserved"
+          # P1 — clean uninstall must verify 4 surfaces INDEPENDENTLY:
+          #   1. ARP entry GONE (Add/Remove Programs / Win32_Product)
+          #   2. Program Files binary dir GONE (C:\Program Files\ViewLBA Server)
+          #   3. Product processes TERMINATED (no viewlba-service.exe, no bun.exe
+          #      children running app/server.js, realtime-service, stream-service)
+          #   4. ProgramData data + config PRESERVED (data\db, config\server.env,
+          #      logs/ — persistent user state must survive uninstall)
+          #
+          # MSI uninstall is valid for the wrapper-only Setup.exe case: the
+          # result must be UNEQUIVOCAL — binaries disappear AND persistent
+          # data is preserved. Anything in between is a regression.
+
+          $errors = @()
+
+          # ─── 1. ARP entry GONE ────────────────────────────────────────
+          # Check the registry keys that ARP (Add/Remove Programs) reads.
+          # A leftover entry means msiexec /x did not fully unregister.
+          $arpPaths = @(
+            "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+          )
+          $arpEntry = $null
+          foreach ($p in $arpPaths) {
+            $found = Get-ItemProperty $p -ErrorAction SilentlyContinue |
+              Where-Object { $_.DisplayName -match "ViewLBA" }
+            if ($found) { $arpEntry = $found; break }
+          }
+          if ($arpEntry) {
+            $errors += "ARP: leftover entry DisplayName='$($arpEntry.DisplayName)' at $p"
+          } else {
+            Write-Host "OK (1/4): No ARP entry for ViewLBA (uninstall registered cleanly)"
+          }
+
+          # ─── 2. Program Files binary dir GONE ────────────────────────
+          $pf = "C:\Program Files\ViewLBA Server"
+          if (Test-Path $pf) {
+            $remaining = Get-ChildItem $pf -Recurse -ErrorAction SilentlyContinue
+            $errors += "Program Files: $pf still exists with $($remaining.Count) entries"
+          } else {
+            Write-Host "OK (2/4): Binary dir $pf removed"
+          }
+
+          # ─── 3. Product processes TERMINATED ─────────────────────────
+          $viewlbaSvc = Get-Process -Name "viewlba-service" -ErrorAction SilentlyContinue
+          $viewlbaTray = Get-Process -Name "viewlba-tray" -ErrorAction SilentlyContinue
+          $bunChildren = Get-CimInstance Win32_Process |
+            Where-Object { $_.ExecutablePath -match "ViewLBA Server" -and $_.ExecutablePath -match "bun\.exe$" }
+          if ($viewlbaSvc) { $errors += "Process: viewlba-service.exe PID=$($viewlbaSvc.Id) STILL RUNNING" }
+          if ($viewlbaTray) { $errors += "Process: viewlba-tray.exe PID=$($viewlbaTray.Id) STILL RUNNING" }
+          if ($bunChildren) { $errors += "Process: $($bunChildren.Count) bun.exe children STILL RUNNING" }
+          if (-not $viewlbaSvc -and -not $viewlbaTray -and -not $bunChildren) {
+            Write-Host "OK (3/4): No viewlba-service.exe, no viewlba-tray.exe, no bun.exe children"
+          }
+
+          # ─── 4. ProgramData data + config PRESERVED ───────────────────
+          # The MSI marks data/db + config + logs as Permanent (no RemoveFile
+          # entries) so they survive uninstall. Verify each one explicitly.
+          $pd = "C:\ProgramData\ViewLBA"
+          $expectedPreserved = @(
+            @{ path = "$pd\data\db";      reason = "SQLite database (user content)" },
+            @{ path = "$pd\config";       reason = "server.env + service-host.toml (user config)" },
+            @{ path = "$pd\config\server.env"; reason = "server.env file itself" },
+            @{ path = "$pd\logs";         reason = "log files (forensic value)" },
+            @{ path = "$pd\backups";      reason = "backup snapshots" },
+            @{ path = "$pd\media";        reason = "uploaded media (logos, dishes)" }
+          )
+          $missing = @()
+          foreach ($e in $expectedPreserved) {
+            if (-not (Test-Path $e.path)) {
+              $missing += "  - $($e.path)  // $($e.reason)"
+            }
+          }
+          if ($missing.Count -gt 0) {
+            $errors += "ProgramData: missing preserved paths:`n$($missing -join "`n")"
+          } else {
+            Write-Host "OK (4/4): ProgramData preserved (db, config, server.env, logs, backups, media)"
+          }
+
+          # ─── Report ───────────────────────────────────────────────────
+          if ($errors.Count -gt 0) {
+            Write-Host ""
+            Write-Host "::error::Clean uninstall verification FAILED:"
+            foreach ($e in $errors) { Write-Host "  - $e" }
+            throw "Clean uninstall verification failed — see errors above"
+          }
+          Write-Host ""
+          Write-Host "PASS: Clean uninstall — binaries removed AND persistent data preserved"
 
       - name: Upload Setup.exe test failure artifacts
         if: failure()
