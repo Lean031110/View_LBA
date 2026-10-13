@@ -1626,10 +1626,31 @@ jobs:
           Write-Host "=== [R] Reinstall test PASS (SHA256 preserved + service Running + health OK) ==="
 
       # ================================================================
-      # S. OFFLINE TEST — block Internet, install, verify Running + health
-      # STRICT — service Running + health while offline + clean firewall always
+      # S. OFFLINE TEST (PARTIAL) — block outbound HTTP/HTTPS (TCP 80/443 only)
+      # ----------------------------------------------------------------
+      # P1 — HONEST NAMING. This test blocks OUTBOUND TCP to ports 80 and 443
+      # ONLY. It does NOT block:
+      #   - DNS (UDP/TCP 53) — name resolution may still work
+      #   - ICMP (ping) — may still reach external hosts
+      #   - Other TCP ports (e.g., 8080, 8443, 21, 22, 25, 587, 3306...)
+      #   - IPv6 traffic
+      #   - Loopback (127.0.0.1) — explicitly exempt by design
+      #
+      # The test proves:
+      #   ✓ MSI installs cleanly with HTTP/HTTPS outbound blocked
+      #   ✓ Service starts and reaches Running state without HTTP/HTTPS egress
+      #   ✓ Local health endpoints respond (loopback is not blocked)
+      #   ✓ Firewall rules are ALWAYS cleaned up (try/finally + verification)
+      #
+      # The test does NOT prove:
+      #   ✗ The product works with all Internet protocols blocked
+      #   ✗ The product works with DNS blocked
+      #   ✗ No outbound traffic of any kind occurs
+      #
+      # The cleanup is GUARANTEED: try/finally with explicit Get-NetFirewallRule
+      # verification at the end. If any rule survives, the step FAILS.
       # ================================================================
-      - name: "[S] Offline test — block outbound + install + Running + health (STRICT)"
+      - name: "[S] Offline test (partial — TCP 80/443 only, NOT DNS/ICMP) + install + Running + health + cleanup"
         shell: pwsh
         run: |
           $msi = "C:\temp\ViewLBA-current.msi"
@@ -1641,26 +1662,50 @@ jobs:
           if ($ecU -notin @(0, 3010)) { throw "Pre-uninstall msiexec failed with exit code $ecU" }
           Start-Sleep -Seconds 5
 
-          # Block outbound HTTP/HTTPS — STRICT: must be set BEFORE install
-          New-NetFirewallRule -DisplayName "ViewLBA-Offline-HTTP" -Direction Outbound -Action Block -Protocol TCP -RemotePort 80 -ErrorAction Stop | Out-Null
-          New-NetFirewallRule -DisplayName "ViewLBA-Offline-HTTPS" -Direction Outbound -Action Block -Protocol TCP -RemotePort 443 -ErrorAction Stop | Out-Null
-          Write-Host "OK: Outbound HTTP/HTTPS blocked"
+          # P1 — Honest scope declaration
+          Write-Host "=============================================================="
+          Write-Host "P1 — OFFLINE TEST (PARTIAL network isolation)"
+          Write-Host "=============================================================="
+          Write-Host "Blocking: outbound TCP 80 (HTTP) + outbound TCP 443 (HTTPS)"
+          Write-Host "NOT blocked: DNS (UDP/TCP 53), ICMP, other TCP ports, IPv6, loopback"
+          Write-Host "This proves the MSI + service work without HTTP/HTTPS egress."
+          Write-Host "It does NOT prove the product is fully offline (DNS/ICMP may work)."
+          Write-Host "=============================================================="
 
+          # Block outbound HTTP/HTTPS — STRICT: must be set BEFORE install
+          # If New-NetFirewallRule fails, we ABORT before install (no orphan rules
+          # because both rules are added with -ErrorAction Stop — partial failure
+          # rolls back the transaction).
           try {
-            # Install while offline
+            New-NetFirewallRule -DisplayName "ViewLBA-Offline-HTTP" -Direction Outbound -Action Block -Protocol TCP -RemotePort 80 -ErrorAction Stop | Out-Null
+            New-NetFirewallRule -DisplayName "ViewLBA-Offline-HTTPS" -Direction Outbound -Action Block -Protocol TCP -RemotePort 443 -ErrorAction Stop | Out-Null
+          } catch {
+            # If rule creation fails, attempt cleanup of any partially-created rules
+            Write-Host "::error::Failed to create firewall rules: $_"
+            Write-Host "Attempting cleanup of any partial rules..."
+            Remove-NetFirewallRule -DisplayName "ViewLBA-Offline-HTTP" -ErrorAction SilentlyContinue
+            Remove-NetFirewallRule -DisplayName "ViewLBA-Offline-HTTPS" -ErrorAction SilentlyContinue
+            throw "Cannot block outbound HTTP/HTTPS — firewall rule creation failed: $_"
+          }
+          Write-Host "OK: Outbound HTTP/HTTPS blocked (TCP 80 + 443 only)"
+
+          $installSuccess = $false
+          try {
+            # Install while offline (HTTP/HTTPS egress blocked)
             $po = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn" -Wait -PassThru
             $ecO = $po.ExitCode
             Write-Host "Offline install ExitCode: $ecO"
             if ($ecO -notin @(0, 3010)) { throw "Offline install msiexec failed with exit code $ecO" }
             Start-Sleep -Seconds 10
+            $installSuccess = $true
 
-            # STRICT: service MUST be Running while offline
+            # STRICT: service MUST be Running while HTTP/HTTPS is blocked
             $svc = Get-Service -Name "ViewLBA" -ErrorAction SilentlyContinue
             if (-not $svc) { throw "Service not found after offline install" }
             if ($svc.Status -ne "Running") {
               throw "Service is $($svc.Status) while offline — MUST be Running"
             }
-            Write-Host "OK: Service Running while offline"
+            Write-Host "OK: Service Running while HTTP/HTTPS blocked"
 
             # Verify Program Files (x64 strictly)
             if (-not (Test-Path "C:\Program Files\ViewLBA Server\bin\viewlba-service.exe")) {
@@ -1676,7 +1721,8 @@ jobs:
             }
             Write-Host "OK: ProgramData structure intact offline"
 
-            # STRICT: health check must pass while offline (localhost is not blocked)
+            # STRICT: health check must pass while HTTP/HTTPS is blocked
+            # (localhost is not blocked — loopback is exempt by Windows design)
             $appOk = $false
             for ($i = 0; $i -lt 15; $i++) {
               try {
@@ -1685,22 +1731,54 @@ jobs:
               } catch { Start-Sleep -Seconds 2 }
             }
             if (-not $appOk) {
-              throw "App health endpoint did NOT respond 200 while offline"
+              throw "App health endpoint did NOT respond 200 while HTTP/HTTPS blocked"
             }
-            Write-Host "OK: App health endpoint 200 while offline"
+            Write-Host "OK: App health endpoint 200 while HTTP/HTTPS blocked (loopback works)"
 
-            Write-Host "=== [S] Offline test PASS (install + Running + health with Internet blocked) ==="
+            Write-Host "=== [S] Offline test PASS (install + Running + health with HTTP/HTTPS blocked) ==="
+            Write-Host "NOTE: This proves HTTP/HTTPS egress is not required for install or runtime."
+            Write-Host "NOTE: DNS, ICMP, and other protocols were NOT blocked by this test."
           } finally {
-            # STRICT: Always clean firewall rules — even on failure
+            # STRICT: Always clean firewall rules — even if install failed, even
+            # if a step inside try{} threw. The cleanup itself is wrapped in
+            # try/catch so it never throws (an exception in finally would mask
+            # the original error). After cleanup, we verify NO ViewLBA-Offline-*
+            # rules remain — if any survive, the step FAILS.
             Write-Host "Cleaning up firewall rules (always, even on failure)..."
-            Remove-NetFirewallRule -DisplayName "ViewLBA-Offline-HTTP" -ErrorAction SilentlyContinue
-            Remove-NetFirewallRule -DisplayName "ViewLBA-Offline-HTTPS" -ErrorAction SilentlyContinue
+            $cleanupErrors = @()
+            try {
+              Remove-NetFirewallRule -DisplayName "ViewLBA-Offline-HTTP" -ErrorAction Stop
+            } catch {
+              $cleanupErrors += "ViewLBA-Offline-HTTP: $_"
+              # Fallback: try with SilentlyContinue (rule may already be gone)
+              Remove-NetFirewallRule -DisplayName "ViewLBA-Offline-HTTP" -ErrorAction SilentlyContinue
+            }
+            try {
+              Remove-NetFirewallRule -DisplayName "ViewLBA-Offline-HTTPS" -ErrorAction Stop
+            } catch {
+              $cleanupErrors += "ViewLBA-Offline-HTTPS: $_"
+              Remove-NetFirewallRule -DisplayName "ViewLBA-Offline-HTTPS" -ErrorAction SilentlyContinue
+            }
+
+            # Verify NO rules survive — failure here is fatal (orphan rules
+            # would block HTTP/HTTPS on the runner for subsequent CI runs)
             $remaining = Get-NetFirewallRule -DisplayName "ViewLBA-Offline-*" -ErrorAction SilentlyContinue
             if ($remaining) {
               Write-Host "::error::Firewall rules NOT cleaned: $($remaining.Count) remaining"
-              throw "Firewall cleanup failed"
+              $remaining | ForEach-Object { Write-Host "  - $($_.DisplayName)" }
+              # Force-remove as a last resort
+              $remaining | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+              $stillRemaining = Get-NetFirewallRule -DisplayName "ViewLBA-Offline-*" -ErrorAction SilentlyContinue
+              if ($stillRemaining) {
+                throw "Firewall cleanup failed — $($stillRemaining.Count) rules survived force-remove. " +
+                      "Manual intervention required on the runner."
+              }
             }
-            Write-Host "OK: Firewall rules cleaned up"
+            if ($cleanupErrors.Count -gt 0) {
+              Write-Host "::warning::Cleanup encountered errors (recovered via fallback):"
+              $cleanupErrors | ForEach-Object { Write-Host "  - $_" }
+            }
+            Write-Host "OK: Firewall rules cleaned up (verified: 0 remaining)"
           }
 
       # ================================================================
@@ -1808,7 +1886,7 @@ jobs:
           | Upgrade (O) SYNTHETIC | Same-source prev→current MajorUpgrade trigger | SHA256 + Running + health + ARP version |
           | Restart sim (P) | Stop→Stopped→Start→Running+health | BLOCKING (not a real reboot) |
           | Reinstall (R) | Uninstall→SHA256→install→Running+health | BLOCKING |
-          | Offline (S) | Block outbound→install→Running+health+cleanup | BLOCKING |
+          | Offline (S) PARTIAL | Block outbound TCP 80/443 only (NOT DNS/ICMP)→install→Running+health+cleanup | BLOCKING |
           | Uninstall | msiexec /x with ExitCode check | BLOCKING |
           | Data preservation | SHA256 hash comparison (not just Test-Path) | BLOCKING |
           | Clean uninstall (Setup.exe job) | ARP + Program Files + processes + ProgramData | 4 surfaces verified |
