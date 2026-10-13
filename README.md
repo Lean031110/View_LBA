@@ -307,7 +307,7 @@ reconectar — sin tocar nada.
 bun run lint        # ESLint — 0 errores · 0 warnings
 bun run typecheck   # TypeScript estricto (src/)
 bun run typecheck:installer  # TypeScript estricto del instalador y la bandeja (installer/ + scripts/)
-bun test            # 885 tests: unit + realtime + pairing + recovery + installer (CLI,
+bun test            # 894 tests: unit + realtime + pairing + recovery + installer (CLI,
                     # adaptadores, bandeja D-Bus con dbus-daemon real) + pipeline de
                     # streaming con ffmpeg publicando por RTMP + temas (parser ZIP/
                     # validator/importer 21 pasos/store/backup con DB real) + gating HTTP
@@ -324,7 +324,7 @@ CI en GitHub Actions — **todo lo anterior en cada push/PR a `main`**:
 
 | Workflow | Qué verifica |
 |---|---|
-| **CI** (`ci.yml`) | **quality**: lint, tipos (`src/` + instalador), gate de versión (`/VERSION` única fuente de verdad), gate de documentación (`check-docs.ts`), 776 tests y build standalone · **integration**: API contra servidor real + licencias (VLREQ2, activación, trial, gating) · **e2e**: Playwright · **security**: `gitleaks` en toda la historia + `bun audit` crítico bloqueante |
+| **CI** (`ci.yml`) | **quality**: lint, tipos (`src/` + instalador), gate de versión (`/VERSION` única fuente de verdad), gate de documentación (`check-docs.ts`), 894 tests y build standalone · **integration**: API contra servidor real + licencias (VLREQ2, activación, trial, gating) · **e2e**: Playwright · **security**: `gitleaks` en toda la historia + `bun audit` crítico bloqueante |
 | **Installer Flow CI** (`installer-flow.yml`) | Flujo completo por SO en runners reales: instalar → bandeja (viva, icono, menú) → iniciar/detener → configurar → **instalación 100 % offline con la red BLOQUEADA** (iptables/firewall) → desinstalar |
 | **Android License Generator** | Lint, tests JVM, fuzz, escaneo anti-claves y **APK firmado y verificado** (apksigner v1+v2+v3, zipalign, badging, análisis del binario) |
 | **Customer Manual** | PDF del manual del cliente regenerado y validado (textos y branding obligatorios) |
