@@ -19,9 +19,45 @@ on:
   push:
     branches: ["main", "feature/**"]
     paths:
-      - "installer/**"
-      - "scripts/stage-windows.ts"
+      # ==============================================================
+      # P0 — Payload surface (everything stage-windows.ts consumes)
+      # The MSI is the DISTRIBUTABLE artifact, so the build MUST
+      # trigger whenever ANY file that ends up inside the staging
+      # changes. Tests/installer/contracts-workflow-triggers.test.ts
+      # asserts this list stays in sync with stage-windows.ts deps.
+      # ==============================================================
+      # 1. App source — compiled into .next/standalone by bun run build
+      - "src/**"
+      - "app/**"
+      # 2. Auxiliary services (own node_modules + bun.lock)
+      - "mini-services/**"
+      # 3. Prisma — schema + migrations copied verbatim into staging
+      - "prisma/**"
+      # 4. Themes (.vtheme files) + public static assets
+      - "themes/**"
+      - "public/**"
+      # 5. Config templates (server.env.example, service-host.toml.example)
       - "config/**"
+      # 6. Build manifest + version + lockfile — define what gets built
+      - "package.json"
+      - "bun.lock"
+      - "VERSION"
+      # 7. Build config — affect bun run build output
+      - "next.config.ts"
+      - "tsconfig.json"
+      - "tailwind.config.ts"
+      - "postcss.config.mjs"
+      - "components.json"
+      - "bunfig.toml"
+      # 8. Build scripts that stage-windows.ts invokes or depends on
+      - "scripts/stage-windows.ts"
+      - "scripts/build.ts"
+      - "scripts/install.ts"
+      - "scripts/init-production.ts"
+      - "scripts/lib/**"
+      # 9. Installer payload + native + branding + WiX
+      - "installer/**"
+      # 10. This workflow — changes to itself trigger self-validation
       - ".github/workflows/build-windows-installer.yml"
   pull_request:
     branches: ["main"]
