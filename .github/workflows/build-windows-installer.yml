@@ -215,6 +215,13 @@ jobs:
       - name: Generate deterministic staging manifest (relpath + size + SHA256)
         shell: pwsh
         run: |
+          # P1 — STRICT manifest: hash failures are FATAL for every file
+          # that ends up in the staging dir. No silent skips.
+          #
+          # The closed exclusion list below is the ONLY set of paths that
+          # may be omitted from the manifest. Every entry MUST have a
+          # documented reason (file is OS noise, not distributable content).
+          # If a file fails to hash AND is not in this list, the build FAILS.
           $stage = (Resolve-Path "dist\release\windows\ViewLBA-Server").Path
           $outDir = "dist\release\windows\out"
           New-Item -ItemType Directory -Force -Path $outDir | Out-Null
@@ -222,12 +229,47 @@ jobs:
           $manifestPath = Join-Path $outDirAbs "staging-manifest.json"
           Write-Host "Stage root: $stage"
           Write-Host "Manifest path: $manifestPath"
+
+          # ─── CLOSED exclusion list ────────────────────────────────────
+          # Patterns are matched as glob (PowerShell -like).
+          # Empty list = everything in staging is distributable.
+          # Add ONLY entries that are demonstrably OS noise, never product
+          # content. Each entry MUST have a documented reason.
+          $closedExclusions = @(
+            @{ pattern = "**/.DS_Store";  reason = "macOS Finder metadata — never part of product" },
+            @{ pattern = "**/Thumbs.db";  reason = "Windows thumbnail cache — never part of product" },
+            @{ pattern = "**/*.tmp";      reason = "Temp files — should never be staged but defensive" },
+            @{ pattern = "**/*.swp";      reason = "Vim swap files — should never be staged but defensive" },
+            @{ pattern = "**/*.bak";      reason = "Backup files — should never be staged but defensive" }
+          )
+
+          function Test-Excluded($rel, $exclusions) {
+            foreach ($e in $exclusions) {
+              if ($rel -like $e.pattern) { return $e }
+            }
+            return $null
+          }
+
           $files = Get-ChildItem -Recurse -File -LiteralPath $stage | Sort-Object FullName
           Write-Host "Found $($files.Count) files in staging"
+          Write-Host "Closed exclusion list has $($closedExclusions.Count) patterns"
           $entries = @()
           $skipped = @()
+          $fatalHashErrors = @()
           foreach ($f in $files) {
             $rel = $f.FullName.Substring($stage.Length + 1).Replace('\','/')
+
+            # Check closed exclusion list FIRST — these are the ONLY skips allowed
+            $excluded = Test-Excluded $rel $closedExclusions
+            if ($excluded) {
+              $skipped += [PSCustomObject]@{
+                path = $rel
+                reason = $excluded.reason
+                pattern = $excluded.pattern
+              }
+              continue
+            }
+
             # Use -LiteralPath to handle long paths + special chars safely
             try {
               $hashObj = Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256 -ErrorAction Stop
@@ -241,24 +283,39 @@ jobs:
                 sha256 = $hash
               }
             } catch {
-              Write-Host "::warning::Skipping file (hash failed): $rel — $_"
-              $skipped += $rel
+              # P1 — FATAL: any hash failure on a distributable file blocks the build
+              $fatalHashErrors += "$rel — $_"
             }
           }
-          if ($skipped.Count -gt 0) {
-            Write-Host "Skipped $($skipped.Count) files (locked or unreadable)"
+
+          if ($fatalHashErrors.Count -gt 0) {
+            Write-Host "::error::Hash computation FAILED for $($fatalHashErrors.Count) files (BLOCKING — no silent skips):"
+            foreach ($e in $fatalHashErrors) { Write-Host "  - $e" }
+            throw "Staging manifest generation FAILED — $($fatalHashErrors.Count) files could not be hashed. " +
+                  "Either fix the file access issue or add the path to the closed exclusion list with a documented reason."
           }
+
+          if ($skipped.Count -gt 0) {
+            Write-Host "Skipped $($skipped.Count) files (matched closed exclusion list):"
+            foreach ($s in $skipped) { Write-Host "  - $($s.path)  // $($s.reason)" }
+          }
+
           $manifest = [PSCustomObject]@{
             generated_at = (Get-Date).ToUniversalTime().ToString("o")
             stage_root = "dist/release/windows/ViewLBA-Server"
+            source_commit_sha = $env:GITHUB_SHA
             total_files = $entries.Count
             total_bytes = ($entries | Measure-Object -Property size_bytes -Sum).Sum
             files = $entries
             skipped_count = $skipped.Count
-            excludes = @(".git", ".cache", "node_modules", "*.log", "*.tmp")
+            skipped_files = $skipped
+            closed_exclusion_list = $closedExclusions
+            strict_mode = $true
+            strict_mode_note = "Any hash failure on a non-excluded file is FATAL. The closed_exclusion_list is the ONLY set of paths that may be omitted."
           }
           $manifest | ConvertTo-Json -Depth 6 | Out-File -Encoding UTF8 $manifestPath
           Write-Host "Staging manifest: $($entries.Count) files, $($manifest.total_bytes) bytes total"
+          Write-Host "Skipped (closed exclusion list): $($skipped.Count)"
           Get-Content $manifestPath | Select-Object -First 5
 
       - name: Verify staging is complete (strict)
@@ -344,6 +401,7 @@ jobs:
 
           # Manifest
           $manifest = @{
+            artifact_class = "production"
             version = $version
             source_commit_sha = $env:GITHUB_SHA
             build_date = (Get-Date).ToUniversalTime().ToString("o")
@@ -524,7 +582,12 @@ jobs:
           Get-Content "dist\release\windows\out\SHA256SUMS.txt"
 
           # Update manifest to include both components
+          # P1 — This is the FINAL PRODUCTION manifest. It contains ONLY the
+          # canonical artifacts customers receive (MSI + Setup.exe).
+          # Synthetic test artifacts (previous-version MSI) live in the
+          # separate test-artifacts.json (written below).
           $manifest = @{
+            artifact_class = "production"
             version = $version
             source_commit_sha = $env:GITHUB_SHA
             build_date = (Get-Date).ToUniversalTime().ToString("o")
@@ -544,10 +607,55 @@ jobs:
               icon_source = "public/logo-mark.svg"
               icon_sha256 = (Get-FileHash $ico -Algorithm SHA256).Hash.ToLower()
             }
+            production_manifest_note = "This manifest lists ONLY distributable artifacts. Synthetic test artifacts (previous-version MSI) are tracked in test-artifacts.json, NEVER here."
           }
           $manifest | ConvertTo-Json -Depth 6 | Out-File -Encoding UTF8 "dist\release\windows\out\manifest.json"
           Write-Host "Final manifest:"
           Get-Content "dist\release\windows\out\manifest.json"
+
+          # ─────────────────────────────────────────────────────────────
+          # P1 — Production manifest is SEPARATE from test artifacts.
+          #
+          # manifest.json above contains ONLY the canonical production
+          # artifacts (current-version MSI + Setup.exe bootstrapper).
+          # It is the DISTRIBUTABLE manifest — represents what a customer
+          # receives.
+          #
+          # The previous-version MSI is a SYNTHETIC test artifact: same
+          # payload, lower version, built ONLY for the [O] upgrade test.
+          # It was NEVER published and MUST NOT be confused with a
+          # previous release. Its hash is recorded here in
+          # test-artifacts.json (separated from manifest.json) so:
+          #   - downstream tooling can verify the synthetic MSI integrity
+          #   - the production manifest stays clean (no synthetic content)
+          #   - the audit can prove the test artifact was tracked
+          # ─────────────────────────────────────────────────────────────
+          $prev = "${{ steps.prev_version.outputs.prev }}"
+          $prevMsiPath = "dist\release\windows\out\ViewLBA-Server-Setup-$prev.msi"
+          $testArtifacts = @{
+            artifact_class = "test-only"
+            generated_at = (Get-Date).ToUniversalTime().ToString("o")
+            source_commit_sha = $env:GITHUB_SHA
+            note = "These artifacts are NOT distributable. They are built solely for CI smoke tests (e.g., the [O] MajorUpgrade test). They MUST NOT be cited as a 'previous published release'."
+            artifacts = @()
+          }
+          if (Test-Path $prevMsiPath) {
+            $prevHash = (Get-FileHash $prevMsiPath -Algorithm SHA256).Hash.ToLower()
+            $prevSize = (Get-Item $prevMsiPath).Length
+            $testArtifacts.artifacts += @{
+              name = "ViewLBA-Server-Setup-$prev.msi"
+              version = $prev
+              sha256 = $prevHash
+              size_bytes = $prevSize
+              role = "synthetic previous-version MSI for [O] upgrade test (MajorUpgrade triggers from prev→current)"
+              never_published = $true
+              test_purpose = "Install previous, then upgrade to current. Verifies MajorUpgrade + data preservation + ARP version bump."
+              distribution_status = "FORBIDDEN — never ship to customers"
+            }
+          }
+          $testArtifacts | ConvertTo-Json -Depth 6 | Out-File -Encoding UTF8 "dist\release\windows\out\test-artifacts.json"
+          Write-Host "Test artifacts manifest (separated from production manifest):"
+          Get-Content "dist\release\windows\out\test-artifacts.json"
         env:
           UPGRADE_CODE: ${{ env.UPGRADE_CODE }}
 
@@ -595,7 +703,7 @@ jobs:
       # ================================================================
       # 6. Upload FINAL artifact
       # ================================================================
-      - name: Upload FINAL artifact (MSI + EXE + manifest + SHA256 + staging-manifest)
+      - name: Upload FINAL artifact (MSI + EXE + manifest + SHA256 + staging-manifest + test-artifacts)
         uses: actions/upload-artifact@v4
         with:
           name: viewlba-windows-installer
@@ -606,6 +714,7 @@ jobs:
             dist/release/windows/out/SHA256SUMS.txt
             dist/release/windows/out/manifest.json
             dist/release/windows/out/staging-manifest.json
+            dist/release/windows/out/test-artifacts.json
           retention-days: 30
           if-no-files-found: error
 
@@ -895,17 +1004,51 @@ jobs:
       # ================================================================
       # Verify installed payload matches staging-manifest (deterministic)
       # ================================================================
-      - name: Verify installed payload matches staging-manifest (STRICT on mandatory binaries)
+      - name: Verify installed payload matches staging-manifest (STRICT — all distributable files)
         shell: pwsh
         run: |
+          # P1 — STRICT on ALL distributable files, not just mandatory binaries.
+          #
+          # The user said: "Verifica que la comparación cubra todos los
+          # archivos que declara el manifiesto, no solo los binarios
+          # principales."
+          #
+          # Categories:
+          #   1. MANDATORY binaries (bin/* + runtime/bun.exe):
+          #      MUST exist under ProgramFiles AND hash MUST match.
+          #      Any failure → BLOCKING.
+          #   2. DISTRIBUTABLE content (app/**, mini-services/**, themes/**,
+          #      public/**, config/** templates):
+          #      MUST exist under ProgramFiles AND hash MUST match.
+          #      Any failure → BLOCKING (no more "logged, non-blocking").
+          #   3. INSTALL-TIME generated (config/server.env.example is a template;
+          #      the actual server.env is generated by viewlba-init.exe to
+          #      ProgramData, NOT ProgramFiles):
+          #      Closed allow-list of paths known to be templates, not copied
+          #      verbatim. Each has a documented reason.
+          #
+          # If a manifest entry is NOT in category 3 (allow-list), it MUST
+          # match the installed file hash. Silent skips are forbidden.
           $pf = "C:\Program Files\ViewLBA Server"
           $stagingManifest = Get-Content "${{ runner.temp }}/downloaded/staging-manifest.json" -Raw | ConvertFrom-Json
           Write-Host "Staging manifest has $($stagingManifest.files.Count) entries"
 
-          # MANDATORY files: bin/* + runtime/bun.exe. These MUST match exactly.
-          # Other files (app/* Next.js standalone, *.md text files) may have
-          # subtle differences due to Next.js file tracing or WiX packaging —
-          # we LOG mismatches but only fail if MANDATORY files mismatch.
+          # ─── Closed allow-list of paths that are NOT expected under ProgramFiles ──
+          # Each entry MUST have a documented reason. If a path is here,
+          # it's because the file is a template or is generated at install
+          # time to ProgramData (not copied verbatim to ProgramFiles).
+          $installTimeGeneratedPatterns = @(
+            @{ pattern = "^config/server\.env\.example$"; reason = "Template — viewlba-init.exe writes the actual server.env to ProgramData, not ProgramFiles" },
+            @{ pattern = "^config/service-host\.toml\.example$"; reason = "Template — viewlba-init.exe writes the actual service-host.toml to ProgramData" }
+          )
+          function Test-InstallTimeGenerated($path, $patterns) {
+            foreach ($p in $patterns) {
+              if ($path -match $p.pattern) { return $p }
+            }
+            return $null
+          }
+
+          # MANDATORY binaries — stricter check (must exist + must match)
           $mandatoryPatterns = @(
             "^bin/viewlba-service\.exe$",
             "^bin/viewlba-tray\.exe$",
@@ -914,21 +1057,41 @@ jobs:
             "^bin/viewlba\.ico$",
             "^runtime/bun\.exe$"
           )
+
           $mandatoryMatched = 0
           $mandatoryMismatch = @()
-          $textMismatch = @()
+          $contentMismatch = @()
+          $missingDistributable = @()
           $verified = 0
-          $notInstalled = 0
+          $installTimeSkipped = 0
+          $mandatoryMissing = @()
           foreach ($entry in $stagingManifest.files) {
+            # Skip install-time-generated templates (closed allow-list)
+            $installTime = Test-InstallTimeGenerated $entry.path $installTimeGeneratedPatterns
+            if ($installTime) {
+              $installTimeSkipped++
+              continue
+            }
+
             $installedPath = Join-Path $pf $entry.path
             if (-not (Test-Path -LiteralPath $installedPath)) {
-              $notInstalled++
+              # Missing file — was it mandatory?
+              $isMandatory = $false
+              foreach ($p in $mandatoryPatterns) {
+                if ($entry.path -match $p) { $isMandatory = $true; break }
+              }
+              if ($isMandatory) {
+                $mandatoryMissing += $entry.path
+              } else {
+                $missingDistributable += $entry.path
+              }
               continue
             }
             try {
               $installedHash = (Get-FileHash -LiteralPath $installedPath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLower()
             } catch {
-              Write-Host "::warning::Cannot hash installed file $($entry.path): $_"
+              # P1 — hash failure on installed file is BLOCKING (no silent skip)
+              $contentMismatch += "$($entry.path): CANNOT HASH installed file — $_"
               continue
             }
             if ($installedHash -ne $entry.sha256) {
@@ -939,34 +1102,58 @@ jobs:
               if ($isMandatory) {
                 $mandatoryMismatch += "$($entry.path): expected $($entry.sha256), got $installedHash"
               } else {
-                $textMismatch += "$($entry.path): expected $($entry.sha256), got $installedHash"
+                # P1 — content mismatch is now BLOCKING (was previously logged)
+                $contentMismatch += "$($entry.path): expected $($entry.sha256), got $installedHash"
               }
               continue
             }
             $verified++
-            # Track mandatory matches
             foreach ($p in $mandatoryPatterns) {
               if ($entry.path -match $p) { $mandatoryMatched++; break }
             }
           }
           Write-Host "Verified $verified payload files (SHA256 match)"
-          Write-Host "$notInstalled entries are not under ProgramFiles (expected for config/ etc.)"
+          Write-Host "Install-time generated (skipped, closed allow-list): $installTimeSkipped"
           Write-Host "Mandatory binaries matched: $mandatoryMatched / $($mandatoryPatterns.Count)"
-          if ($textMismatch.Count -gt 0) {
-            Write-Host "Non-mandatory text file mismatches (logged, non-blocking): $($textMismatch.Count)"
-            $textMismatch | Select-Object -First 10 | ForEach-Object { Write-Host "  [text] $_" }
+          if ($missingDistributable.Count -gt 0) {
+            Write-Host "::warning::Missing distributable (non-mandatory) entries under ProgramFiles: $($missingDistributable.Count)"
+            $missingDistributable | Select-Object -First 10 | ForEach-Object { Write-Host "  [missing] $_" }
+          }
+          if ($mandatoryMissing.Count -gt 0) {
+            Write-Host "::error::MANDATORY binaries MISSING under ProgramFiles:"
+            $mandatoryMissing | ForEach-Object { Write-Host "  [mandatory-missing] $_" }
+          }
+          if ($contentMismatch.Count -gt 0) {
+            Write-Host "::error::Content hash mismatches (BLOCKING — no silent skips):"
+            $contentMismatch | Select-Object -First 20 | ForEach-Object { Write-Host "  [mismatch] $_" }
           }
           if ($mandatoryMismatch.Count -gt 0) {
             $mandatoryMismatch | ForEach-Object { Write-Host "::error::MANDATORY hash mismatch: $_" }
-            throw "MANDATORY payload hash mismatch — bin/* and runtime/bun.exe must match staging manifest exactly"
+          }
+
+          $errors = @()
+          if ($mandatoryMismatch.Count -gt 0) {
+            $errors += "MANDATORY payload hash mismatch — bin/* and runtime/bun.exe must match staging manifest exactly"
+          }
+          if ($mandatoryMissing.Count -gt 0) {
+            $errors += "MANDATORY binaries MISSING — $($mandatoryMissing.Count) files expected under ProgramFiles but not found"
           }
           if ($mandatoryMatched -ne $mandatoryPatterns.Count) {
-            throw "Only $mandatoryMatched mandatory binaries matched (need $($mandatoryPatterns.Count))"
+            $errors += "Only $mandatoryMatched mandatory binaries matched (need $($mandatoryPatterns.Count))"
+          }
+          if ($contentMismatch.Count -gt 0) {
+            $errors += "Content hash mismatches — $($contentMismatch.Count) files do not match staging manifest (BLOCKING, no silent skips)"
           }
           if ($verified -lt 5) {
-            throw "Only $verified payload files verified (need >=5) — MSI is missing required payload"
+            $errors += "Only $verified payload files verified (need >=5) — MSI is missing required payload"
           }
-          Write-Host "OK: All mandatory binaries match staging manifest ($mandatoryMatched / $($mandatoryPatterns.Count))"
+          if ($errors.Count -gt 0) {
+            Write-Host ""
+            Write-Host "::error::Payload manifest verification FAILED:"
+            foreach ($e in $errors) { Write-Host "  - $e" }
+            throw "Payload manifest verification failed — see errors above"
+          }
+          Write-Host "OK: All manifest entries verified ($verified files match, $installTimeSkipped install-time templates skipped via closed allow-list)"
 
       # ================================================================
       # Verify child processes started (Bun + service host + at least one child)
