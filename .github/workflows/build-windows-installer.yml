@@ -1831,8 +1831,8 @@ jobs:
             "$pd\data\db",
             "$pd\config\server.env",
             "$pd\logs",
-            "$pd\backups",
-            "$pd\media"
+            "$pd\data\backups",
+            "$pd\data\media"
           )
           $missing = @($expectedPreserved | Where-Object { -not (Test-Path $_) })
           if ($missing.Count -gt 0) {
@@ -2104,8 +2104,8 @@ jobs:
             @{ path = "$pd\config";       reason = "server.env + service-host.toml (user config)" },
             @{ path = "$pd\config\server.env"; reason = "server.env file itself" },
             @{ path = "$pd\logs";         reason = "log files (forensic value)" },
-            @{ path = "$pd\backups";      reason = "backup snapshots" },
-            @{ path = "$pd\media";        reason = "uploaded media (logos, dishes)" }
+            @{ path = "$pd\data\backups";  reason = "backup snapshots" },
+            @{ path = "$pd\data\media";   reason = "uploaded media (logos, dishes)" }
           )
           $missing = @()
           foreach ($e in $expectedPreserved) {
