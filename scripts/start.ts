@@ -11,6 +11,10 @@
  *     con rotación)
  *
  * Señales reenviadas al hijo (systemd o el service host Rust detienen limpio).
+ *
+ * P0 (2026-10-14): este archivo vive en el staging distribuible (stage-windows.ts
+ * copia scripts/ entero → app/scripts/). Cualquier cambio aquí DEBE disparar
+ * build-windows-installer.yml — ver tests/installer/contracts-workflow-triggers.test.ts.
  */
 import { spawn } from "child_process"
 import { existsSync } from "fs"
