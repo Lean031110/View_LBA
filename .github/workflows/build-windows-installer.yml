@@ -1784,7 +1784,7 @@ jobs:
       # ================================================================
       # Final uninstall + verify clean state
       # ================================================================
-      - name: Final uninstall + verify (4 surfaces: service, ARP, Program Files, ProgramData)
+      - name: "Final uninstall + verify (4 surfaces: service, ARP, Program Files, ProgramData)"
         shell: pwsh
         run: |
           $msi = "C:\temp\ViewLBA-current.msi"
@@ -2038,7 +2038,7 @@ jobs:
           if %ERRORLEVEL% NEQ 0 if %ERRORLEVEL% NEQ 3010 exit 1
           ping 127.0.0.1 -n 6 > nul
 
-      - name: Verify clean uninstall (4 surfaces: ARP, Program Files, processes, ProgramData)
+      - name: "Verify clean uninstall (4 surfaces: ARP, Program Files, processes, ProgramData)"
         shell: pwsh
         run: |
           # P1 — clean uninstall must verify 4 surfaces INDEPENDENTLY:
