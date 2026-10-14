@@ -2023,7 +2023,10 @@ jobs:
             $rtProc = $procs | Where-Object { $_.CommandLine -match "realtime-service.*index\.ts" }
             $streamProc = $procs | Where-Object { $_.CommandLine -match "stream-service.*index\.ts" }
             if ($appProc -and $rtProc -and $streamProc) { break }
-            Write-Host "Attempt $($i+1)/$maxRetries: app=$(if($appProc){'OK'}else{'WAIT'}) realtime=$(if($rtProc){'OK'}else{'WAIT'}) stream=$(if($streamProc){'OK'}else{'WAIT'})"
+            $a = if ($appProc) { "OK" } else { "WAIT" }
+            $r = if ($rtProc) { "OK" } else { "WAIT" }
+            $s = if ($streamProc) { "OK" } else { "WAIT" }
+            Write-Host ("Attempt {0}/{1}: app={2} realtime={3} stream={4}" -f ($i+1), $maxRetries, $a, $r, $s)
             Start-Sleep -Seconds 2
           }
           if (-not $appProc) { throw "App (bun app/server.js) process NOT found after $maxRetries attempts (60s)" }
