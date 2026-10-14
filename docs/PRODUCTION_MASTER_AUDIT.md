@@ -1772,3 +1772,145 @@ Los siguientes commits (sobre ba308bc) cierran los pendientes P0/P1/P2:
    - Cuando esos workflows estén en verde en el nuevo SHA, se puede
      declarar cerrada la Fase 2.
 
+---
+
+## 18. Estado verificado — commit 32e8fc1 (2026-10-14, post-push)
+
+### 18.1 TODOS los workflows GREEN en el mismo SHA (32e8fc1)
+
+| Workflow | Run ID | Event | Conclusion | SHA |
+|---|---|---|---|---|
+| Build Windows Installer | 38567477842 | push | ✅ SUCCESS | 32e8fc1 |
+| Build Windows Installer | 38567486382 | pull_request | ✅ SUCCESS | 32e8fc1 |
+| CI | 38567486515 | pull_request | ✅ SUCCESS | 32e8fc1 |
+| Installer Flow CI | 38567486451 | pull_request | ✅ SUCCESS | 32e8fc1 |
+| Build Windows Native Binaries | 38567486575 | pull_request | ✅ SUCCESS | 32e8fc1 |
+
+URL: https://github.com/Lean031110/View_LBA/actions/runs/38567477842
+
+### 18.2 Fixes aplicados durante el cierre (commits 26f8bd8 + 32e8fc1)
+
+El primer push (`4f6b07c`) dejó Build Windows Installer en failure por
+dos motivos que se detectaron y corrigieron en commits adicionales:
+
+1. **`26f8bd8` — fix(yaml): quote step names with ': '**
+   - Step names con `: ` (colon-space) dentro de paréntesis eran
+     interpretados por YAML como mapping keys → workflow no parseaba.
+   - Afectó:
+     - `Final uninstall + verify (4 surfaces: service, ARP, …)`
+     - `Verify clean uninstall (4 surfaces: ARP, Program Files, …)`
+   - Fix: envolver ambos nombres en dobles comillas.
+   - Después del fix: PyYAML parsea OK, 3 jobs + 23 paths entries.
+
+2. **`32e8fc1` — fix(p1): correct ProgramData paths in clean uninstall**
+   - El código de 4 superficies esperaba `$pd\backups` y `$pd\media`
+     pero viewlba-init.exe crea la estructura con backups y media
+     bajo `data\` (no en la raíz de ProgramData).
+   - Paths correctas (ver step "Verify ProgramData structure (STRICT)"):
+     `$pd\data\backups` y `$pd\data\media`.
+   - El [O] SYNTHETIC UPGRADE step usaba las paths correctas y pasó;
+     solo el código de verificación de uninstall tenía el bug.
+   - Fix: corregir las 2 paths en ambos jobs (smoke-test-msi y
+     test-setup-exe).
+
+### 18.3 Build Windows Installer — 3 jobs, ALL SUCCESS en 32e8fc1
+
+**Job 1: Build MSI** (28/28):
+- ✅ Rust + Next.js + staging + WiX MSI + NSIS Setup.exe + PE icons
+- ✅ Strict manifest (hash failures FATAL, closed exclusion list)
+- ✅ manifest.json con `artifact_class: "production"`
+- ✅ test-artifacts.json separado con MSI sintética marcada
+  `never_published: true`
+
+**Job 2: Smoke test MSI** (21/21):
+- ✅ Install + Service Running + LocalService + server.env + ARP + ProgramFiles x64
+- ✅ ProgramData + Recovery actions + Payload manifest (STRICT en TODOS los archivos distributables, closed allow-list de templates)
+- ✅ Health (:3000 + :3004)
+- ✅ [O] SYNTHETIC UPGRADE con:
+  - Hash de server.env (config preservation by hash) — PASS
+  - Health endpoints (:3000 + :3004) después del upgrade — PASS
+  - Reporte consolidado de errores de preservación — N/A (no errors)
+- ✅ [P] Restart + [R] Reinstall + [S] PARTIAL Offline (con cleanup reforzado try/catch + verificación final)
+- ✅ Final uninstall 4 superficies (service + ARP + Program Files + ProgramData + procesos) — PASS
+
+**Job 3: Test real Setup.exe** (12/12):
+- ✅ Download artifact + SHA256 verified
+- ✅ MZ magic bytes (DOS stub — NOT full PE; honest naming)
+- ✅ Install via /S (silent) — evidencia estructural independiente
+- ✅ Service Running + LocalService + Automatic
+- ✅ server.env created (no placeholders)
+- ✅ 3 child processes verificados INDIVIDUALMENTE (app + realtime + stream)
+- ✅ Health endpoints (:3000 + :3004)
+- ✅ Uninstall via MSI
+- ✅ Verify clean uninstall 4 superficies (ARP + Program Files + procesos + ProgramData con paths correctas `data\backups` y `data\media`)
+
+### 18.4 CI workflow — 894 tests en banda
+
+- ✅ docs:check pasa (README 894 · estático 894 · techo 1029)
+- ✅ 894 tests pasan (incluye nuevo `contracts-workflow-triggers.test.ts` con 9 tests que validan paths: del workflow)
+- ✅ Lint + types + build standalone
+
+### 18.5 Installer Flow CI — Linux REAL, Windows STUB
+
+- ✅ linux-flow: flujo completo (instalar → bandeja → iniciar/detener → offline → purge)
+- ✅ windows-flow: STUB (siempre pasa con mensaje claro)
+
+### 18.6 Criterio para cerrar la Fase 2 — CUMPLIDO
+
+✅ **Construcción automática del instalador** — paths: cubre todo el
+   payload, contract test lo verifica (commit `9f84944`).
+
+✅ **Instalador real** — Setup.exe canónico probado en job 3 de
+   build-windows-installer.yml (38567477842, 32e8fc1).
+
+✅ **Payload distribuido** — manifiesto estricto (hash failures FATAL),
+   closed exclusion list con razones, manifest de producción separado
+   de test-artifacts (commit `26e2836`).
+
+✅ **Verificación de uninstall** — 4 superficies: ARP + Program Files +
+   procesos + ProgramData (commit `9326180` + fix de paths en `32e8fc1`).
+
+✅ **Health después de upgrade** — :3000 + :3004 verificados después
+   del [O] upgrade (commit `28f0839`).
+
+✅ **Prueba offline honesta** — nombrada "PARTIAL — TCP 80/443 only,
+   NOT DNS/ICMP" (commit `bc7bd4f`).
+
+✅ **Conteo de pruebas honesto** — 904 aprobados + 21 omitidos = 925
+   totales (NO "925 aprobados") con inventario por categoría.
+
+✅ **Todos los workflows obligatorios en verde en el mismo commit**
+   (32e8fc1) — verificado vía GitHub Actions API.
+
+### 18.7 Fase 2 — DECLARADA CERRADA
+
+Con la evidencia de §18.1 (5 runs verde en 32e8fc1) + §18.2 (fixes
+documentados) + §18.3 (jobs individuales verificados) + §18.6 (criterio
+cumplido), la **Fase 2 — Windows nativo (MSI + service host Rust +
+tray binario)** se declara **CERRADA**.
+
+Pendientes que NO bloquean el cierre de Fase 2 (se mantienen abiertos
+como trabajo futuro):
+
+1. **Upgrade from PUBLISHED version** (P1-9) — BLOQUEADO hasta que
+   exista una primera release MSI publicada en GitHub Releases.
+   Mientras tanto, el test sintético está claramente etiquetado.
+
+2. **Authenticode signing** (P2-18) — PENDIENTE hasta obtener
+   certificado. El instalador NO está firmado — declaración honesta.
+
+3. **PowerShell in installer** (P0-6/mission) — PENDIENTE. El permiso
+   WA se mantiene (resolvió el EPERM de Bun, referencia oven-sh/bun#44626).
+   NO alterar sin reproducir el fallo y validar solución alternativa.
+
+4. **license-api-adversarial.test.ts sin step dedicado en CI** —
+   hueco menor de cobertura. No bloquea el cierre.
+
+### 18.8 Próximo paso: fusionar PR #49
+
+Con la Fase 2 cerrada, el PR #49 puede fusionarse a `main`. Después de
+la fusión, los workflows obligatorios deben volver a correr en `main`
+para confirmar que el merge no rompió nada (típicamente los workflows
+se disparan automáticamente por el merge commit).
+
+
