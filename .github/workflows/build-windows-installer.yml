@@ -2002,17 +2002,33 @@ jobs:
           if ($content -match "GENERATED_BY_INSTALLER") { throw "server.env has placeholder text" }
           Write-Host "OK: server.env has all required keys"
 
-      - name: Verify child processes (3 individual)
+      - name: Verify child processes (3 individual, with retries)
         shell: pwsh
         run: |
-          # Verify each child process individually — not just count >= 2
-          $procs = Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -match "bun\.exe$" }
-          $appProc = $procs | Where-Object { $_.CommandLine -match "app.*server\.js" }
-          $rtProc = $procs | Where-Object { $_.CommandLine -match "realtime-service.*index\.ts" }
-          $streamProc = $procs | Where-Object { $_.CommandLine -match "stream-service.*index\.ts" }
-          if (-not $appProc) { throw "App (bun app/server.js) process NOT found" }
-          if (-not $rtProc) { throw "Realtime (bun realtime-service/index.ts) process NOT found" }
-          if (-not $streamProc) { throw "Stream (bun stream-service/index.ts) process NOT found" }
+          # P1 — flaky timing fix: the service may be Running but
+          # bun children take longer to spawn (especially realtime-service
+          # loading socket.io + node_modules). Add a retry loop with up to
+          # 30 attempts (60s total) before declaring failure.
+          #
+          # Verify each child process individually — not just count >= 2.
+          # Each child must match its expected CommandLine pattern:
+          #   - app/server.js                    (Next.js standalone)
+          #   - realtime-service/index.ts         (socket.io hub)
+          #   - stream-service/index.ts           (node-media-server)
+          $maxRetries = 30
+          $appProc = $null; $rtProc = $null; $streamProc = $null
+          for ($i = 0; $i -lt $maxRetries; $i++) {
+            $procs = Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -match "bun\.exe$" }
+            $appProc = $procs | Where-Object { $_.CommandLine -match "app.*server\.js" }
+            $rtProc = $procs | Where-Object { $_.CommandLine -match "realtime-service.*index\.ts" }
+            $streamProc = $procs | Where-Object { $_.CommandLine -match "stream-service.*index\.ts" }
+            if ($appProc -and $rtProc -and $streamProc) { break }
+            Write-Host "Attempt $($i+1)/$maxRetries: app=$(if($appProc){'OK'}else{'WAIT'}) realtime=$(if($rtProc){'OK'}else{'WAIT'}) stream=$(if($streamProc){'OK'}else{'WAIT'})"
+            Start-Sleep -Seconds 2
+          }
+          if (-not $appProc) { throw "App (bun app/server.js) process NOT found after $maxRetries attempts (60s)" }
+          if (-not $rtProc) { throw "Realtime (bun realtime-service/index.ts) process NOT found after $maxRetries attempts (60s)" }
+          if (-not $streamProc) { throw "Stream (bun stream-service/index.ts) process NOT found after $maxRetries attempts (60s)" }
           Write-Host "OK: All 3 child processes found individually:"
           Write-Host "  App PID=$($appProc.ProcessId)"
           Write-Host "  Realtime PID=$($rtProc.ProcessId)"
