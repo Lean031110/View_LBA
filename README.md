@@ -357,3 +357,4 @@ Distribuido bajo la licencia [MIT](LICENSE) · © 2026 Lean031110
 **ViewLBA** · hecho con ❤️ para restaurantes
 
 </div>
+
