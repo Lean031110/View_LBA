@@ -161,14 +161,53 @@ export type InstallerEvent =
 
 export type EventSink = (event: InstallerEvent) => void
 
-/** Diagnóstico estructurado de un fallo (misma forma que exige la misión). */
+/** Diagnóstico estructurado de un fallo (misma forma que exige la misión §2).
+ *
+ * Campos obligatorios por la misión:
+ *   - fase         → `phase`
+ *   - comando       → `command` (cmd binario, ej: "nssm.exe")
+ *   - argv          → `argv`    (argumentos estructurados, NO string plano)
+ *   - cwd           → `cwd`     (directorio de trabajo del proceso)
+ *   - exit code     → `exitCode`
+ *   - stdout        → `stdout`  (truncado + secretos redactados)
+ *   - stderr        → `stderr`  (truncado + secretos redactados)
+ *   - timeout       → `timedOut` + `timeoutMs`
+ *   - servicio afectado → `affectedService`
+ *   - ruta de binario   → `binaryPath` (ruta completa del binario ejecutado)
+ *   - versión del runtime → `runtimeVersion`
+ *
+ * NUNCA se loguean passwords, tokens ni secretos (ver redactSecrets).
+ */
 export interface DiagnosticBlock {
   phase: InstallPhase | "manager" | string
   area?: string
-  /** Comando que falló, si aplica (para reproducirlo a mano). */
+  /** Comando (binario ejecutado, ej: "nssm.exe", "bun", "netsh"). */
   command?: string
+  /** Argumentos estructurados (argv) — sin shell, sin concatenación. */
+  argv?: string[]
+  /** Directorio de trabajo del proceso hijo. */
+  cwd?: string
+  /** Exit code del proceso (null si timeout / señal). */
+  exitCode?: number | null
+  /** Stdout truncado + con secretos redactados (ver redactSecrets). */
+  stdout?: string
+  /** Stderr truncado + con secretos redactados. */
+  stderr?: string
+  /** True si el proceso fue killed por timeout. */
+  timedOut?: boolean
+  /** Timeout configurado (ms). */
+  timeoutMs?: number
+  /** Servicio afectado por la operación (ej: "ViewLBA", "ViewLBARealtime"). */
+  affectedService?: string
+  /** Ruta absoluta del binario ejecutado. */
+  binaryPath?: string
+  /** Versión del runtime (Bun, Node) usada en el momento del fallo. */
+  runtimeVersion?: string
+  /** Mensaje de error principal (ya viene truncado por buildDiagnostic). */
   error: string
+  /** Ruta del archivo de log si aplica. */
   logPath?: string
+  /** Archivo afectado por la operación (DB, config, .env). */
   affectedFile?: string
   /** Solución sugerida — accionable, concreta. */
   suggestion: string

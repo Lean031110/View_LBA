@@ -113,6 +113,14 @@ jobs:
       - name: Generar Prisma Client
         run: bunx prisma generate
 
+      - name: Crear dir db/ para SQLite (CI no lo trae del checkout)
+        run: mkdir -p db
+
+      - name: Migrar DB de calidad (para tests que usan DATABASE_URL global)
+        run: bunx prisma migrate deploy
+        env:
+          DATABASE_URL: file:./db/ci-quality.db
+
       - name: Preparar DB de integración (migrate deploy + seed demo)
         # Misma DB aislada que usa el E2E: migraciones versionadas + usuarios demo
         run: bun scripts/e2e-setup.ts

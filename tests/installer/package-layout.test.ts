@@ -8,9 +8,9 @@
  *    (el nombre del producto varía → el core ESCANEA ../lib/*)
  *  · override: VIEWLBA_PAYLOAD_DIR (la GUI lo inyecta desde resource_dir()).
  *
- * Además: findBundledBun (4 rutas contrato) y resolveNssm multi-root
+ * Además: findBundledBun (4 rutas contrato) y resolveServiceHost multi-root
  * (instalado → paquete → PATH) — el bug real: preflight FALLABA en Windows
- * limpio porque el adapter nunca recibía el NSSM incluido.
+ * limpio porque el adapter nunca usaba NSSM (reemplazado por viewlba-service.exe).
  */
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync, existsSync, readFileSync } from "node:fs"
@@ -18,7 +18,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { resolvePackageRootFrom, findBundledBun } from "../../installer/core/install"
 import { copyDirFiltered, SERVER_COPY_EXCLUDES } from "../../installer/core/fsx"
-import { resolveNssm } from "../../installer/windows/adapter"
+import { resolveServiceHost } from "../../installer/windows/adapter"
 
 /** Mismas exclusiones que usa el deploy real del installer (con .next). */
 const INSTALL_EXCLUDES = SERVER_COPY_EXCLUDES.filter((e) => e !== ".next")
@@ -179,48 +179,48 @@ describe("copyDirFiltered — symlinks (portabilidad Windows)", () => {
   })
 })
 
-// ---------- resolveNssm ----------
-describe("resolveNssm (multi-root: instalado → paquete → PATH)", () => {
-  test("raíz instalada: <install>/app/runtime/nssm.exe", () => {
-    const installRoot = join(tmp, "nssm-installed")
-    mkdirSync(join(installRoot, "app", "runtime"), { recursive: true })
-    writeFileSync(join(installRoot, "app", "runtime", "nssm.exe"), "bin")
-    expect(resolveNssm(installRoot)).toBe(join(installRoot, "app", "runtime", "nssm.exe"))
+// ---------- resolveServiceHost ----------
+describe("resolveServiceHost (multi-root: instalado → paquete → PATH)", () => {
+  test("raíz instalada: <install>/app/bin/viewlba-service.exe", () => {
+    const installRoot = join(tmp, "viewlba-service-installed")
+    mkdirSync(join(installRoot, "app", "bin"), { recursive: true })
+    writeFileSync(join(installRoot, "app", "bin", "viewlba-service.exe"), "bin")
+    expect(resolveServiceHost(installRoot)).toBe(join(installRoot, "app", "bin", "viewlba-service.exe"))
   })
 
-  test("raíz paquete: runtime/nssm.exe (AppImage CLI)", () => {
-    const root = join(tmp, "nssm-pkg-cli")
-    mkdirSync(join(root, "runtime"), { recursive: true })
-    writeFileSync(join(root, "runtime", "nssm.exe"), "bin")
-    expect(resolveNssm(root)).toBe(join(root, "runtime", "nssm.exe"))
+  test("raíz paquete: bin/viewlba-service.exe (AppImage CLI)", () => {
+    const root = join(tmp, "viewlba-service-pkg-cli")
+    mkdirSync(join(root, "bin"), { recursive: true })
+    writeFileSync(join(root, "bin", "viewlba-service.exe"), "bin")
+    expect(resolveServiceHost(root)).toBe(join(root, "bin", "viewlba-service.exe"))
   })
 
-  test("raíz paquete: resources/runtime/nssm.exe (NSIS/Tauri)", () => {
-    const root = join(tmp, "nssm-pkg-tauri")
-    mkdirSync(join(root, "resources", "runtime"), { recursive: true })
-    writeFileSync(join(root, "resources", "runtime", "nssm.exe"), "bin")
-    expect(resolveNssm(root)).toBe(join(root, "resources", "runtime", "nssm.exe"))
+  test("raíz paquete: resources/bin/viewlba-service.exe (NSIS/Tauri)", () => {
+    const root = join(tmp, "viewlba-service-pkg-tauri")
+    mkdirSync(join(root, "resources", "bin"), { recursive: true })
+    writeFileSync(join(root, "resources", "bin", "viewlba-service.exe"), "bin")
+    expect(resolveServiceHost(root)).toBe(join(root, "resources", "bin", "viewlba-service.exe"))
   })
 
   test("orden: raíz instalada ANTES que raíz de paquete", () => {
-    const installRoot = join(tmp, "nssm-order", "install")
-    const pkgRoot = join(tmp, "nssm-order", "pkg")
-    mkdirSync(join(installRoot, "app", "runtime"), { recursive: true })
-    writeFileSync(join(installRoot, "app", "runtime", "nssm.exe"), "bin")
-    mkdirSync(join(pkgRoot, "resources", "runtime"), { recursive: true })
-    writeFileSync(join(pkgRoot, "resources", "runtime", "nssm.exe"), "bin")
-    expect(resolveNssm(installRoot, pkgRoot)).toBe(join(installRoot, "app", "runtime", "nssm.exe"))
+    const installRoot = join(tmp, "viewlba-service-order", "install")
+    const pkgRoot = join(tmp, "viewlba-service-order", "pkg")
+    mkdirSync(join(installRoot, "app", "bin"), { recursive: true })
+    writeFileSync(join(installRoot, "app", "bin", "viewlba-service.exe"), "bin")
+    mkdirSync(join(pkgRoot, "resources", "bin"), { recursive: true })
+    writeFileSync(join(pkgRoot, "resources", "bin", "viewlba-service.exe"), "bin")
+    expect(resolveServiceHost(installRoot, pkgRoot)).toBe(join(installRoot, "app", "bin", "viewlba-service.exe"))
   })
 
-  test("raíces vacías/undefined y sin nssm → PATH ('nssm')", () => {
-    expect(resolveNssm()).toBe("nssm")
-    expect(resolveNssm(undefined)).toBe("nssm")
-    expect(resolveNssm(join(tmp, "nssm-none"))).toBe("nssm")
-    expect(resolveNssm(undefined, join(tmp, "nssm-none"))).toBe("nssm")
+  test("raíces vacías/undefined y sin binario → PATH ('viewlba-service')", () => {
+    expect(resolveServiceHost()).toBe("viewlba-service")
+    expect(resolveServiceHost(undefined)).toBe("viewlba-service")
+    expect(resolveServiceHost(join(tmp, "viewlba-service-none"))).toBe("viewlba-service")
+    expect(resolveServiceHost(undefined, join(tmp, "viewlba-service-none"))).toBe("viewlba-service")
   })
 
   test("rutas inexistentes no rompen (existsSync tolerante)", () => {
-    expect(resolveNssm(join(tmp, "no-existe-nunca"))).toBe("nssm")
+    expect(resolveServiceHost(join(tmp, "no-existe-nunca"))).toBe("viewlba-service")
     expect(existsSync(join(tmp, "no-existe-nunca"))).toBe(false)
   })
 })

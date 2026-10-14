@@ -6,10 +6,15 @@
  * en cualquier SO:
  *   · NODE_ENV=production (por defecto; el gestor de servicios puede fijarlo)
  *   · PORT (default 3000)
- *   · stdout/stderr a consola → systemd/journald o NSSM los capturan
- *     (el logger estructurado escribe además LOG_DIR/app.log con rotación)
+ *   · stdout/stderr a consola → systemd/journald o el service host Rust
+ *     los capturan (el logger estructurado escribe además LOG_DIR/app.log
+ *     con rotación)
  *
- * Señales reenviadas al hijo (systemd/NSSM detienen limpio).
+ * Señales reenviadas al hijo (systemd o el service host Rust detienen limpio).
+ *
+ * P0 (2026-10-14): este archivo vive en el staging distribuible (stage-windows.ts
+ * copia scripts/ entero → app/scripts/). Cualquier cambio aquí DEBE disparar
+ * build-windows-installer.yml — ver tests/installer/contracts-workflow-triggers.test.ts.
  */
 import { spawn } from "child_process"
 import { existsSync } from "fs"
@@ -36,7 +41,7 @@ process.on("SIGTERM" as never, () => forward("SIGTERM"))
 process.on("SIGINT" as never, () => forward("SIGINT"))
 
 child.on("exit", (code, signal) => {
-  // mismo código de salida del hijo (systemd/NSSM leen el estado)
+  // mismo código de salida del hijo (systemd o service host Rust leen el estado)
   if (signal) process.kill(process.pid, signal)
   else process.exit(code ?? 0)
 })

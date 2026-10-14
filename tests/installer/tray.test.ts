@@ -14,7 +14,7 @@
  * publicar un instalador roto.
  */
 import { describe, test, expect } from "bun:test"
-import { existsSync, readFileSync, readdirSync } from "node:fs"
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -27,7 +27,8 @@ const REPO = (() => {
   return process.cwd()
 })()
 
-const TRAY_PS1 = join(REPO, "installer", "windows", "tray", "ViewLBA-Tray.ps1")
+const TRAY_RUST_DIR = join(REPO, "installer", "native", "windows-tray")
+const TRAY_SERVICE_HOST_DIR = join(REPO, "installer", "native", "windows-service")
 const NSI = join(REPO, "installer", "windows", "viewlba-setup.nsi")
 const TRAY_TS = join(REPO, "installer", "linux", "tray", "tray.ts")
 const DBUS_TS = join(REPO, "installer", "linux", "tray", "dbus.ts")
@@ -35,139 +36,118 @@ const TRAY_ICONS = join(REPO, "installer", "linux", "tray", "icons")
 const BUILD_DEB = join(REPO, "installer", "linux", "build-deb.ts")
 
 // ---------------------------------------------------------------------------
-// Windows — bandeja (PowerShell, cero dependencias)
+// Windows — bandeja (binario Rust viewlba-tray.exe — misión §5)
 // ---------------------------------------------------------------------------
-describe("Bandeja Windows (ViewLBA-Tray.ps1)", () => {
-  const ps1 = readFileSync(TRAY_PS1, "utf8")
-
-  test("existe y compila sintácticamente (estructura básica)", () => {
-    expect(existsSync(TRAY_PS1)).toBe(true)
-    // llaves balanceadas (validación ligera — el parseo REAL lo hace el CI
-    // de Windows con el parser de PowerShell del propio runner)
-    const open = (ps1.match(/\{/g) ?? []).length
-    const close = (ps1.match(/\}/g) ?? []).length
-    expect(open).toBe(close)
-    const popen = (ps1.match(/\(/g) ?? []).length
-    const pclose = (ps1.match(/\)/g) ?? []).length
-    expect(popen).toBe(pclose)
+// Fase 2: el tray PowerShell fue eliminado y reemplazado por un binario Rust
+// que habla IPC con el service host via named pipe (\\.\pipe\viewlba-service).
+// Estos tests verifican que la estructura Rust existe y el NSI la referencia.
+describe("Bandeja Windows (viewlba-tray.exe binario Rust)", () => {
+  test("existe el crate installer/native/windows-tray/", () => {
+    expect(existsSync(TRAY_RUST_DIR)).toBe(true)
+    expect(existsSync(join(TRAY_RUST_DIR, "Cargo.toml"))).toBe(true)
+    expect(existsSync(join(TRAY_RUST_DIR, "src", "main.rs"))).toBe(true)
   })
 
-  test("menú con las opciones pedidas: Iniciar · Detener · Configurar", () => {
-    for (const item of ["Iniciar servidor", "Detener servidor", "Reiniciar servidor", "Configurar...", "Abrir Panel", "Salir"]) {
-      expect(ps1).toContain(item)
+  test("el crate declara dependencias correctas (NO PowerShell, NO NSSM)", () => {
+    const cargo = readFileSync(join(TRAY_RUST_DIR, "Cargo.toml"), "utf8")
+    expect(cargo).toMatch(/name\s*=\s*"viewlba-tray"/)
+    expect(cargo).toMatch(/tray-icon/)
+    expect(cargo).not.toMatch(/\bnssm\b/i)
+  })
+
+  test("single-instance via named mutex (Global\\viewlba-tray-single-instance)", () => {
+    // MUTEX_NAME está en main.rs, pero la implementación de CreateMutexW
+    // está en single_instance.rs. Verificamos ambos.
+    const main = readFileSync(join(TRAY_RUST_DIR, "src", "main.rs"), "utf8")
+    const singleInstance = readFileSync(join(TRAY_RUST_DIR, "src", "single_instance.rs"), "utf8")
+    // main.rs define el nombre del mutex
+    expect(main).toMatch(/Global\\\\viewlba-tray-single-instance/)
+    expect(main).toMatch(/MUTEX_NAME/)
+    expect(main).toMatch(/single_instance::acquire/)
+    // single_instance.rs implementa CreateMutexW
+    expect(singleInstance).toMatch(/CreateMutexW/)
+    expect(singleInstance).toMatch(/ERROR_ALREADY_EXISTS/)
+  })
+
+  test("IPC client que habla a la named pipe del service host", () => {
+    const ipc = readFileSync(join(TRAY_RUST_DIR, "src", "ipc.rs"), "utf8")
+    // Match either the pipe path or the constant name (case-insensitive)
+    expect(ipc).toMatch(/pipe.*viewlba|PIPE_NAME|pipe_name/i)
+    expect(ipc).toMatch(/CreateFileW/)
+  })
+
+  test("config usa rutas Program Files + ProgramData (misión §3)", () => {
+    const config = readFileSync(join(TRAY_RUST_DIR, "src", "config.rs"), "utf8")
+    expect(config).toMatch(/Program Files/)
+    expect(config).toMatch(/ProgramData/)
+  })
+
+  test("NO hay PowerShell ni NSSM en el Rust source del tray", () => {
+    const walk = (dir: string): string[] => {
+      const out: string[] = []
+      let entries: import("node:fs").Dirent[]
+      try {
+        entries = readdirSync(dir, { withFileTypes: true })
+      } catch {
+        return out
+      }
+      for (const e of entries) {
+        const full = join(dir, e.name)
+        if (e.isDirectory()) {
+          out.push(...walk(full))
+        } else if (e.isFile() && full.endsWith(".rs")) {
+          out.push(full)
+        }
+      }
+      return out
     }
-  })
-
-  test("100 % ASCII — PS 5.1 sin BOM no puede romperlo con el codepage (regresión del 5.º build)", () => {
-    // EVIDENCIA del build 5: el .ps1 en UTF-8 sin BOM con em-dash (0x94 en
-    // CP1252 = comilla curva = TERMINADOR de cadena) rompía el parse de
-    // Windows PowerShell 5.1 → la bandeja NUNCA ARRANCABA. ASCII puro =
-    // inmune en cualquier codepage de cualquier Windows.
-    const raw = readFileSync(TRAY_PS1)
-    const bad: number[] = []
-    raw.forEach((b, i) => { if (b > 127) bad.push(i) })
-    expect(bad).toEqual([])
-  })
-
-  test("ventana «Configurar…» con control completo (estado + acciones + carpetas)", () => {
-    expect(ps1).toContain("Open-ConfigWindow")
-    for (const btn of ["Iniciar servidor", "Detener servidor", "Reiniciar servidor", "Abrir Panel", "Ver credenciales", "Carpeta de datos", "Carpeta del programa", "Ver registros (logs)"]) {
-      expect(ps1).toContain(`T = '${btn}'`)
+    for (const file of walk(TRAY_RUST_DIR)) {
+      const content = readFileSync(file, "utf8")
+      // Mencionar PowerShell en comentario ("NO PowerShell") está OK —
+      // pero invocar powershell.exe para operaciones críticas no.
+      // Patrón de INVOCACIÓN prohibida:
+      expect(content).not.toMatch(/Command::new\(\s*["'`]powershell/)
+      expect(content).not.toMatch(/Command::new\(\s*["'`]nssm/)
+      expect(content).not.toMatch(/Command::new\(\s*["'`]sc\.exe/)
+      expect(content).not.toMatch(/Command::new\(\s*["'`]find\.exe/)
     }
-  })
-
-  test("indicador de estado con colores (verde activo · rojo detenido · amarillo transición)", () => {
-    expect(ps1).toContain("$IconRun")
-    expect(ps1).toContain("$IconStop")
-    expect(ps1).toContain("$IconWait")
-    expect(ps1).toMatch(/running.*\$IconRun| \$IconRun\.Icon/)
-    expect(ps1).toContain("EN EJECUC")
-  })
-
-  test("instancia única por pid-file (autostart + instalador no duplican la bandeja)", () => {
-    expect(ps1).toContain("tray.pid")
-    expect(ps1).toMatch(/Get-Process -Id \(\[int\]\$other\)/)
-    expect(ps1).toContain("if ($proc -and $proc.ProcessName -match 'powershell') { exit 0 }")
-    // el pid se registra ANTES de cargar WinForms (arranque rápido)
-    const pidPos = ps1.indexOf("Set-Content -Path $PidFile")
-    const addTypePos = ps1.indexOf("Add-Type -AssemblyName System.Windows.Forms")
-    expect(pidPos).toBeGreaterThan(0)
-    expect(pidPos).toBeLessThan(addTypePos)
-  })
-
-  test("refresco periódico del estado (timer ≤ 10 s)", () => {
-    expect(ps1).toMatch(/\$script:timer\.Interval = \d+/)
-    const interval = Number(ps1.match(/\$script:timer\.Interval = (\d+)/)?.[1] ?? 0)
-    expect(interval).toBeGreaterThan(0)
-    expect(interval).toBeLessThanOrEqual(10000)
-  })
-
-  test("notificación (globo) al usuario: bienvenida y cambio de estado", () => {
-    expect(ps1).toContain("Show-Balloon")
-    expect(ps1).toContain("ShowBalloonTip")
-  })
-
-  test("control del servicio vía UAC estándar (net start/stop)", () => {
-    expect(ps1).toContain("'net.exe'")
-    expect(ps1).toContain("-Verb RunAs")
-    expect(ps1).toContain("PantallaRestaurante")
   })
 })
 
 // ---------------------------------------------------------------------------
 // Windows — REGRESIÓN DEL CUELGUE DEL SETUP.exe (21.er build de v3.2.0)
 // ---------------------------------------------------------------------------
-describe("REGRESIÓN: lanzamiento de la bandeja en el NSI (21.er build)", () => {
+// NOTA: El NSI ahora es un PURE bootstrapper (Mision M).
+// Tray launch, autostart, shortcuts, uninstall — todo lo maneja el MSI.
+// Estas verificaciones se hacen en contracts-wix-msi.test.ts.
+// ---------------------------------------------------------------------------
+describe("REGRESIÓN: bootstrapper NSI (21.er build) — puro wrapper MSI", () => {
   const nsi = readFileSync(NSI, "utf8")
 
-  test("la bandeja se lanza con `Exec` (NO espera) — NUNCA con nsExec", () => {
-    // La línea que lanza ViewLBA-Tray.ps1 DEBE ser un Exec puro.
-    const trayLines = nsi.split("\n").filter((l) => l.includes("ViewLBA-Tray.ps1") && !l.trimStart().startsWith(";"))
-    expect(trayLines.length).toBeGreaterThan(0)
-    for (const line of trayLines) {
-      // toda línea que ARRANCA la bandeja debe usar Exec (con o sin prefijo)
-      if (/Exec|ShellExec|powershell/i.test(line)) {
-        expect(line).not.toMatch(/nsExec::Exec\b/)
-      }
-    }
+  test("NSI ejecuta msiexec /i (no instala directamente)", () => {
+    expect(nsi).toMatch(/msiexec/i)
   })
 
-  test("ningún lanzamiento de proceso de larga vida usa nsExec::Exec sin /TIMEOUT", () => {
-    // nsExec::Exec/ExecToLog ESPERAN al proceso: para procesos de larga vida
-    // (bandeja) solo se admite /TIMEOUT acotado o Exec directo.
-    const offenders = nsi
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => /^nsExec::Exec(\s|$)/.test(l))
-      .filter((l) => !/\/TIMEOUT=/.test(l))
-      .filter((l) => !/powershell\.exe/i.test(l) || /ViewLBA-Tray/i.test(l))
-    // las únicas llamadas nsExec::Exec «puras» permitidas: matar procesos y
-    // generar la contraseña (ambas terminan solas en <2 s)
-    for (const l of offenders) {
-      expect(l).toMatch(/Stop-Process|\.pwd\.tmp/)
-    }
+  test("NSI NO usa nsExec::Exec (regresión del 21.er build)", () => {
+    const offenders = nsi.split("\n").map(l => l.trim()).filter(l => /^nsExec::Exec(\s|$)/.test(l))
+    expect(offenders.length).toBe(0)
   })
 
-  test("autostart de la bandeja con la sesión (HKCU Run)", () => {
-    expect(nsi).toContain("CurrentVersion\\Run")
-    expect(nsi).toContain("ViewLBA-Tray.ps1")
-    expect(nsi).toContain("${APPNAME}Tray")
+  test("NSI NO lanza tray directamente (lo hace el MSI)", () => {
+    expect(nsi).not.toMatch(/viewlba-tray\.exe/i)
   })
 
-  test("el desinstalador quita la bandeja (autostart + proceso)", () => {
-    const uninstall = nsi.split('Section "Uninstall"')[1] ?? ""
-    expect(uninstall).toContain("DeleteRegValue HKCU")
-    expect(uninstall).toMatch(/ViewLBA-Tray|ViewLBATray/)
+  test("NSI NO crea shortcuts (los hace el MSI)", () => {
+    expect(nsi).not.toMatch(/CreateShortCut/i)
   })
 
-  test("accesos directos de la bandeja en escritorio + menú Inicio", () => {
-    expect(nsi).toContain("ViewLBA - Bandeja.lnk")
-    expect(nsi).toContain("$DESKTOP")
+  test("NSI NO crea ProgramData (lo hace el MSI)", () => {
+    expect(nsi).not.toMatch(/CreateDirectory.*ProgramData/i)
   })
 })
 
 // ---------------------------------------------------------------------------
-// Linux — bandeja (TypeScript puro sobre el runtime bun EMPAQUETADO — v3.2.2:
+// // Linux — bandeja (TypeScript puro sobre el runtime bun EMPAQUETADO — v3.2.2:
 // cero dependencias del sistema: sin python3-gi, sin GTK, sin gir — 100 % offline)
 // ---------------------------------------------------------------------------
 describe("Bandeja Linux (tray.ts — TypeScript sobre bun empaquetado)", () => {

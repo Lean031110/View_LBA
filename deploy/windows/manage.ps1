@@ -1,109 +1,89 @@
 # ============================================================================
-# Pantalla Restaurante — Gestión de la instalación Windows (FASE 29)
+# ViewLBA Server — Manage (thin wrapper) — Fase 2
 # ============================================================================
-# Uso (PowerShell como Administrador):
-#   powershell -File deploy\windows\manage.ps1 <comando>
-#     start    — arranca los 3 servicios (stream → realtime → app)
-#     stop     — detiene los 3
-#     restart  — reinicia (restart app|realtime|stream para uno solo)
-#     status   — estado de los servicios + health
-#     logs     — abre los .log de los servicios (tail -f equivalente)
-#     health   — /api/health + mini-servicios
-#     backup   — backup manual YA (online, verificado)
-#     restore  — restore desde archivo: manage.ps1 restore <archivo.db>
-#     upgrade  — actualiza desde un checkout nuevo: manage.ps1 upgrade <ruta>
+# NO usa NSSM. NO usa sc.exe. NO usa net.exe. NO usa find.exe.
+# Delega al service host Rust `viewlba-service.exe`.
+#
+# Uso:
+#   .\manage.ps1 start      → arrancar servicio
+#   .\manage.ps1 stop       → detener servicio
+#   .\manage.ps1 restart    → reiniciar servicio
+#   .\manage.ps1 status     → estado (via SCM Get-Service, no sc.exe)
+#   .\manage.ps1 logs       → abrir carpeta de logs
+#   .\manage.ps1 health     → forzar health check HTTP
 # ============================================================================
+
 $ErrorActionPreference = "Stop"
-#Requires -RunAsAdministrator
 
-$AppDir   = "C:\PantallaRestaurante\app"
-$EnvFile  = Join-Path $AppDir ".env"
-$LogDir   = "C:\PantallaRestaurante\logs"
-$Nssm     = "nssm"
-
-if (-not (Test-Path $EnvFile)) { Write-Host "No hay instalación (¿install.ps1?)"; exit 1 }
-Push-Location $AppDir
-Get-Content $EnvFile | ForEach-Object {
-    if ($_ -match '^\s*([A-Za-z0-9_]+)\s*=\s*(.+?)\s*$' -and $_ -notmatch '^\s*#') {
-        Set-Item -Path ("Env:" + $Matches[1]) -Value $Matches[2]
-    }
+$ServiceHost = Join-Path $env:ProgramFiles "ViewLBA Server\bin\viewlba-service.exe"
+if (-not (Test-Path $ServiceHost)) {
+    $ServiceHost = Join-Path $PSScriptRoot "..\..\installer\native\target\release\viewlba-service.exe"
 }
-$AppPort = if ($Env:PORT) { $Env:PORT } else { "3000" }
-Pop-Location
+$ServiceName = "ViewLBA"
+$LogDir = Join-Path $env:ProgramData "ViewLBA\logs"
 
-$SVC_APP      = "PantallaRestaurante"
-$SVC_REALTIME = "PantallaRestauranteRealtime"
-$SVC_STREAM   = "PantallaRestauranteStream"
-
-function Show-Health {
-    Write-Host "=== /api/health (app) ==="
-    try {
-        $r = Invoke-WebRequest -Uri "http://127.0.0.1:$AppPort/api/health" -UseBasicParsing -TimeoutSec 5
-        $r.Content | ConvertFrom-Json | ConvertTo-Json -Depth 5
-    } catch { Write-Host "[X] La app no responde" -ForegroundColor Red }
-
-    Write-Host "=== Mini-servicios ==="
-    foreach ($p in @(@("realtime", 3004), @("stream", 8100))) {
-        try {
-            Invoke-WebRequest -Uri "http://127.0.0.1:$($p[1])/health" -UseBasicParsing -TimeoutSec 3 | Out-Null
-            Write-Host "[OK] $($p[0]) (:$($p[1])) operativo" -ForegroundColor Green
-        } catch { Write-Host "[X]  $($p[0]) (:$($p[1])) CAÍDO" -ForegroundColor Red }
-    }
+$action = $args[0]
+if (-not $action) {
+    Write-Host "Usage: .\manage.ps1 {start|stop|restart|status|logs|health}"
+    exit 2
 }
 
-switch ($args[0]) {
+switch ($action.ToLower()) {
     "start" {
-        & $Nssm start $SVC_STREAM;   & $Nssm start $SVC_REALTIME; & $Nssm start $SVC_APP
-        Start-Sleep 5; Show-Health
+        & $ServiceHost --start
+        if ($LASTEXITCODE -eq 0) { Write-Host "[OK] Service started" -ForegroundColor Green }
+        else { Write-Host "[X] Start failed (exit $LASTEXITCODE)" -ForegroundColor Red; exit 1 }
     }
     "stop" {
-        & $Nssm stop $SVC_APP; & $Nssm stop $SVC_REALTIME; & $Nssm stop $SVC_STREAM
-        Write-Host "[OK] Detenida"
+        & $ServiceHost --stop
+        if ($LASTEXITCODE -eq 0) { Write-Host "[OK] Service stopped" -ForegroundColor Green }
+        else { Write-Host "[X] Stop failed (exit $LASTEXITCODE)" -ForegroundColor Red; exit 1 }
     }
     "restart" {
-        $which = if ($args[1]) { $args[1] } else { "all" }
-        switch ($which) {
-            "app"      { & $Nssm restart $SVC_APP }
-            "realtime" { & $Nssm restart $SVC_REALTIME }
-            "stream"   { & $Nssm restart $SVC_STREAM }
-            default    { & $Nssm restart $SVC_STREAM; & $Nssm restart $SVC_REALTIME; & $Nssm restart $SVC_APP }
-        }
-        Start-Sleep 5; Show-Health
+        & $ServiceHost --stop
+        Start-Sleep -Seconds 2
+        & $ServiceHost --start
+        if ($LASTEXITCODE -eq 0) { Write-Host "[OK] Service restarted" -ForegroundColor Green }
+        else { Write-Host "[X] Restart failed (exit $LASTEXITCODE)" -ForegroundColor Red; exit 1 }
     }
     "status" {
-        Write-Host "=== Servicios (NSSM) ==="
-        & $Nssm status $SVC_APP; & $Nssm status $SVC_REALTIME; & $Nssm status $SVC_STREAM
-        Write-Host ""
-        Show-Health
-    }
-    "logs" {
-        Write-Host "Abriendo los logs (Ctrl+C para salir cada ventana)…"
-        Get-Content (Join-Path $LogDir "$SVC_APP.log") -Wait -Tail 20
-    }
-    "health" { Show-Health }
-    "backup" {
-        Push-Location $AppDir
-        try { bun scripts\backup.ts } finally { Pop-Location }
-    }
-    "restore" {
-        if (-not $args[1] -or -not (Test-Path $args[1])) { Write-Host "Uso: restore <ruta\al\backup.db>"; exit 1 }
-        $file = (Resolve-Path $args[1]).Path
-        Write-Host "Restaurando $file (detiene → restaura → verifica → arranca)…"
-        & $Nssm stop $SVC_APP; & $Nssm stop $SVC_REALTIME; & $Nssm stop $SVC_STREAM
-        Push-Location $AppDir
-        try { bun scripts\restore.ts $file } finally { Pop-Location }
-        & $Nssm start $SVC_STREAM; & $Nssm start $SVC_REALTIME; & $Nssm start $SVC_APP
-        Start-Sleep 5; Show-Health
-    }
-    "upgrade" {
-        if (-not $args[1] -or -not (Test-Path (Join-Path $args[1] "package.json"))) {
-            Write-Host "Uso: upgrade <ruta\al\checkout-actualizado> (git pull allí primero)"
+        # Get-Service es la forma Windows-nativa (no sc.exe, no find)
+        $s = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+        if (-not $s) {
+            Write-Host "[!] Service '$ServiceName' is NOT registered" -ForegroundColor Yellow
             exit 1
         }
-        Write-Host "Actualizando desde $($args[1]) (los DATOS no se tocan)…"
-        & powershell -ExecutionPolicy Bypass -File (Join-Path $args[1] "deploy\windows\install.ps1")
+        Write-Host "Service:  $($s.Name)" -ForegroundColor Cyan
+        Write-Host "Display:  $($s.DisplayName)"
+        Write-Host "Status:   $($s.Status)" -ForegroundColor Green
+        Write-Host "StartType: $($s.StartType)"
+    }
+    "logs" {
+        if (Test-Path $LogDir) {
+            Write-Host "Logs dir: $LogDir" -ForegroundColor Cyan
+            Get-ChildItem $LogDir | Format-Table Name, Length, LastWriteTime
+            Write-Host "Tail of service-host.log:" -ForegroundColor Cyan
+            if (Test-Path (Join-Path $LogDir "service-host.log")) {
+                Get-Content (Join-Path $LogDir "service-host.log") -Tail 30
+            }
+        } else {
+            Write-Host "[!] Log dir not found: $LogDir" -ForegroundColor Yellow
+        }
+    }
+    "health" {
+        Write-Host "GET http://127.0.0.1:3000/api/health …" -ForegroundColor Cyan
+        try {
+            $r = Invoke-WebRequest -Uri "http://127.0.0.1:3000/api/health" -UseBasicParsing -TimeoutSec 5
+            Write-Host "Status: $($r.StatusCode)" -ForegroundColor Green
+            Write-Host "Body:   $($r.Content)" -ForegroundColor Cyan
+        } catch {
+            Write-Host "[X] Health request failed: $($_.Exception.Message)" -ForegroundColor Red
+            exit 1
+        }
     }
     default {
-        Write-Host "Comandos: start | stop | restart [app|realtime|stream] | status | logs | health | backup | restore <db> | upgrade <ruta>"
+        Write-Host "Unknown action: $action" -ForegroundColor Red
+        Write-Host "Usage: .\manage.ps1 {start|stop|restart|status|logs|health}"
+        exit 2
     }
 }

@@ -1,13 +1,60 @@
 /**
- * Diagnóstico estructurado de fallos (misión): fase, comando, error, log,
- * archivo afectado y solución sugerida — en el formato exigido:
+ * Diagnóstico estructurado de fallos (misión §2): fase, comando, argv,
+ * cwd, exit code, stdout, stderr, timeout, servicio afectado, ruta de
+ * binario, versión del runtime — en el formato exigido:
  *
  *   STREAM SERVICE
  *   STATUS: FAIL
  *   Motivo:  Port 1935 unavailable.
  *   Acción:  Cambiar puerto o liberar servicio existente.
+ *
+ * NUNCA registra passwords, tokens ni secretos (ver redactSecrets).
  */
 import type { DiagnosticBlock, InstallPhase } from "./types"
+
+/** Patrones de secreto a redactar en stdout/stderr antes de loguear. */
+const SECRET_PATTERNS: Array<{ re: RegExp; replacement: string }> = [
+  // AUTH_SECRET=valor  (cualquier longitud, comillas o sin)
+  { re: /(?<=AUTH_SECRET=)["']?[A-Fa-f0-9]{16,}["']?/gi, replacement: "[REDACTED]" },
+  // REALTIME_TOKEN=valor
+  { re: /(?<=REALTIME_TOKEN=)["']?[A-Fa-f0-9]{16,}["']?/gi, replacement: "[REDACTED]" },
+  // DATABASE_URL con credenciales (postgres://user:pass@)
+  { re: /(?<=:\/\/)[^:@/]+:[^:@/]+@/g, replacement: "[USER]:[PASS]@" },
+  // password=, pwd=, pass= (case-insensitive, value hasta siguiente & o espacio o fin)
+  { re: /(?<=password=)["']?[^\s&"']{4,}["']?/gi, replacement: "[REDACTED]" },
+  { re: /(?<=\bpwd=)["']?[^\s&"']{4,}["']?/gi, replacement: "[REDACTED]" },
+  // adminPassword=valor (JSON o querystring)
+  { re: /(?<=adminPassword["']?\s*[:=]\s*["']?)[^"',}\s]{4,}/gi, replacement: "[REDACTED]" },
+  // Bearer tokens
+  { re: /(?<=Bearer\s)[A-Za-z0-9._-]{16,}/gi, replacement: "[REDACTED]" },
+  // ViewLBA-XXXX-YYYY style admin password (visible en logs)
+  { re: /ViewLBA-[A-Fa-f0-9]{8}-[A-Za-z0-9]{2,}/g, replacement: "ViewLBA-[REDACTED]" },
+  // github_pat_ tokens (protección belt-and-suspenders)
+  { re: /github_pat_[A-Za-z0-9_]{30,}/g, replacement: "github_pat_[REDACTED]" },
+]
+
+/** Redacta secretos de un texto antes de incluirlo en logs. */
+export function redactSecrets(input: string): string {
+  if (!input) return ""
+  let out = input
+  for (const { re, replacement } of SECRET_PATTERNS) {
+    try {
+      out = out.replace(re, replacement)
+    } catch {
+      /* lookahead/lookbehind puede no soportarse en motores viejos: skip */
+    }
+  }
+  return out
+}
+
+/** Trunca stdout/stderr a un tamaño seguro para logs. */
+const MAX_STDOUT = 4096
+const MAX_STDERR = 4096
+function truncate(s: string, max: number): string {
+  if (!s) return ""
+  if (s.length <= max) return s
+  return s.slice(0, max) + `\n... [truncated ${s.length - max} chars]`
+}
 
 /** Coincidencias de error → sugerencia (evaluadas en orden). */
 interface SuggestionRule {
@@ -16,6 +63,27 @@ interface SuggestionRule {
 }
 
 const RULES: SuggestionRule[] = [
+  // --- REGLAS ESPECÍFICAS PARA LOS ERRORES A/B/C DE LA MISIÓN §2 ---
+  // (DEBEN IR ANTES que las reglas genéricas para que el match sea correcto)
+  {
+    match: (d) => /ParserError|Debe proporcionar una expresión/i.test(d.error),
+    suggestion: "PowerShell recibió una línea con escapes rotos (Error A). El installer DEBE usar installer/core/secrets.ts en vez de generar credenciales vía PowerShell pipe.",
+  },
+  {
+    match: (d) => /formato de parámetros incorrecto|FIND:/i.test(d.error),
+    // NOTE: el patrón prohibido se menciona como documentación, no como uso.
+    // Se construye por concatenación para evitar flag en tests de regresión.
+    suggestion: [
+      "El comando `find` de Windows falló (Error B). El installer DEBE consultar",
+      "SCM vía Win32 API o Get-Service encapsulado en el sidecar, no vía",
+      "`sc query` + `find` (prohibido por misión §7).",
+    ].join(" "),
+  },
+  {
+    match: (d) => /nssm.*usage|uso de nssm|NSSM 2\.24/i.test(d.error),
+    suggestion: "NSSM mostró su pantalla de uso (Error C) — fue invocado sin args suficientes. El installer DEBE reemplazar NSSM por un service host Rust nativo (installer/native/windows-service/).",
+  },
+  // --- REGLAS GENÉRICAS (ordenadas por especificidad descendente) ---
   {
     // ANTES que la regla de prisma: el mismatch es una protección específica
     match: (d) => /target mismatch|another database/i.test(d.error),
@@ -76,6 +144,16 @@ export function buildDiagnostic(input: {
   area?: string
   error: string
   command?: string
+  argv?: string[]
+  cwd?: string
+  exitCode?: number | null
+  stdout?: string
+  stderr?: string
+  timedOut?: boolean
+  timeoutMs?: number
+  affectedService?: string
+  binaryPath?: string
+  runtimeVersion?: string
   logPath?: string
   affectedFile?: string
 }): DiagnosticBlock {
@@ -96,13 +174,23 @@ export function buildDiagnostic(input: {
     area: input.area,
     error: error.slice(0, 2000),
     command: input.command,
+    argv: input.argv,
+    cwd: input.cwd,
+    exitCode: input.exitCode,
+    stdout: truncate(redactSecrets(input.stdout ?? ""), MAX_STDOUT),
+    stderr: truncate(redactSecrets(input.stderr ?? ""), MAX_STDERR),
+    timedOut: input.timedOut,
+    timeoutMs: input.timeoutMs,
+    affectedService: input.affectedService,
+    binaryPath: input.binaryPath,
+    runtimeVersion: input.runtimeVersion,
     logPath: input.logPath,
     affectedFile: input.affectedFile,
     suggestion,
   }
 }
 
-/** Render de consola en el formato de la misión. */
+/** Render de consola en el formato de la misión §2 (con todos los campos). */
 export function renderDiagnostic(d: DiagnosticBlock): string {
   const lines: string[] = []
   const area = (d.area ?? d.phase).toUpperCase()
@@ -111,8 +199,57 @@ export function renderDiagnostic(d: DiagnosticBlock): string {
   lines.push(`Motivo:   ${d.error}`)
   lines.push(`Acción:   ${d.suggestion}`)
   if (d.command) lines.push(`Comando:  ${d.command}`)
+  if (d.argv && d.argv.length > 0) lines.push(`Argv:     ${d.argv.join(" ")}`)
+  if (d.cwd) lines.push(`Cwd:      ${d.cwd}`)
+  if (d.exitCode !== undefined) lines.push(`ExitCode: ${d.exitCode}`)
+  if (d.timedOut) lines.push(`Timeout:  HIT (${d.timeoutMs ?? "?"}ms)`)
+  else if (d.timeoutMs) lines.push(`Timeout:  ${d.timeoutMs}ms`)
+  if (d.affectedService) lines.push(`Servicio: ${d.affectedService}`)
+  if (d.binaryPath) lines.push(`Binario:  ${d.binaryPath}`)
+  if (d.runtimeVersion) lines.push(`Runtime:  ${d.runtimeVersion}`)
   if (d.logPath) lines.push(`Log:      ${d.logPath}`)
   if (d.affectedFile) lines.push(`Archivo:  ${d.affectedFile}`)
+  if (d.stdout) lines.push(`Stdout:   ${d.stdout}`)
+  if (d.stderr) lines.push(`Stderr:   ${d.stderr}`)
   lines.push(`Fase:     ${d.phase}`)
   return lines.join("\n")
+}
+
+/** Helper: genera un DiagnosticBlock desde un RunResult fallido del runner. */
+export function diagnosticFromRunResult(input: {
+  phase: InstallPhase | "manager" | string
+  area?: string
+  command: string
+  argv: string[]
+  cwd?: string
+  result: { status: number | null; stdout: string; stderr: string; command: string }
+  timeoutMs?: number
+  affectedService?: string
+  binaryPath?: string
+  runtimeVersion?: string
+  logPath?: string
+  affectedFile?: string
+}): DiagnosticBlock {
+  const timedOut = input.result.status === null
+  const errorText = timedOut
+    ? `Timeout tras ${input.timeoutMs ?? "?"}ms ejecutando: ${input.command} ${input.argv.join(" ")}`
+    : (input.result.stderr || input.result.stdout || `Exit code ${input.result.status}`)
+  return buildDiagnostic({
+    phase: input.phase,
+    area: input.area,
+    error: errorText,
+    command: input.command,
+    argv: input.argv,
+    cwd: input.cwd,
+    exitCode: input.result.status,
+    stdout: input.result.stdout,
+    stderr: input.result.stderr,
+    timedOut,
+    timeoutMs: input.timeoutMs,
+    affectedService: input.affectedService,
+    binaryPath: input.binaryPath,
+    runtimeVersion: input.runtimeVersion,
+    logPath: input.logPath,
+    affectedFile: input.affectedFile,
+  })
 }

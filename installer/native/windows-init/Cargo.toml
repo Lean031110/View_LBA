@@ -1,0 +1,32 @@
+[package]
+name = "viewlba-init"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "ViewLBA Server — first-boot initializer (writes server.env with generated secrets, sets SCM recovery actions). Runs as a WiX deferred CustomAction during MSI install. No NSSM, no PowerShell, no CMD, no Internet."
+
+[[bin]]
+name = "viewlba-init"
+path = "src/main.rs"
+
+[dependencies]
+# Microsoft official `windows` crate for SCM failure actions (ChangeServiceConfig2W)
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Services",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+] }
+
+# Cryptographic RNG for AUTH_SECRET / REALTIME_TOKEN (no openssl, no external)
+getrandom = "0.2"
+
+# Hex encoding
+hex = "0.4"
+
+[build-dependencies]
+embed-resource = "3"

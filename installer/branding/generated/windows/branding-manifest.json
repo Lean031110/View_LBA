@@ -1,0 +1,25 @@
+{
+  "branding": {
+    "logo_source": "public/logo.svg",
+    "logo_mark_source": "public/logo-mark.svg",
+    "logo_mark_sha256": "848c019db245450f407c1aeb3357507eff4d2d92cdfc97425661d83b96f1417e",
+    "windows_ico_sha256": "7bb6f4f5f6047f2468967e9d47ebb4517b693e301c8d591d6d8d598b9a5911b7",
+    "generated_from": "public/logo-mark.svg",
+    "generated_at": "2026-10-03T13:07:55.106Z"
+  },
+  "assets": {
+    "ico": "installer/branding/generated/windows/viewlba.ico",
+    "pngs": [
+      "installer/branding/generated/windows/16x16.png",
+      "installer/branding/generated/windows/20x20.png",
+      "installer/branding/generated/windows/24x24.png",
+      "installer/branding/generated/windows/32x32.png",
+      "installer/branding/generated/windows/48x48.png",
+      "installer/branding/generated/windows/64x64.png",
+      "installer/branding/generated/windows/128x128.png",
+      "installer/branding/generated/windows/256x256.png",
+      "installer/branding/generated/windows/512x512.png"
+    ]
+  },
+  "note": "All icons generated from public/logo-mark.svg. Do NOT modify the SVG sources."
+}
