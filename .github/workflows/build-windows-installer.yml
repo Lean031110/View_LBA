@@ -49,12 +49,14 @@ on:
       - "postcss.config.mjs"
       - "components.json"
       - "bunfig.toml"
-      # 8. Build scripts that stage-windows.ts invokes or depends on
-      - "scripts/stage-windows.ts"
-      - "scripts/build.ts"
-      - "scripts/install.ts"
-      - "scripts/init-production.ts"
-      - "scripts/lib/**"
+      # 8. Runtime scripts copied VERBATIM into staging by stage-windows.ts
+      #    (line 219: copyDir(scriptsSrc, appDir/scripts, ["apk-*.sh",
+      #    "monitor-release*"]) — copies the WHOLE scripts/ directory).
+      #    A change in any runtime script (start.ts, backup.ts, restore.ts,
+      #    logs-purge.ts, media-gc.ts, init-production.ts, install.ts,
+      #    build.ts, lib/*, etc.) ends up in the staging payload, so the
+      #    workflow MUST trigger on any scripts/** change.
+      - "scripts/**"
       # 9. Installer payload + native + branding + WiX
       - "installer/**"
       # 10. This workflow — changes to itself trigger self-validation
