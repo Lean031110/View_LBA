@@ -1488,10 +1488,16 @@ URL: https://github.com/Lean031110/View_LBA/actions/runs/38196911831
 
 URL: https://github.com/Lean031110/View_LBA/actions/runs/38198904273
 
-### 17.2 CI workflow — desglose honesto de pruebas (NO "925 aprobadas")
+### 17.2 CI workflow — desglose honesto de pruebas en ba308bc (NO "925 aprobadas")
+
+> **NOTA**: Estos conteos son del commit `ba308bc`. Para los conteos
+> actuales en `027700c`, ver §18.4. Los números cambian a medida que
+> se añaden tests (los commits `9f84944` → `027700c` añadieron 9 tests
+> del archivo `contracts-workflow-triggers.test.ts`; un commit adicional
+> añadirá 3 tests más, llevando el static floor a 897).
 
 El log de CI en el job "Tests unit + mini-services + pipeline de streaming"
-reporta:
+reporta en `ba308bc`:
 
 ```
 904 pass
@@ -1844,11 +1850,43 @@ dos motivos que se detectaron y corrigieron en commits adicionales:
 - ✅ Uninstall via MSI
 - ✅ Verify clean uninstall 4 superficies (ARP + Program Files + procesos + ProgramData con paths correctas `data\backups` y `data\media`)
 
-### 18.4 CI workflow — 894 tests en banda
+### 18.4 CI workflow — conteos en 027700c (HEAD actual)
 
-- ✅ docs:check pasa (README 894 · estático 894 · techo 1029)
-- ✅ 894 tests pasan (incluye nuevo `contracts-workflow-triggers.test.ts` con 9 tests que validan paths: del workflow)
-- ✅ Lint + types + build standalone
+El log de CI en el job "Tests unit + mini-services + pipeline de streaming"
+reporta en `027700c` (HEAD actual al momento del reporte del revisor):
+
+```
+Ran 934 tests across 58 files
+913 pass
+21 skip
+0 fail
+934 total
+```
+
+**Distinción obligatoria (no presentar como "934 aprobados"):**
+- **934 casos totales** = lo que `bun test` reporta al correr
+- **913 aprobados** + **21 omitidos** = 934
+- **897 static floor** = número de `test()` / `it()` calls en `tests/**`
+  (verificable con `grep -cE '^\s*(test|it)\(' tests/**/*.test.ts`)
+- **934 − 897 = 37 tests** vienen de expansiones `test.each(...)` que bun
+  ejecuta múltiples veces con datos parametrizados
+
+**Desglose histórico:**
+
+| SHA | Static floor | Runtime total | Pass | Skip | Comment |
+|---|---|---|---|---|---|
+| `ba308bc` | 885 | 925 | 904 | 21 | Antes de los commits P0/P1 |
+| `027700c` (HEAD actual) | 894 | 934 | 913 | 21 | +9 tests de `contracts-workflow-triggers.test.ts` |
+| `próximo commit` | 897 | ~937 | ~916 | 21 | +3 tests adicionales (NIVEL 2/3g/DEBUG en contracts-workflow-triggers) |
+
+**docs:check** pasa: README 897 · estático 897 · techo 1032.
+El README claims 897 (static floor) con nota explicando que runtime > static
+por `test.each` expansions.
+
+**No confundir:**
+- ✅ "913 aprobados + 21 omitidos = 934 totales" (lo que CI reporta)
+- ❌ "934 aprobados" (incorrecto — incluye omitidos)
+- ❌ "897 aprobados" (incorrecto — es el static floor, no el runtime)
 
 ### 18.5 Installer Flow CI — Linux REAL, Windows STUB
 
