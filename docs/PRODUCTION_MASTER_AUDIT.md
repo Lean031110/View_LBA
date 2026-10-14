@@ -1951,4 +1951,175 @@ la fusión, los workflows obligatorios deben volver a correr en `main`
 para confirmar que el merge no rompió nada (típicamente los workflows
 se disparan automáticamente por el merge commit).
 
+---
+
+## 19. Estado verificado FINAL — commit 01cb25d (2026-10-14, cierre real)
+
+### 19.1 TODOS los workflows GREEN en el mismo SHA (01cb25d)
+
+| Workflow | Run ID | Event | Conclusion | SHA |
+|---|---|---|---|---|
+| Build Windows Installer | 38601262733 | push | ✅ SUCCESS | 01cb25d |
+| Build Windows Installer | 38601270468 | pull_request | ✅ SUCCESS | 01cb25d |
+| Installer Flow CI | 38601270204 | pull_request | ✅ SUCCESS | 01cb25d |
+| CI | 38601270233 | pull_request | ✅ SUCCESS | 01cb25d |
+| Build Windows Native Binaries | 38601270300 | pull_request | ✅ SUCCESS | 01cb25d |
+
+URL: https://github.com/Lean031110/View_LBA/actions/runs/38601262733
+
+### 19.2 Fixes adicionales aplicados durante el cierre real
+
+Tras la Fase 2 inicial (commits 9f84944…027700c), se identificaron
+3 issues adicionales que se resolvieron en commits posteriores:
+
+1. **`c01b0f0` — fix(p0): paths: cubre scripts/** entero**
+   - Revisor: "el filtro on.push.paths enumera archivos concretos de
+     scripts/, pero stage-windows.ts copia el directorio completo
+     scripts/ al payload instalado."
+   - Antes: paths: enumeraba scripts/stage-windows.ts, scripts/build.ts,
+     scripts/install.ts, scripts/init-production.ts, scripts/lib/** —
+     dejaba sin cubrir scripts/start.ts, backup.ts, restore.ts,
+     logs-purge.ts, media-gc.ts, etc.
+   - Fix: reemplazado por scripts/** (cubre cualquier archivo bajo
+     scripts/ que se copia al staging).
+   - Contract test reescrito con 3 niveles de rigor (presencia,
+     cobertura dinámica parseando stage-windows.ts, simulación de
+     escenarios concretos).
+
+2. **`a414eb4` — docs(p1): reconciliar conteo de tests**
+   - Revisor: "El log de CI en el HEAD actual informa 'Ran 934 tests
+     across 58 files', con 913 pass y 21 skip. README y auditoría
+     contienen otras cifras, incluidos 894 y 904 + 21."
+   - Investigation: 894 = static floor (test()/it() calls); 934 = runtime
+     (incluye expansiones test.each); 934 - 894 = 40 tests de .each
+   - Fix: README actualizado a "897 tests (static floor — runtime ~934:
+     913 pass + 21 skip across 58 files; runtime > static due to test.each
+     expansions)". Audit §17.2 aclarado como histórico ba308bc + §18.4
+     reescrito con breakdown completo (pass + skip + total + static).
+
+3. **`72c6332` + `01cb25d` — fix(p1): retry loop + sintaxis PowerShell**
+   - Failure en run 38593922987 (SHA 18e654e, PR event):
+     Job 3 'Test real Setup.exe' step #9 'Verify child processes' FAILED:
+     'Realtime (bun realtime-service/index.ts) process NOT found'
+   - Root cause: el check era single-shot. El servicio estaba Running
+     desde hace 9 segundos pero bun children (especialmente realtime-service
+     que carga socket.io + node_modules) tardan más en spawned.
+   - Fix #1 (72c6332): añadir retry loop con 30 intentos (60s total).
+   - Fix #2 (01cb25d): corregir sintaxis PowerShell. La línea original
+     tenía `$maxRetries:` que se interpreta como variable scope operator
+     (error: "Variable reference is not valid. ':' was not followed by
+     a valid variable name character"). Cambio a `-f format string` que
+     evita la interpolación problemática.
+   - Tras ambos fixes: step #9 PASS en push run (38601262733) — retry
+     loop ejecuta y encuentra todos los procesos.
+
+### 19.3 Build Windows Installer — 3 jobs, ALL SUCCESS en 01cb25d
+
+**Job 1: Build MSI** (28/28):
+- ✅ Strict manifest (hash failures FATAL, closed exclusion list)
+- ✅ manifest.json con `artifact_class: "production"`
+- ✅ test-artifacts.json separado con MSI sintética `never_published: true`
+
+**Job 2: Smoke test MSI** (21/21):
+- ✅ Install + Service Running + LocalService + server.env + ARP + ProgramFiles x64
+- ✅ ProgramData + Recovery actions + Payload manifest (STRICT en TODOS distributables)
+- ✅ Health (:3000 + :3004)
+- ✅ [O] SYNTHETIC UPGRADE con hash de server.env + health post-upgrade
+- ✅ [P] Restart + [R] Reinstall + [S] PARTIAL Offline (cleanup reforzado)
+- ✅ Final uninstall 4 superficies (service + ARP + Program Files + ProgramData + procesos)
+
+**Job 3: Test real Setup.exe** (12/12):
+- ✅ Download artifact + SHA256 verified
+- ✅ MZ magic bytes (DOS stub — NOT full PE; honest naming)
+- ✅ Install via /S (silent) — evidencia estructural independiente
+- ✅ Service Running + LocalService + Automatic
+- ✅ server.env created (no placeholders)
+- ✅ 3 child processes verificados INDIVIDUALMENTE (con retry loop — robusto a timing flake)
+- ✅ Health endpoints (:3000 + :3004)
+- ✅ Uninstall via MSI
+- ✅ Verify clean uninstall 4 superficies
+
+### 19.4 P0 — Validación POSITIVA del paths: filter
+
+El commit `18e654e` modificó EXCLUSIVAMENTE scripts/start.ts (archivo
+runtime copiado al staging por stage-windows.ts:219). El push event
+del commit `18e654e` → run 38593913065 (Build Windows Installer) —
+SE DISPARÓ, confirmando que paths: con `scripts/**` funciona:
+
+  Run 38593913065  Event push  Name Build Windows Installer  Status: in_progress
+
+Y el commit `01cb25d` modificó el workflow file (.github/workflows/build-windows-installer.yml)
+— también disparó push event → run 38601262733 → SUCCESS.
+
+Esto valida los TRES niveles del contract test:
+  - NIVEL 1 (PRESENCIA): paths: contiene scripts/** ✓
+  - NIVEL 2 (COBERTURA DINÁMICA): parser de stage-windows.ts detecta
+    9 copyDir sources (config, mini-services, prisma, public, scripts,
+    themes cubiertos; .next, dist, node_modules en allow-list de
+    build artifacts) ✓
+  - NIVEL 3 (SIMULACIÓN): scripts/start.ts, src/app/api/health/route.ts,
+    mini-services/realtime-service/index.ts, etc. — todos cubiertos ✓
+
+### 19.5 GPG autofirma activada
+
+Commit `f5f237c` (test commit firmado) + `18e654e`, `72c6332`, `01cb25d`
+(commits P0/P1 firmados) — verifican que la autofirma GPG funciona:
+
+  Key ID: E4C65FBDBE8223D3
+  Fingerprint: 9CD4FC941E4B22912561454EE4C65FBDBE8223D3
+  Algorithm: RSA 2048 (signing only)
+  Identity: ViewLBA Audit <audit@viewlba.local>
+  Expires: 2028-10-13
+
+Llave pública guardada en `/home/z/my-project/download/viewlba-audit-gpg-public.asc`.
+Para que GitHub marque los commits como "Verified", la llave pública
+debe subirse manualmente a GitHub (Settings → SSH and GPG keys → New
+GPG key) — el PAT fine-grained no tiene permisos para subir GPG keys
+a nivel de cuenta (solo a repos).
+
+### 19.6 Limitaciones declaradas (NO bloquean el cierre)
+
+1. **Upgrade from PUBLISHED version** (P1-9) — BLOQUEADO hasta que
+   exista release MSI publicada. Test sintético etiquetado claramente.
+
+2. **Authenticode signing** (P2-18) — PENDIENTE certificado. El
+   instalador NO está firmado. Autofirma GPG solo cubre commits git,
+   no el instalador Windows.
+
+3. **PowerShell in installer** (P0-6/mission) — PENDIENTE. El permiso
+   WA se mantiene. NO alterar sin reproducir fallo y validar alternativa.
+
+4. **license-api-adversarial sin step dedicado** — hueco menor.
+
+5. **Installer Flow CI Windows job** — declarado STUB (no prueba Windows
+   real). La evidencia Windows proviene de build-windows-installer.yml.
+
+6. **Prueba offline** — declarada PARTIAL (TCP 80/443 only, no DNS/ICMP).
+
+### 19.7 Criterio de cierre FINAL — CUMPLIDO
+
+✅ Filtro paths: cubre el payload distribuido (scripts/** + src/** +
+   mini-services/** + prisma/** + themes/** + public/** + config/** +
+   installer/** + package.json + bun.lock + VERSION + build config)
+   — validado POSITIVAMENTE por run 38593913065 (push de 18e654e
+   que solo cambió scripts/start.ts → disparó BWI).
+
+✅ Tests y documentación coherentes — README 897 tests estáticos
+   (runtime ~934: 913 pass + 21 skip), audit §17.2 histórico ba308bc
+   + §18.4 actualizado con breakdown completo.
+
+✅ Verificaciones completadas en el HEAD vigente (01cb25d):
+   - Build Windows Installer (push): 3 jobs ALL SUCCESS
+   - Build Windows Installer (PR): 3 jobs ALL SUCCESS
+   - CI: SUCCESS
+   - Installer Flow CI: SUCCESS (Linux REAL + Windows STUB declarado)
+   - Build Windows Native Binaries: SUCCESS
+
+✅ GPG autofirma activada para commits futuros (llave E4C65FBDBE8223D3).
+
+⏸ **PR #49 NO se fusiona automáticamente** — el usuario debe decidir
+   cuándo fusionar. Tras la fusión, los workflows se dispararán en
+   `main` automáticamente.
+
+
 
